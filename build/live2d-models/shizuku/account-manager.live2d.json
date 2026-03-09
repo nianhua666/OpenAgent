@@ -1,0 +1,9 @@
+{
+  "id": "bundled-shizuku",
+  "name": "Shizuku",
+  "source": "bundled",
+  "modelFile": "shizuku.model.json",
+  "referenceUrl": "https://github.com/xiazeyu/live2d-widget-models",
+  "remoteUrl": "https://registry.npmmirror.com/live2d-widget-model-shizuku/1.0.5/files/assets/shizuku.model.json",
+  "updatedAt": 1772908800000
+}

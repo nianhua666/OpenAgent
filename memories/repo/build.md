@@ -1,0 +1,5 @@
+- Windows PowerShell 若因执行策略拦截 npm.ps1，使用 npm.cmd run build 或 npm.cmd run electron:build。
+- 当前正式安装包输出目录为 release-current。
+- AI 对话运行时已提升为 store 级全局状态；页面或弹窗卸载时不要再中止任务，停止必须显式调用 cancelConversationRun(sessionId)。
+- 打包态主进程会优先把 userData 重定向到非系统盘可写目录；NSIS 首次安装默认目录由 build/installer.nsh 控制，优先给出非 C 盘路径。
+- Live2D 打包自检参数 --live2d-diagnose 必须绕过单实例锁，否则在主程序已运行时会被提前退出并误判为自检失败。

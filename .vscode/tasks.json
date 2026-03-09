@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "final-electron-build-clean",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"electron:build:clean"
+			],
+			"isBackground": false,
+			"group": "build"
+		}
+	]
+}

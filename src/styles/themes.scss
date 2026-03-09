@@ -1,0 +1,223 @@
+/* 多主题色彩系统 - 拟态玻璃+二次元风格 */
+
+/* 主题通过 CSS 自定义属性切换 */
+:root,
+[data-theme='sakura'] {
+  /* 樱花粉主题 */
+  --primary: #e8789a;
+  --primary-light: #f5a0b8;
+  --primary-dark: #c9546e;
+  --primary-bg: rgba(232, 120, 154, 0.08);
+
+  --accent: #b06ab3;
+  --accent-light: #d09bd2;
+
+  --bg-base: #fdf2f5;
+  --bg-gradient: linear-gradient(135deg, #fdf2f5 0%, #f5e0eb 50%, #ede0f2 100%);
+  --bg-sidebar: rgba(255, 240, 245, 0.72);
+  --bg-card: rgba(255, 255, 255, 0.55);
+  --bg-card-hover: rgba(255, 255, 255, 0.72);
+  --bg-input: rgba(255, 255, 255, 0.6);
+  --bg-modal: rgba(255, 240, 245, 0.85);
+  --bg-topbar: rgba(255, 245, 248, 0.65);
+
+  --glass-blur: 20px;
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 32px rgba(199, 120, 150, 0.1);
+
+  --text-primary: #2d1f26;
+  --text-secondary: #7a5a66;
+  --text-muted: #b09aa3;
+  --text-inverse: #fff;
+
+  --border: rgba(200, 160, 180, 0.25);
+  --border-active: rgba(232, 120, 154, 0.5);
+
+  --success: #5cc9a7;
+  --warning: #f5b74e;
+  --danger: #e85d75;
+  --info: #6ec1e4;
+
+  --chart-1: #e8789a;
+  --chart-2: #b06ab3;
+  --chart-3: #6ec1e4;
+  --chart-4: #5cc9a7;
+  --chart-5: #f5b74e;
+  --chart-6: #e85d75;
+}
+
+[data-theme='ocean'] {
+  /* 天空蓝主题 */
+  --primary: #5b9bd5;
+  --primary-light: #8dc1ea;
+  --primary-dark: #3a7cc0;
+  --primary-bg: rgba(91, 155, 213, 0.08);
+
+  --accent: #4ecdc4;
+  --accent-light: #7eddd6;
+
+  --bg-base: #f0f5fa;
+  --bg-gradient: linear-gradient(135deg, #f0f5fa 0%, #e0edf8 50%, #dff0f0 100%);
+  --bg-sidebar: rgba(235, 245, 255, 0.72);
+  --bg-card: rgba(255, 255, 255, 0.55);
+  --bg-card-hover: rgba(255, 255, 255, 0.72);
+  --bg-input: rgba(255, 255, 255, 0.6);
+  --bg-modal: rgba(240, 248, 255, 0.85);
+  --bg-topbar: rgba(242, 248, 255, 0.65);
+
+  --glass-blur: 20px;
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 32px rgba(91, 155, 213, 0.1);
+
+  --text-primary: #1a2a3a;
+  --text-secondary: #5a7a94;
+  --text-muted: #9ab4c8;
+  --text-inverse: #fff;
+
+  --border: rgba(150, 190, 220, 0.25);
+  --border-active: rgba(91, 155, 213, 0.5);
+
+  --success: #5cc9a7;
+  --warning: #f5b74e;
+  --danger: #e85d75;
+  --info: #5b9bd5;
+
+  --chart-1: #5b9bd5;
+  --chart-2: #4ecdc4;
+  --chart-3: #f5b74e;
+  --chart-4: #e85d75;
+  --chart-5: #b06ab3;
+  --chart-6: #5cc9a7;
+}
+
+[data-theme='twilight'] {
+  /* 暮夜紫主题 */
+  --primary: #9b6dff;
+  --primary-light: #bfa0ff;
+  --primary-dark: #7b4de0;
+  --primary-bg: rgba(155, 109, 255, 0.08);
+
+  --accent: #ff6b9d;
+  --accent-light: #ff9dbe;
+
+  --bg-base: #f3f0fa;
+  --bg-gradient: linear-gradient(135deg, #f3f0fa 0%, #e8e0f5 50%, #f0e8f8 100%);
+  --bg-sidebar: rgba(240, 235, 255, 0.72);
+  --bg-card: rgba(255, 255, 255, 0.55);
+  --bg-card-hover: rgba(255, 255, 255, 0.72);
+  --bg-input: rgba(255, 255, 255, 0.6);
+  --bg-modal: rgba(245, 240, 255, 0.85);
+  --bg-topbar: rgba(245, 242, 255, 0.65);
+
+  --glass-blur: 20px;
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 32px rgba(155, 109, 255, 0.1);
+
+  --text-primary: #1f1a2e;
+  --text-secondary: #6a5a8a;
+  --text-muted: #a898c0;
+  --text-inverse: #fff;
+
+  --border: rgba(175, 155, 210, 0.25);
+  --border-active: rgba(155, 109, 255, 0.5);
+
+  --success: #5cc9a7;
+  --warning: #f5b74e;
+  --danger: #e85d75;
+  --info: #6ec1e4;
+
+  --chart-1: #9b6dff;
+  --chart-2: #ff6b9d;
+  --chart-3: #5cc9a7;
+  --chart-4: #f5b74e;
+  --chart-5: #6ec1e4;
+  --chart-6: #e85d75;
+}
+
+[data-theme='jade'] {
+  /* 翡翠绿主题 */
+  --primary: #45b088;
+  --primary-light: #72d4ad;
+  --primary-dark: #2e8a68;
+  --primary-bg: rgba(69, 176, 136, 0.08);
+
+  --accent: #f0a050;
+  --accent-light: #f5c088;
+
+  --bg-base: #f0f8f5;
+  --bg-gradient: linear-gradient(135deg, #f0f8f5 0%, #e0f0ea 50%, #e8f5f0 100%);
+  --bg-sidebar: rgba(238, 252, 246, 0.72);
+  --bg-card: rgba(255, 255, 255, 0.55);
+  --bg-card-hover: rgba(255, 255, 255, 0.72);
+  --bg-input: rgba(255, 255, 255, 0.6);
+  --bg-modal: rgba(242, 255, 250, 0.85);
+  --bg-topbar: rgba(245, 252, 248, 0.65);
+
+  --glass-blur: 20px;
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 32px rgba(69, 176, 136, 0.1);
+
+  --text-primary: #1a2e24;
+  --text-secondary: #5a7e6a;
+  --text-muted: #9ab8a6;
+  --text-inverse: #fff;
+
+  --border: rgba(150, 210, 180, 0.25);
+  --border-active: rgba(69, 176, 136, 0.5);
+
+  --success: #45b088;
+  --warning: #f5b74e;
+  --danger: #e85d75;
+  --info: #6ec1e4;
+
+  --chart-1: #45b088;
+  --chart-2: #f0a050;
+  --chart-3: #6ec1e4;
+  --chart-4: #e85d75;
+  --chart-5: #9b6dff;
+  --chart-6: #f5b74e;
+}
+
+[data-theme='dark'] {
+  /* 暗夜主题 */
+  --primary: #a78bfa;
+  --primary-light: #c4b5fd;
+  --primary-dark: #8b5cf6;
+  --primary-bg: rgba(167, 139, 250, 0.1);
+
+  --accent: #f472b6;
+  --accent-light: #f9a8d4;
+
+  --bg-base: #0f0f1a;
+  --bg-gradient: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16162a 100%);
+  --bg-sidebar: rgba(20, 20, 40, 0.8);
+  --bg-card: rgba(30, 30, 55, 0.6);
+  --bg-card-hover: rgba(35, 35, 65, 0.75);
+  --bg-input: rgba(25, 25, 50, 0.7);
+  --bg-modal: rgba(18, 18, 35, 0.9);
+  --bg-topbar: rgba(15, 15, 30, 0.75);
+
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+
+  --text-primary: #e8e0f0;
+  --text-secondary: #a8a0b8;
+  --text-muted: #6a6280;
+  --text-inverse: #0f0f1a;
+
+  --border: rgba(100, 90, 130, 0.2);
+  --border-active: rgba(167, 139, 250, 0.5);
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  --chart-1: #a78bfa;
+  --chart-2: #f472b6;
+  --chart-3: #34d399;
+  --chart-4: #fbbf24;
+  --chart-5: #60a5fa;
+  --chart-6: #f87171;
+}

@@ -1,0 +1,15 @@
+- 用户实际常用启动方式是 release/win-unpacked/账号管理工具.exe。
+- 用户数据目录日志已接入 live2d-debug.log，可用于查看 overlay console、protocol 请求与诊断结果。
+- 支持通过 --live2d-diagnose 对 bundled 模型做打包态自检，已验证 Shizuku 在 win-unpacked 中资源可读。
+- Live2D 空白根因之一是模型未创建前调用 setModelPosition，已在 src/components/Live2DWidget.vue 修复。
+- 设置保存需先序列化为纯 JSON，再通过 IPC 落盘，否则会触发 An object could not be cloned。
+- `oh-my-live2d` 会按视口宽度把窄桌面悬浮窗判成 mobile；若未显式开启 `mobileDisplay`，它会跳过 `models.create()`，只剩舞台和 slideIn。
+- 桌面悬浮窗需要显式传入 `mobileDisplay: true`，并给模型补齐 `mobileScale`、`mobilePosition`、`mobileStageStyle`，否则 300~400px 宽的透明窗里模型不会创建。
+- 打包态本地模型优先保留 `live2d://` 协议，不要再强转成 `file://`；协议层能屏蔽路径细节，并已验证 bundled 与 cached preset 都能成功走完整资源链。
+- 远程模型缓存的资源收集只能抓真实路径字段（如 `model`、`file`、`textures`、`physics`），不能把表达式或动作的 `name` 字段误判成资源路径。
+- 多窗口同时初始化时会并发触发远程模型缓存；主进程需要用 in-flight task 去重，否则会重复下载同一 preset。
+- “全屏视觉跟随、局部交互捕获”需要拆成两条链路：主进程用 `screen.getCursorScreenPoint()` 广播全局光标给 overlay，`Live2DWidget` 只消费这份坐标去调用模型 `focus()`。
+- 悬浮窗仍应只在模型/工具区接管鼠标，但模型按下后的拖拽阶段必须加交互锁，避免鼠标离开模型边缘时重新穿透导致拖拽或点击收尾丢失。
+- Overlay 里如果通过组件 ref 取 `$el` 做命中检测，隐藏态组件根节点可能是注释节点而不是 HTMLElement；调用 `getBoundingClientRect()` 前必须先判断该方法是否存在。
+- `applyModelLayout()` 不能直接用当前已缩放的 `getBounds()` 结果再次反推缩放，否则重复布局时会在“小一圈”和“放大到溢出”之间震荡；应优先使用模型内部原始尺寸，退化时再用 `bounds / currentScale` 还原源尺寸。
+- `release/win-unpacked` 正在运行时，electron-builder 不能原位清空输出目录；会在删除 DLL 时因为占用失败。需要先关闭现有进程，或临时改到新的 output 目录打包验证。

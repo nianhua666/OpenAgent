@@ -1,0 +1,77 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, Live2DCursorPoint } from '../src/types'
+
+// 安全地向渲染进程暴露 API
+contextBridge.exposeInMainWorld('electronAPI', {
+  // 窗口控制
+  minimize: () => ipcRenderer.send('window:minimize'),
+  maximize: () => ipcRenderer.send('window:maximize'),
+  close: () => ipcRenderer.send('window:close'),
+  startWindowDrag: (pointer: { x: number; y: number }) => ipcRenderer.send('window:startDrag', pointer),
+  updateWindowDrag: (pointer: { x: number; y: number }) => ipcRenderer.send('window:updateDrag', pointer),
+  endWindowDrag: () => ipcRenderer.send('window:endDrag'),
+  setWindowIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.send('window:setIgnoreMouseEvents', ignore),
+  showMainWindow: () => ipcRenderer.send('app:showMainWindow'),
+  navigateMainWindow: (hashPath?: string) => ipcRenderer.send('app:navigateMainWindow', hashPath),
+  hideMainWindow: () => ipcRenderer.send('app:hideMainWindow'),
+  toggleMainWindow: () => ipcRenderer.send('app:toggleMainWindow'),
+  showLive2DWindow: () => ipcRenderer.send('app:showLive2DWindow'),
+  hideLive2DWindow: () => ipcRenderer.send('app:hideLive2DWindow'),
+  toggleLive2DWindow: () => ipcRenderer.send('app:toggleLive2DWindow'),
+  onLive2DCursorPoint: (callback: (point: Live2DCursorPoint) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, point: Live2DCursorPoint) => callback(point)
+    ipcRenderer.on('live2d:cursorPoint', listener)
+
+    return () => {
+      ipcRenderer.removeListener('live2d:cursorPoint', listener)
+    }
+  },
+  isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  onMaximized: (callback: (maximized: boolean) => void) => {
+    ipcRenderer.on('window:maximized', (_event, val) => callback(val))
+  },
+  onSettingsChanged: (callback: (settings: unknown) => void) => {
+    ipcRenderer.on('settings:changed', (_event, settings) => callback(settings))
+  },
+  onStoreChanged: (callback: (key: string, data: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, key: string, data: unknown) => callback(key, data)
+    ipcRenderer.on('store:changed', listener)
+
+    return () => {
+      ipcRenderer.removeListener('store:changed', listener)
+    }
+  },
+
+  // 数据存储
+  storeGet: (key: string) => ipcRenderer.invoke('store:get', key),
+  storeSet: (key: string, data: unknown) => ipcRenderer.invoke('store:set', key, data),
+
+  // 文件对话框
+  exportJson: (name: string, data: unknown) => ipcRenderer.invoke('dialog:exportJson', name, data),
+  importJson: () => ipcRenderer.invoke('dialog:importJson'),
+  chooseDirectory: (title: string, defaultPath?: string) => ipcRenderer.invoke('dialog:chooseDirectory', title, defaultPath),
+  listLive2DModels: () => ipcRenderer.invoke('live2d:listModels'),
+  cacheLive2DRemoteModel: (payload: unknown) => ipcRenderer.invoke('live2d:cacheRemoteModel', payload),
+  deleteLive2DModel: (runtimePath: string) => ipcRenderer.invoke('live2d:deleteModel', runtimePath),
+  importLive2DModel: () => ipcRenderer.invoke('live2d:importModel'),
+  resolveLive2DPath: (runtimePath: string) => ipcRenderer.invoke('live2d:resolvePath', runtimePath),
+  getLive2DPaths: () => ipcRenderer.invoke('live2d:getPaths'),
+
+  // 系统
+  getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
+  getRuntimeDataStorageInfo: () => ipcRenderer.invoke('app:getRuntimeDataStorageInfo'),
+  switchRuntimeDataStorage: (payload: { mode: 'auto' | 'custom'; targetPath?: string }) => ipcRenderer.invoke('app:switchRuntimeDataStorage', payload),
+  readImageAsDataUrl: (filePath: string) => ipcRenderer.invoke('file:readImageAsDataUrl', filePath),
+  openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
+
+  // MCP 工具
+  mcpExecuteCommand: (command: string) => ipcRenderer.invoke('mcp:executeCommand', command),
+  mcpCaptureScreen: (payload: { region?: 'full' | 'active' | 'window'; windowId?: number; windowHandle?: string; windowTitle?: string; processName?: string }) => ipcRenderer.invoke('mcp:captureScreen', payload),
+  mcpMouseClick: (x: number, y: number, button: string, clickType: string) => ipcRenderer.invoke('mcp:mouseClick', x, y, button, clickType),
+  mcpKeyboardInput: (payload: { text?: string; keys?: string; windowId?: number; windowHandle?: string; windowTitle?: string; processName?: string }) => ipcRenderer.invoke('mcp:keyboardInput', payload),
+  mcpListWindows: () => ipcRenderer.invoke('mcp:listWindows'),
+  mcpFocusWindow: (payload: { id?: number; windowHandle?: string; title?: string; processName?: string }) => ipcRenderer.invoke('mcp:focusWindow', payload),
+  mcpInspectManagedServer: (payload: { command: string; args?: string[]; env?: Record<string, string>; cwd?: string }) => ipcRenderer.invoke('mcp:inspectManagedServer', payload) as Promise<AIManagedMCPServerInspection>,
+  mcpCallManagedTool: (payload: { command: string; args?: string[]; env?: Record<string, string>; cwd?: string; toolName: string; arguments?: Record<string, unknown> }) => ipcRenderer.invoke('mcp:callManagedTool', payload),
+  mcpInstallManagedPackage: (payload: { serverId: string; packageName: string; entryCommand?: string; args?: string[] }) => ipcRenderer.invoke('mcp:installManagedPackage', payload) as Promise<AIManagedMCPPackageInstallResult>
+})

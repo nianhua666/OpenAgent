@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+release-current/
+tmp/
+build/package-output.log
+*.local
+.DS_Store
+thumbs.db
