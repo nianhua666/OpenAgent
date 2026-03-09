@@ -5,6 +5,7 @@ release/
 release-current/
 tmp/
 build/package-output.log
+gcm-diagnose.log
 *.local
 .DS_Store
 thumbs.db
