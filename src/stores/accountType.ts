@@ -37,6 +37,11 @@ export const useAccountTypeStore = defineStore('accountType', () => {
     await saveData('accountTypes', types.value)
   }
 
+  async function setAllTypes(nextTypes: AccountType[]) {
+    applyTypesSnapshot(nextTypes)
+    await save()
+  }
+
   async function addType(data: Omit<AccountType, 'id' | 'createdAt' | 'updatedAt'>): Promise<AccountType> {
     const now = Date.now()
     const type: AccountType = {
@@ -77,6 +82,7 @@ export const useAccountTypeStore = defineStore('accountType', () => {
     typeCount,
     init,
     save,
+    setAllTypes,
     addType,
     updateType,
     removeType,

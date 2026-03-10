@@ -3,6 +3,7 @@ import type { TTSEngine, TTSEmotionStyle, TTSModelLibraryItem, TTSVoiceLibraryIt
 export const KOKORO_TTS_ENGINE: TTSEngine = 'kokoro-js-zh'
 export const SYSTEM_TTS_ENGINE: TTSEngine = 'system-speech'
 export const EDGE_TTS_ENGINE: TTSEngine = 'edge-neural'
+export const AZURE_TTS_ENGINE: TTSEngine = 'azure-speech'
 export const DEFAULT_TTS_ENGINE: TTSEngine = KOKORO_TTS_ENGINE
 export const DEFAULT_TTS_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 export const DEFAULT_TTS_VOICE_ID = 'zf_xiaobei'
@@ -10,11 +11,18 @@ export const SYSTEM_TTS_MODEL_ID = 'system:default'
 export const SYSTEM_TTS_VOICE_ID = 'system:auto'
 export const EDGE_TTS_MODEL_ID = 'edge:neural'
 export const EDGE_TTS_VOICE_ID = 'edge:zh-CN-XiaoxiaoNeural'
+export const AZURE_TTS_MODEL_ID = 'azure:speech'
+export const AZURE_TTS_VOICE_ID = 'azure:zh-CN-XiaoxiaoNeural'
 export const DEFAULT_TTS_SAMPLE_TEXT = '你好，我是 OpenAgent 的 Live2D 语音助手。'
 export const DEFAULT_TTS_EMOTION_STYLE: TTSEmotionStyle = 'auto'
 export const DEFAULT_TTS_EMOTION_INTENSITY = 1.1
 
 export const TTS_ENGINE_OPTIONS: Array<{ value: TTSEngine; label: string; description: string }> = [
+  {
+    value: AZURE_TTS_ENGINE,
+    label: 'Azure Speech 情绪语音',
+    description: '官方神经语音，支持 mstts:express-as 与 styledegree 的真实情绪播报，需要填写 Azure Speech Key 和 Region。'
+  },
   {
     value: EDGE_TTS_ENGINE,
     label: 'Edge 神经语音',
@@ -35,17 +43,29 @@ export const TTS_ENGINE_OPTIONS: Array<{ value: TTSEngine; label: string; descri
 export const TTS_EMOTION_STYLE_OPTIONS: Array<{ value: TTSEmotionStyle; label: string; description: string }> = [
   { value: 'auto', label: '自动感情', description: '根据回复内容自动在亲和、鼓舞、说明、安慰等语气间切换。' },
   { value: 'neutral', label: '中性', description: '关闭情绪风格，保持自然但克制的中性播报。' },
-  { value: 'assistant', label: '助手', description: '更像数字助理，适合默认 AI 回复。' },
+  { value: 'assistant', label: '助手', description: '适合数字助理式回复，Azure 与 Edge 都容易成立。' },
+  { value: 'chat', label: '聊天', description: '更口语化、更像真人对话。' },
+  { value: 'chat-casual', label: '随意聊天', description: '比普通聊天更松弛，适合陪伴式回复。' },
+  { value: 'customerservice', label: '客服', description: '更友好、更耐心，适合帮助与答疑。' },
   { value: 'friendly', label: '亲切', description: '更温和、更靠近陪伴式对话。' },
+  { value: 'affectionate', label: '柔和亲昵', description: '更柔软、更有温度，适合安抚与贴心提醒。' },
   { value: 'cheerful', label: '愉快', description: '适合积极反馈、鼓励和欢迎语。' },
   { value: 'excited', label: '兴奋', description: '适合强烈正反馈和高能播报。' },
   { value: 'hopeful', label: '期待', description: '适合鼓励、展望和轻度激励场景。' },
   { value: 'empathetic', label: '共情', description: '适合安慰、解释限制或照顾用户情绪。' },
+  { value: 'sorry', label: '歉意', description: '适合道歉、遗憾和低姿态说明。' },
   { value: 'calm', label: '沉稳', description: '适合说明步骤、回报结果和长句播报。' },
+  { value: 'gentle', label: '轻柔', description: '更克制、更柔和，适合夜间或轻提示。' },
   { value: 'narration-relaxed', label: '舒缓旁白', description: '适合较长解释和陪伴式朗读。' },
   { value: 'narration-professional', label: '专业旁白', description: '适合正式说明、总结和报告。' },
+  { value: 'newscast', label: '播报', description: '适合结果宣读、简报和总结式输出。' },
+  { value: 'lyrical', label: '抒情', description: '适合更感性的中文表达。' },
+  { value: 'angry', label: '强硬', description: '适合严厉警告和问题追责场景。' },
+  { value: 'fearful', label: '紧张', description: '适合风险、异常和危险提示。' },
+  { value: 'disgruntled', label: '不满', description: '适合抱怨、负反馈和明显不悦的语气。' },
   { value: 'serious', label: '严肃', description: '适合风险提示、错误说明和警告。' },
-  { value: 'sad', label: '低落', description: '适合遗憾、致歉或柔和的失落语气。' }
+  { value: 'sad', label: '低落', description: '适合遗憾、致歉或柔和的失落语气。' },
+  { value: 'whispering', label: '低语', description: '适合悄声提醒和更私密的表达。' }
 ]
 
 const LEGACY_TTS_MODEL_ID_MAP: Record<string, string> = {
@@ -63,6 +83,40 @@ const BUILTIN_TTS_VOICE_IDS = new Set<string>([
 ])
 
 const EDGE_VOICE_DOCS_URL = 'https://learn.microsoft.com/azure/ai-services/speech-service/language-support?tabs=tts'
+const AZURE_VOICE_DOCS_URL = 'https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support?tabs=tts#voice-styles-and-roles'
+
+const AZURE_FALLBACK_VOICE_META: Record<string, { name: string; accent: string; description: string; sampleText: string; emotionStyles?: TTSEmotionStyle[]; roles?: string[]; recommended?: boolean }> = {
+  'zh-CN-XiaoxiaoNeural': {
+    name: '晓晓',
+    accent: '普通话',
+    description: 'Azure 官方中文女声，情绪风格最丰富，适合作为默认的真情绪 AI 主播报音色。',
+    sampleText: '你好，我现在可以用更真实的情绪风格继续播报这轮结果。',
+    emotionStyles: ['assistant', 'chat', 'chat-casual', 'cheerful', 'customerservice', 'excited', 'friendly', 'sorry', 'sad', 'serious', 'whispering', 'affectionate', 'angry', 'fearful', 'gentle', 'lyrical'],
+    recommended: true
+  },
+  'zh-CN-XiaoyiNeural': {
+    name: '晓伊',
+    accent: '普通话',
+    description: '更有戏感的中文女声，适合柔和、低落、严肃和明显情绪起伏的表达。',
+    sampleText: '这部分我会用更细腻的情绪语气来说明。',
+    emotionStyles: ['cheerful', 'sad', 'serious', 'affectionate', 'angry', 'fearful', 'gentle', 'disgruntled']
+  },
+  'zh-CN-YunxiNeural': {
+    name: '云希',
+    accent: '普通话',
+    description: '中文男声里兼顾讲解与情绪表达，适合助手、播报和旁白场景。',
+    sampleText: '当前信息已经确认，我会用更自然的情绪继续说明。',
+    emotionStyles: ['assistant', 'chat', 'cheerful', 'newscast', 'narration-relaxed', 'sad', 'serious', 'angry', 'fearful', 'disgruntled'],
+    roles: ['Boy', 'Narrator', 'YoungAdultMale']
+  },
+  'zh-CN-YunyangNeural': {
+    name: '云扬',
+    accent: '普通话',
+    description: '偏专业与播报感的中文男声，适合客户服务、报告和正式说明。',
+    sampleText: '接下来我会用更专业的中文播报把结果讲清楚。',
+    emotionStyles: ['customerservice', 'narration-professional', 'newscast']
+  }
+}
 
 const EDGE_FALLBACK_VOICE_META: Record<string, { name: string; accent: string; description: string; sampleText: string; recommended?: boolean }> = {
   'zh-CN-XiaoxiaoNeural': {
@@ -155,6 +209,36 @@ function createSystemFallbackVoice(id: string, name: string, locale = 'zh-CN', a
   }
 }
 
+function createAzureFallbackVoice(shortName: string, locale: string, gender: 'female' | 'male'): TTSVoiceLibraryItem {
+  const meta = AZURE_FALLBACK_VOICE_META[shortName] || {
+    name: shortName.replace(/^zh-[A-Z-]+-/, '').replace(/Neural$/i, ''),
+    accent: locale,
+    description: 'Azure Speech 在线神经语音，可通过官方 style 与 styledegree 输出更真实的情绪语气。',
+    sampleText: DEFAULT_TTS_SAMPLE_TEXT,
+    emotionStyles: [] as TTSEmotionStyle[],
+    roles: [] as string[],
+    recommended: false
+  }
+
+  return {
+    id: createAzureTTSVoiceId(shortName),
+    engine: AZURE_TTS_ENGINE,
+    modelId: AZURE_TTS_MODEL_ID,
+    name: meta.name,
+    locale,
+    gender,
+    accent: meta.accent,
+    description: meta.description,
+    sampleText: meta.sampleText,
+    sourceLabel: 'Azure Speech',
+    sourceUrl: AZURE_VOICE_DOCS_URL,
+    emotionStyles: meta.emotionStyles,
+    roles: meta.roles,
+    recommended: meta.recommended,
+    builtIn: false
+  }
+}
+
 function createEdgeFallbackVoice(shortName: string, locale: string, gender: 'female' | 'male'): TTSVoiceLibraryItem {
   const meta = EDGE_FALLBACK_VOICE_META[shortName] || {
     name: shortName.replace(/^zh-[A-Z-]+-/, '').replace(/Neural$/i, ''),
@@ -182,6 +266,10 @@ function createEdgeFallbackVoice(shortName: string, locale: string, gender: 'fem
 }
 
 export function normalizeTTSEngine(engine?: string | null): TTSEngine {
+  if (engine === AZURE_TTS_ENGINE) {
+    return AZURE_TTS_ENGINE
+  }
+
   if (engine === SYSTEM_TTS_ENGINE) {
     return SYSTEM_TTS_ENGINE
   }
@@ -201,6 +289,10 @@ export function isEdgeTTSEngine(engine?: string | null) {
   return normalizeTTSEngine(engine) === EDGE_TTS_ENGINE
 }
 
+export function isAzureTTSEngine(engine?: string | null) {
+  return normalizeTTSEngine(engine) === AZURE_TTS_ENGINE
+}
+
 export function createSystemTTSVoiceId(rawVoiceId: string) {
   const normalized = rawVoiceId.trim()
   return normalized ? `system:${normalized}` : SYSTEM_TTS_VOICE_ID
@@ -211,12 +303,21 @@ export function createEdgeTTSVoiceId(rawVoiceId: string) {
   return normalized ? `edge:${normalized}` : EDGE_TTS_VOICE_ID
 }
 
+export function createAzureTTSVoiceId(rawVoiceId: string) {
+  const normalized = rawVoiceId.trim()
+  return normalized ? `azure:${normalized}` : AZURE_TTS_VOICE_ID
+}
+
 export function isSystemTTSVoiceId(voiceId?: string | null) {
   return typeof voiceId === 'string' && voiceId.startsWith('system:')
 }
 
 export function isEdgeTTSVoiceId(voiceId?: string | null) {
   return typeof voiceId === 'string' && voiceId.startsWith('edge:')
+}
+
+export function isAzureTTSVoiceId(voiceId?: string | null) {
+  return typeof voiceId === 'string' && voiceId.startsWith('azure:')
 }
 
 export function stripSystemTTSVoiceId(voiceId?: string | null) {
@@ -235,6 +336,14 @@ export function stripEdgeTTSVoiceId(voiceId?: string | null) {
   return voiceId.replace(/^edge:/, '').trim()
 }
 
+export function stripAzureTTSVoiceId(voiceId?: string | null) {
+  if (!voiceId) {
+    return ''
+  }
+
+  return voiceId.replace(/^azure:/, '').trim()
+}
+
 export function normalizeTTSEmotionStyle(style?: string | null): TTSEmotionStyle {
   return TTS_EMOTION_STYLE_OPTIONS.find(item => item.value === style)?.value || DEFAULT_TTS_EMOTION_STYLE
 }
@@ -249,6 +358,10 @@ export function clampTTSEmotionIntensity(value?: number | null) {
 
 function resolveEngineFromModelId(modelId?: string | null) {
   const normalized = modelId?.trim()
+  if (normalized?.startsWith('azure:')) {
+    return AZURE_TTS_ENGINE
+  }
+
   if (normalized?.startsWith('system:')) {
     return SYSTEM_TTS_ENGINE
   }
@@ -261,6 +374,10 @@ function resolveEngineFromModelId(modelId?: string | null) {
 }
 
 export function getDefaultTTSModelId(engine: TTSEngine = DEFAULT_TTS_ENGINE) {
+  if (engine === AZURE_TTS_ENGINE) {
+    return AZURE_TTS_MODEL_ID
+  }
+
   if (engine === SYSTEM_TTS_ENGINE) {
     return SYSTEM_TTS_MODEL_ID
   }
@@ -273,6 +390,10 @@ export function getDefaultTTSModelId(engine: TTSEngine = DEFAULT_TTS_ENGINE) {
 }
 
 export function getDefaultTTSVoiceId(engine: TTSEngine = DEFAULT_TTS_ENGINE) {
+  if (engine === AZURE_TTS_ENGINE) {
+    return AZURE_TTS_VOICE_ID
+  }
+
   if (engine === SYSTEM_TTS_ENGINE) {
     return SYSTEM_TTS_VOICE_ID
   }
@@ -289,6 +410,10 @@ export function normalizeTTSModelId(modelId?: string | null, engine?: TTSEngine)
   const normalized = modelId?.trim()
   if (!normalized) {
     return getDefaultTTSModelId(resolvedEngine)
+  }
+
+  if (resolvedEngine === AZURE_TTS_ENGINE) {
+    return AZURE_TTS_MODEL_ID
   }
 
   if (resolvedEngine === SYSTEM_TTS_ENGINE) {
@@ -330,6 +455,19 @@ export const TTS_MODEL_LIBRARY: TTSModelLibraryItem[] = [
     remote: true
   },
   {
+    id: AZURE_TTS_MODEL_ID,
+    engine: AZURE_TTS_ENGINE,
+    modelId: AZURE_TTS_MODEL_ID,
+    name: 'Azure Speech 官方情绪语音',
+    description: '官方 Azure Speech 在线神经语音。支持 mstts:express-as、styledegree 和部分角色扮演，是当前“真正情绪语音”的推荐路径。',
+    language: 'zh-CN',
+    sourceLabel: 'Azure Speech REST API',
+    sourceUrl: 'https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech',
+    defaultVoiceId: AZURE_TTS_VOICE_ID,
+    recommended: true,
+    remote: true
+  },
+  {
     id: EDGE_TTS_MODEL_ID,
     engine: EDGE_TTS_ENGINE,
     modelId: EDGE_TTS_MODEL_ID,
@@ -358,6 +496,10 @@ export const TTS_MODEL_LIBRARY: TTSModelLibraryItem[] = [
 ]
 
 export const TTS_VOICE_LIBRARY: TTSVoiceLibraryItem[] = [
+  createAzureFallbackVoice('zh-CN-XiaoxiaoNeural', 'zh-CN', 'female'),
+  createAzureFallbackVoice('zh-CN-XiaoyiNeural', 'zh-CN', 'female'),
+  createAzureFallbackVoice('zh-CN-YunxiNeural', 'zh-CN', 'male'),
+  createAzureFallbackVoice('zh-CN-YunyangNeural', 'zh-CN', 'male'),
   createEdgeFallbackVoice('zh-CN-XiaoxiaoNeural', 'zh-CN', 'female'),
   createEdgeFallbackVoice('zh-CN-XiaoyiNeural', 'zh-CN', 'female'),
   createEdgeFallbackVoice('zh-CN-YunjianNeural', 'zh-CN', 'male'),
@@ -434,7 +576,9 @@ export function getTTSModelOption(modelId: string, engine?: TTSEngine) {
   const resolvedEngine = normalizeTTSEngine(engine || resolveEngineFromModelId(modelId))
   const normalizedModelId = normalizeTTSModelId(modelId, resolvedEngine)
   return TTS_MODEL_LIBRARY.find(item => item.engine === resolvedEngine && (item.modelId === normalizedModelId || item.id === normalizedModelId || item.aliasIds?.includes(normalizedModelId)))
-    ?? (resolvedEngine === SYSTEM_TTS_ENGINE
+    ?? (resolvedEngine === AZURE_TTS_ENGINE
+      ? TTS_MODEL_LIBRARY.find(item => item.id === AZURE_TTS_MODEL_ID)!
+      : resolvedEngine === SYSTEM_TTS_ENGINE
       ? TTS_MODEL_LIBRARY.find(item => item.id === SYSTEM_TTS_MODEL_ID)!
       : resolvedEngine === EDGE_TTS_ENGINE
         ? TTS_MODEL_LIBRARY.find(item => item.id === EDGE_TTS_MODEL_ID)!
@@ -443,6 +587,10 @@ export function getTTSModelOption(modelId: string, engine?: TTSEngine) {
 
 export function listTTSVoices(modelId = DEFAULT_TTS_MODEL_ID, engine?: TTSEngine) {
   const resolvedEngine = normalizeTTSEngine(engine || resolveEngineFromModelId(modelId))
+  if (resolvedEngine === AZURE_TTS_ENGINE) {
+    return TTS_VOICE_LIBRARY.filter(item => item.engine === AZURE_TTS_ENGINE)
+  }
+
   if (resolvedEngine === SYSTEM_TTS_ENGINE) {
     return TTS_VOICE_LIBRARY.filter(item => item.engine === SYSTEM_TTS_ENGINE)
   }
@@ -467,6 +615,12 @@ export function listTTSVoices(modelId = DEFAULT_TTS_MODEL_ID, engine?: TTSEngine
 export function getTTSVoiceOption(voiceId: string, modelId = DEFAULT_TTS_MODEL_ID, engine?: TTSEngine) {
   const resolvedEngine = normalizeTTSEngine(engine || resolveEngineFromModelId(modelId))
   const voices = listTTSVoices(modelId, resolvedEngine)
+
+  if (resolvedEngine === AZURE_TTS_ENGINE) {
+    const normalizedVoiceId = isAzureTTSVoiceId(voiceId) ? voiceId : AZURE_TTS_VOICE_ID
+    return voices.find(item => item.id === normalizedVoiceId)
+      ?? createAzureFallbackVoice(stripAzureTTSVoiceId(normalizedVoiceId) || stripAzureTTSVoiceId(AZURE_TTS_VOICE_ID), 'zh-CN', 'female')
+  }
 
   if (resolvedEngine === SYSTEM_TTS_ENGINE) {
     const normalizedVoiceId = isSystemTTSVoiceId(voiceId) ? voiceId : SYSTEM_TTS_VOICE_ID

@@ -253,6 +253,10 @@ export const useAIResourcesStore = defineStore('aiResources', () => {
     await saveData(RESOURCE_STORE_KEY, registry.value)
   }
 
+  function getRegistryExportData() {
+    return normalizeRegistry(registry.value)
+  }
+
   async function init() {
     registry.value = normalizeRegistry(await loadData<AIManagedResourceRegistry>(RESOURCE_STORE_KEY, DEFAULT_RESOURCE_REGISTRY))
     bindElectronResourceSync()
@@ -380,6 +384,12 @@ export const useAIResourcesStore = defineStore('aiResources', () => {
     return true
   }
 
+  async function importRegistryData(snapshot: AIManagedResourceRegistry | null | undefined) {
+    registry.value = normalizeRegistry(snapshot)
+    await persistRegistry()
+    return registry.value
+  }
+
   function getManagedMcpServer(serverId: string) {
     return registry.value.mcpServers.find(server => server.id === serverId) ?? null
   }
@@ -412,6 +422,8 @@ export const useAIResourcesStore = defineStore('aiResources', () => {
     upsertManagedSkill,
     setManagedSkillEnabled,
     removeManagedSkill,
+    getRegistryExportData,
+    importRegistryData,
     getManagedMcpServer,
     findManagedMcpTool,
     findManagedMcpServerBySignature,

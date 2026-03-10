@@ -1,6 +1,9 @@
 import { KokoroTTS } from 'kokoro-js-zh'
 import type { TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem } from '@/types'
 import {
+  AZURE_TTS_ENGINE,
+  AZURE_TTS_MODEL_ID,
+  AZURE_TTS_VOICE_ID,
   DEFAULT_TTS_ENGINE,
   DEFAULT_TTS_MODEL_ID,
   DEFAULT_TTS_VOICE_ID,
@@ -13,6 +16,7 @@ import {
   SYSTEM_TTS_VOICE_ID,
   createSystemTTSVoiceId,
   getTTSVoiceOption,
+  isAzureTTSEngine,
   isBuiltinTTSVoice,
   isBuiltinTTSModel,
   isEdgeTTSEngine,
@@ -179,6 +183,12 @@ function hasNativeSystemTTSBridge() {
   return typeof window !== 'undefined'
     && typeof window.electronAPI?.listSystemTTSVoices === 'function'
     && typeof window.electronAPI?.synthesizeSystemTTS === 'function'
+}
+
+function hasNativeAzureTTSBridge() {
+  return typeof window !== 'undefined'
+    && typeof window.electronAPI?.listAzureTTSVoices === 'function'
+    && typeof window.electronAPI?.synthesizeAzureTTS === 'function'
 }
 
 function hasNativeEdgeTTSBridge() {
@@ -490,8 +500,28 @@ export function isSystemSpeechSupported() {
   return hasNativeSystemTTSBridge() || Boolean(getSpeechSynthesisInstance())
 }
 
+export function isAzureSpeechSupported() {
+  return hasNativeAzureTTSBridge()
+}
+
 export function isEdgeSpeechSupported() {
   return hasNativeEdgeTTSBridge()
+}
+
+export async function listAzureSpeechVoices() {
+  if (!hasNativeAzureTTSBridge()) {
+    return []
+  }
+
+  const remoteVoices = await window.electronAPI.listAzureTTSVoices()
+  const orderedVoices = [...remoteVoices].sort((left, right) => {
+    const leftWeight = /zh-cn/i.test(left.locale) ? 0 : /zh/i.test(left.locale) ? 1 : 2
+    const rightWeight = /zh-cn/i.test(right.locale) ? 0 : /zh/i.test(right.locale) ? 1 : 2
+    return leftWeight - rightWeight || left.name.localeCompare(right.name, 'zh-Hans-CN')
+  })
+
+  const defaultVoice = getTTSVoiceOption(AZURE_TTS_VOICE_ID, AZURE_TTS_MODEL_ID, AZURE_TTS_ENGINE)
+  return [defaultVoice, ...orderedVoices.filter(voice => voice.id !== defaultVoice.id)]
 }
 
 export async function listEdgeSpeechVoices() {
@@ -547,6 +577,70 @@ export function stopSystemSpeechPlayback() {
   if (synthesis.speaking || synthesis.pending) {
     synthesis.cancel()
   }
+}
+
+export async function playAzureSpeech(payload: TTSSynthesizePayload, volume = 1): Promise<TTSSynthesisResult> {
+  if (!hasNativeAzureTTSBridge()) {
+    throw new Error('当前环境暂不支持 Azure 情绪语音播报')
+  }
+
+  const normalizedText = normalizeTTSInputText(payload.text)
+  if (!normalizedText) {
+    throw new Error('缺少要播报的文本')
+  }
+
+  emitTTSRuntimeProgress({
+    status: 'generating',
+    engine: AZURE_TTS_ENGINE,
+    voiceId: payload.voiceId,
+    textLength: normalizedText.length,
+    emotionStyle: payload.emotionStyle,
+    emotionIntensity: payload.emotionIntensity
+  })
+
+  stopSystemSpeechPlayback()
+  const result = await window.electronAPI.synthesizeAzureTTS({
+    ...payload,
+    text: normalizedText,
+    engine: AZURE_TTS_ENGINE,
+    modelId: AZURE_TTS_MODEL_ID
+  })
+
+  if (!result.success || !result.audioBase64) {
+    const message = result.error || 'Azure 情绪语音播放失败'
+    emitTTSRuntimeProgress({
+      status: 'failed',
+      engine: AZURE_TTS_ENGINE,
+      error: message
+    })
+    throw new Error(message)
+  }
+
+  currentSystemAudioUrl = createObjectUrlFromBase64(result.audioBase64, result.mimeType || 'audio/mpeg')
+  const audio = new Audio(currentSystemAudioUrl)
+  audio.volume = clampNumber(volume, 0, 1, 1)
+  currentSystemAudio = audio
+
+  audio.addEventListener('ended', () => {
+    if (currentSystemAudio === audio) {
+      stopCurrentSystemAudio()
+    }
+  }, { once: true })
+
+  audio.addEventListener('error', () => {
+    if (currentSystemAudio === audio) {
+      stopCurrentSystemAudio()
+    }
+  }, { once: true })
+
+  await audio.play()
+  emitTTSRuntimeProgress({
+    status: 'generated',
+    engine: AZURE_TTS_ENGINE,
+    voiceId: result.voiceId,
+    durationMs: result.durationMs
+  })
+  return result
 }
 
 export async function playEdgeSpeech(payload: TTSSynthesizePayload, volume = 1): Promise<TTSSynthesisResult> {
@@ -816,6 +910,16 @@ export async function synthesizeTextToSpeech(payload: TTSSynthesizePayload): Pro
       voiceId: voiceOption.id,
       text: normalizedText
     }, voiceOption.name, '系统语音引擎不输出离线音频文件，请直接调用播放接口')
+  }
+
+  if (isAzureTTSEngine(engine)) {
+    return buildErrorResult({
+      ...payload,
+      engine,
+      modelId,
+      voiceId: voiceOption.id,
+      text: normalizedText
+    }, voiceOption.name, 'Azure 情绪语音通过主进程直接播放，请调用实时播放接口')
   }
 
   if (isEdgeTTSEngine(engine)) {

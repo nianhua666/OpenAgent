@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLive2DPaths: () => ipcRenderer.invoke('live2d:getPaths'),
   listSystemTTSVoices: () => ipcRenderer.invoke('tts:listSystemVoices'),
   synthesizeSystemTTS: (payload: unknown) => ipcRenderer.invoke('tts:synthesizeSystem', payload),
+  listAzureTTSVoices: () => ipcRenderer.invoke('tts:listAzureVoices'),
+  synthesizeAzureTTS: (payload: unknown) => ipcRenderer.invoke('tts:synthesizeAzure', payload),
   listEdgeTTSVoices: () => ipcRenderer.invoke('tts:listEdgeVoices'),
   synthesizeEdgeTTS: (payload: unknown) => ipcRenderer.invoke('tts:synthesizeEdge', payload),
 

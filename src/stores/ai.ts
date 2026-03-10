@@ -94,6 +94,22 @@ const DEFAULT_ACTIVE_SESSIONS: AIActiveSessions = {
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let electronAIStoreSyncBound = false
 
+type AIConfigExportData = {
+  config: AIConfig
+  preferences: AIChatPreferences
+}
+
+type AIMemoryExportData = {
+  sessions: AIChatSession[]
+  memories: AIMemoryEntry[]
+  tasks: AIAgentTask[]
+  activeSessionIds: AIActiveSessions
+}
+
+function cloneSerializable<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data)) as T
+}
+
 function normalizeConversationScope(scope: string | undefined): AIConversationScope {
   return scope === 'live2d' ? 'live2d' : 'main'
 }
@@ -578,6 +594,87 @@ export const useAIStore = defineStore('ai', () => {
   async function updatePreferences(partial: Partial<AIChatPreferences>) {
     preferences.value = normalizePreferences({ ...preferences.value, ...partial }, config.value)
     await saveData('ai_preferences', preferences.value)
+  }
+
+  function getConfigExportData(): AIConfigExportData {
+    return cloneSerializable({
+      config: config.value,
+      preferences: preferences.value
+    })
+  }
+
+  async function importConfigData(snapshot: Partial<AIConfigExportData> | null | undefined) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return getConfigExportData()
+    }
+
+    if (snapshot.config) {
+      applyConfigSnapshot(snapshot.config)
+    }
+
+    if (snapshot.preferences) {
+      applyPreferencesSnapshot(snapshot.preferences)
+    }
+
+    await Promise.all([
+      saveData('ai_config', config.value),
+      saveData('ai_preferences', preferences.value)
+    ])
+
+    if (runtime.value.sessionId) {
+      updateRuntimeContext(runtime.value.sessionId, getContextMetrics(runtime.value.sessionId))
+    }
+
+    return getConfigExportData()
+  }
+
+  function getMemoryExportData(): AIMemoryExportData {
+    return cloneSerializable({
+      sessions: sessions.value,
+      memories: memories.value,
+      tasks: tasks.value,
+      activeSessionIds: activeSessionIds.value
+    })
+  }
+
+  async function importMemoryData(snapshot: Partial<AIMemoryExportData> | null | undefined) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return getMemoryExportData()
+    }
+
+    applySessionsSnapshot(snapshot.sessions ?? [])
+    applyMemoriesSnapshot(snapshot.memories ?? [])
+    applyTasksSnapshot(snapshot.tasks ?? [])
+
+    const sessionIds = new Set(sessions.value.map(session => session.id))
+    const recoveredAt = Date.now()
+    tasks.value = tasks.value
+      .filter(task => sessionIds.has(task.sessionId))
+      .map(task => {
+        if (task.status !== 'planning' && task.status !== 'running') {
+          return task
+        }
+
+        return {
+          ...task,
+          status: 'blocked',
+          summary: normalizeRecoveredTaskSummary(task.summary || ''),
+          updatedAt: recoveredAt
+        }
+      })
+
+    applyActiveSessionsSnapshot(snapshot.activeSessionIds ?? DEFAULT_ACTIVE_SESSIONS)
+    clearRuntime()
+
+    await Promise.all([
+      saveData('ai_sessions', sessions.value),
+      saveData('ai_memories', memories.value),
+      saveData('ai_tasks', tasks.value),
+      saveData('ai_active_sessions', activeSessionIds.value),
+      saveData('ai_active_session', activeSessionIds.value.main)
+    ])
+
+    return getMemoryExportData()
   }
 
   function getSessionById(sessionId: string) {
@@ -1150,6 +1247,10 @@ export const useAIStore = defineStore('ai', () => {
     init,
     updateConfig,
     updatePreferences,
+    getConfigExportData,
+    importConfigData,
+    getMemoryExportData,
+    importMemoryData,
     createSession,
     switchSession,
     getActiveSessionId,

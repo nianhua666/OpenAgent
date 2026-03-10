@@ -35,6 +35,8 @@ interface ElectronAPI {
   getLive2DPaths: () => Promise<Live2DStoragePaths>
   listSystemTTSVoices: () => Promise<TTSVoiceLibraryItem[]>
   synthesizeSystemTTS: (payload: TTSSynthesizePayload) => Promise<TTSSynthesisResult>
+  listAzureTTSVoices: () => Promise<TTSVoiceLibraryItem[]>
+  synthesizeAzureTTS: (payload: TTSSynthesizePayload) => Promise<TTSSynthesisResult>
   listEdgeTTSVoices: () => Promise<TTSVoiceLibraryItem[]>
   synthesizeEdgeTTS: (payload: TTSSynthesizePayload) => Promise<TTSSynthesisResult>
   getDataPath: () => Promise<string>

@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, net, scre
 import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
+import { registerAzureTTSHandlers } from './azureSpeech'
 import { ensureLive2DDirs, listLive2DLibraryItems, migrateLive2DStorageData, registerLive2DHandlers, registerLive2DProtocol, setLive2DDebugLogger, setLive2DStorageDirResolver } from './live2d'
 import { listEdgeNeuralVoices, registerEdgeTTSHandlers, synthesizeEdgeSpeech } from './edgeTts'
 import { registerRuntimeAssetProtocol } from './runtimeAssets'
@@ -10,6 +11,7 @@ import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, 
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import type { TTSEngine } from '../src/types'
 import {
+  AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
   DEFAULT_TTS_ENGINE,
   DEFAULT_TTS_EMOTION_INTENSITY,
@@ -24,6 +26,7 @@ import {
   clampTTSEmotionIntensity,
   getDefaultTTSVoiceId,
   getTTSVoiceOption,
+  isAzureTTSVoiceId,
   isBuiltinTTSVoice,
   isEdgeTTSVoiceId,
   isSystemTTSVoiceId,
@@ -67,6 +70,8 @@ interface AppSettings {
   ttsModelId: string
   ttsVoiceId: string
   ttsVoiceName: string
+  ttsAzureKey: string
+  ttsAzureRegion: string
   ttsEmotionStyle: import('../src/types').TTSEmotionStyle
   ttsEmotionIntensity: number
   ttsSpeed: number
@@ -443,6 +448,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   ttsModelId: DEFAULT_TTS_MODEL_ID,
   ttsVoiceId: DEFAULT_TTS_VOICE_ID,
   ttsVoiceName: getTTSVoiceOption(DEFAULT_TTS_VOICE_ID, DEFAULT_TTS_MODEL_ID, DEFAULT_TTS_ENGINE)?.name || '小贝',
+  ttsAzureKey: '',
+  ttsAzureRegion: '',
   ttsEmotionStyle: DEFAULT_TTS_EMOTION_STYLE,
   ttsEmotionIntensity: DEFAULT_TTS_EMOTION_INTENSITY,
   ttsSpeed: 1,
@@ -534,6 +541,8 @@ function normalizeSettings(saved: Partial<AppSettings> | null | undefined): AppS
   merged.ttsEngine = normalizeTTSEngine(merged.ttsEngine)
   merged.ttsAutoPlayLive2D = typeof merged.ttsAutoPlayLive2D === 'boolean' ? merged.ttsAutoPlayLive2D : DEFAULT_SETTINGS.ttsAutoPlayLive2D
   merged.ttsShowMainReplyButton = typeof merged.ttsShowMainReplyButton === 'boolean' ? merged.ttsShowMainReplyButton : DEFAULT_SETTINGS.ttsShowMainReplyButton
+  merged.ttsAzureKey = typeof merged.ttsAzureKey === 'string' ? merged.ttsAzureKey.trim() : ''
+  merged.ttsAzureRegion = typeof merged.ttsAzureRegion === 'string' ? merged.ttsAzureRegion.trim().toLowerCase() : ''
   merged.ttsModelId = normalizeTTSModelId(merged.ttsModelId, merged.ttsEngine)
   merged.ttsEmotionStyle = normalizeTTSEmotionStyle(merged.ttsEmotionStyle)
   merged.ttsEmotionIntensity = clampTTSEmotionIntensity(merged.ttsEmotionIntensity)
@@ -542,15 +551,19 @@ function normalizeSettings(saved: Partial<AppSettings> | null | undefined): AppS
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === SYSTEM_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+  if (merged.ttsEngine === SYSTEM_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId) || isAzureTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === EDGE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId))) {
+  if (merged.ttsEngine === AZURE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+  if (merged.ttsEngine === EDGE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId) || isAzureTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId) || isAzureTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = DEFAULT_TTS_VOICE_ID
   }
 
@@ -1517,6 +1530,7 @@ app.whenReady().then(() => {
   setLive2DDebugLogger(message => appendLive2DDebugLog('protocol', message))
   registerLive2DProtocol()
   registerRuntimeAssetProtocol()
+  registerAzureTTSHandlers(() => currentSettings)
   registerEdgeTTSHandlers()
   registerSystemTTSHandlers()
 

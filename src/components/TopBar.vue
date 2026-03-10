@@ -30,13 +30,13 @@
       </div>
     </div>
     <div class="window-controls">
-      <button class="win-btn" @click="minimize" title="最小化">
+      <button class="win-btn" @click="minimize" title="最小化" aria-label="最小化窗口">
         <svg width="14" height="14"><use href="#icon-minimize"/></svg>
       </button>
-      <button class="win-btn" @click="maximize" title="最大化">
+      <button class="win-btn" @click="maximize" :title="isMax ? '还原' : '最大化'" :aria-label="isMax ? '还原窗口' : '最大化窗口'">
         <svg width="14" height="14"><use :href="isMax ? '#icon-restore' : '#icon-maximize'"/></svg>
       </button>
-      <button class="win-btn win-close" @click="closeWin" title="关闭">
+      <button class="win-btn win-close" @click="closeWin" title="关闭" aria-label="关闭窗口">
         <svg width="14" height="14"><use href="#icon-close"/></svg>
       </button>
     </div>
@@ -304,6 +304,15 @@ onBeforeUnmount(() => {
 
 .window-controls {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 10px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 244, 248, 0.68));
+  box-shadow: 0 10px 24px rgba(214, 155, 177, 0.16);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.7));
   -webkit-app-region: no-drag;
   position: relative;
   z-index: 1;
@@ -313,22 +322,41 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: $topbar-height;
-  border: none;
-  background: transparent;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.52);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all $transition-fast;
+  transition: transform $transition-fast, background $transition-fast, border-color $transition-fast, color $transition-fast, box-shadow $transition-fast;
+
+  svg {
+    pointer-events: none;
+  }
 
   &:hover {
-    background: var(--primary-bg);
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(255, 184, 208, 0.5);
     color: var(--text-primary);
+    box-shadow: 0 8px 18px rgba(214, 155, 177, 0.18);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &.win-close {
+    background: linear-gradient(135deg, rgba(255, 102, 125, 0.16), rgba(255, 140, 159, 0.28));
+    color: #b4374e;
   }
 
   &.win-close:hover {
-    background: #e81123;
+    background: linear-gradient(135deg, #ff6a79, #df4056);
+    border-color: transparent;
     color: #fff;
+    box-shadow: 0 10px 22px rgba(223, 64, 86, 0.3);
   }
 }
 </style>

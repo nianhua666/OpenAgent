@@ -13,6 +13,7 @@ import {
   LEGACY_DEFAULT_LIVE2D_URLS
 } from '@/utils/live2d'
 import {
+  AZURE_TTS_ENGINE,
   DEFAULT_TTS_ENGINE,
   DEFAULT_TTS_EMOTION_INTENSITY,
   DEFAULT_TTS_EMOTION_STYLE,
@@ -23,6 +24,7 @@ import {
   getTTSVoiceOption,
   clampTTSEmotionIntensity,
   isBuiltinTTSVoice,
+  isAzureTTSVoiceId,
   isEdgeTTSVoiceId,
   isSystemTTSVoiceId,
   normalizeTTSEmotionStyle,
@@ -61,11 +63,30 @@ const DEFAULT_SETTINGS: AppSettings = {
   ttsModelId: DEFAULT_TTS_MODEL_ID,
   ttsVoiceId: DEFAULT_TTS_VOICE_ID,
   ttsVoiceName: getTTSVoiceOption(DEFAULT_TTS_VOICE_ID, DEFAULT_TTS_MODEL_ID)?.name || '小贝',
+  ttsAzureKey: '',
+  ttsAzureRegion: '',
   ttsEmotionStyle: DEFAULT_TTS_EMOTION_STYLE,
   ttsEmotionIntensity: DEFAULT_TTS_EMOTION_INTENSITY,
   ttsSpeed: 1,
   ttsVolume: 0.92
 }
+
+type AISettingsSnapshot = Pick<AppSettings,
+  'windowsMcpEnabled'
+  | 'ttsEnabled'
+  | 'ttsEngine'
+  | 'ttsAutoPlayLive2D'
+  | 'ttsShowMainReplyButton'
+  | 'ttsModelId'
+  | 'ttsVoiceId'
+  | 'ttsVoiceName'
+  | 'ttsAzureKey'
+  | 'ttsAzureRegion'
+  | 'ttsEmotionStyle'
+  | 'ttsEmotionIntensity'
+  | 'ttsSpeed'
+  | 'ttsVolume'
+>
 
 function inferLocalModelSource(modelPath: string): Live2DModelSource {
   try {
@@ -115,6 +136,8 @@ function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
     merged.ttsShowMainReplyButton = DEFAULT_SETTINGS.ttsShowMainReplyButton
   }
 
+  merged.ttsAzureKey = typeof merged.ttsAzureKey === 'string' ? merged.ttsAzureKey.trim() : ''
+  merged.ttsAzureRegion = typeof merged.ttsAzureRegion === 'string' ? merged.ttsAzureRegion.trim().toLowerCase() : ''
   merged.ttsModelId = normalizeTTSModelId(merged.ttsModelId, merged.ttsEngine)
   merged.ttsEmotionStyle = normalizeTTSEmotionStyle(merged.ttsEmotionStyle)
   merged.ttsEmotionIntensity = clampTTSEmotionIntensity(merged.ttsEmotionIntensity)
@@ -127,11 +150,23 @@ function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
+  if (merged.ttsEngine === 'system-speech' && isAzureTTSVoiceId(merged.ttsVoiceId)) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === AZURE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
   if (merged.ttsEngine === EDGE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+  if (merged.ttsEngine === EDGE_TTS_ENGINE && isAzureTTSVoiceId(merged.ttsVoiceId)) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId) || isAzureTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = DEFAULT_TTS_VOICE_ID
   }
 
@@ -307,6 +342,82 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   }
 
+  function getAISettingsExportData(): AISettingsSnapshot {
+    return {
+      windowsMcpEnabled: settings.value.windowsMcpEnabled,
+      ttsEnabled: settings.value.ttsEnabled,
+      ttsEngine: settings.value.ttsEngine,
+      ttsAutoPlayLive2D: settings.value.ttsAutoPlayLive2D,
+      ttsShowMainReplyButton: settings.value.ttsShowMainReplyButton,
+      ttsModelId: settings.value.ttsModelId,
+      ttsVoiceId: settings.value.ttsVoiceId,
+      ttsVoiceName: settings.value.ttsVoiceName,
+      ttsAzureKey: settings.value.ttsAzureKey,
+      ttsAzureRegion: settings.value.ttsAzureRegion,
+      ttsEmotionStyle: settings.value.ttsEmotionStyle,
+      ttsEmotionIntensity: settings.value.ttsEmotionIntensity,
+      ttsSpeed: settings.value.ttsSpeed,
+      ttsVolume: settings.value.ttsVolume
+    }
+  }
+
+  async function importAISettingsData(snapshot: Partial<AISettingsSnapshot> | null | undefined) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return getAISettingsExportData()
+    }
+
+    const nextPartial = {} as Partial<AppSettings>
+    if (typeof snapshot.windowsMcpEnabled === 'boolean') {
+      nextPartial.windowsMcpEnabled = snapshot.windowsMcpEnabled
+    }
+    if (typeof snapshot.ttsEnabled === 'boolean') {
+      nextPartial.ttsEnabled = snapshot.ttsEnabled
+    }
+    if (typeof snapshot.ttsEngine !== 'undefined') {
+      nextPartial.ttsEngine = snapshot.ttsEngine
+    }
+    if (typeof snapshot.ttsAutoPlayLive2D === 'boolean') {
+      nextPartial.ttsAutoPlayLive2D = snapshot.ttsAutoPlayLive2D
+    }
+    if (typeof snapshot.ttsShowMainReplyButton === 'boolean') {
+      nextPartial.ttsShowMainReplyButton = snapshot.ttsShowMainReplyButton
+    }
+    if (typeof snapshot.ttsModelId === 'string') {
+      nextPartial.ttsModelId = snapshot.ttsModelId
+    }
+    if (typeof snapshot.ttsVoiceId === 'string') {
+      nextPartial.ttsVoiceId = snapshot.ttsVoiceId
+    }
+    if (typeof snapshot.ttsVoiceName === 'string') {
+      nextPartial.ttsVoiceName = snapshot.ttsVoiceName
+    }
+    if (typeof snapshot.ttsAzureKey === 'string') {
+      nextPartial.ttsAzureKey = snapshot.ttsAzureKey
+    }
+    if (typeof snapshot.ttsAzureRegion === 'string') {
+      nextPartial.ttsAzureRegion = snapshot.ttsAzureRegion
+    }
+    if (typeof snapshot.ttsEmotionStyle !== 'undefined') {
+      nextPartial.ttsEmotionStyle = snapshot.ttsEmotionStyle
+    }
+    if (typeof snapshot.ttsEmotionIntensity === 'number') {
+      nextPartial.ttsEmotionIntensity = snapshot.ttsEmotionIntensity
+    }
+    if (typeof snapshot.ttsSpeed === 'number') {
+      nextPartial.ttsSpeed = snapshot.ttsSpeed
+    }
+    if (typeof snapshot.ttsVolume === 'number') {
+      nextPartial.ttsVolume = snapshot.ttsVolume
+    }
+
+    if (Object.keys(nextPartial).length === 0) {
+      return getAISettingsExportData()
+    }
+
+    await update(nextPartial)
+    return getAISettingsExportData()
+  }
+
   const theme = computed(() => settings.value.theme)
   const sidebarCollapsed = computed(() => settings.value.sidebarCollapsed)
   const live2dEnabled = computed(() => settings.value.live2dEnabled)
@@ -322,6 +433,8 @@ export const useSettingsStore = defineStore('settings', () => {
     init,
     update,
     setLive2DModel,
-    restoreDefaultLive2DModel
+    restoreDefaultLive2DModel,
+    getAISettingsExportData,
+    importAISettingsData
   }
 })

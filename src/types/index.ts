@@ -90,6 +90,8 @@ export interface AppSettings {
   ttsModelId: string
   ttsVoiceId: string
   ttsVoiceName: string
+  ttsAzureKey: string
+  ttsAzureRegion: string
   ttsEmotionStyle: TTSEmotionStyle
   ttsEmotionIntensity: number
   ttsSpeed: number
@@ -331,22 +333,34 @@ export interface AIMemoryEntry {
   updatedAt: number
 }
 
-export type TTSEngine = 'kokoro-js-zh' | 'system-speech' | 'edge-neural'
+export type TTSEngine = 'kokoro-js-zh' | 'system-speech' | 'edge-neural' | 'azure-speech'
 
 export type TTSEmotionStyle =
   | 'auto'
   | 'neutral'
+  | 'affectionate'
+  | 'angry'
   | 'assistant'
   | 'calm'
+  | 'chat'
+  | 'chat-casual'
   | 'cheerful'
+  | 'customerservice'
+  | 'disgruntled'
   | 'empathetic'
   | 'excited'
+  | 'fearful'
   | 'friendly'
+  | 'gentle'
   | 'hopeful'
+  | 'lyrical'
+  | 'newscast'
   | 'narration-professional'
   | 'narration-relaxed'
   | 'sad'
   | 'serious'
+  | 'sorry'
+  | 'whispering'
 
 export interface TTSModelLibraryItem {
   id: string
@@ -376,6 +390,8 @@ export interface TTSVoiceLibraryItem {
   sampleText: string
   sourceLabel: string
   sourceUrl: string
+  emotionStyles?: TTSEmotionStyle[]
+  roles?: string[]
   recommended?: boolean
   builtIn?: boolean
 }

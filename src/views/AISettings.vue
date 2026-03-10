@@ -294,7 +294,7 @@
       <div class="setting-row">
         <div class="setting-label">
           <div class="label-main">语音引擎</div>
-          <div class="label-desc">系统语音适合低延迟实时播报，Kokoro 适合离线模型与可控音色，Edge 神经语音则更适合高质量中文与更自然的情绪化播报。</div>
+          <div class="label-desc">Azure Speech 适合真正情绪语音，Edge 更适合免配置的高质量中文，系统语音偏低延迟，Kokoro 则适合离线模型与可控音色。</div>
         </div>
         <div class="ai-input-stack">
           <select class="setting-select" :value="settings.ttsEngine" @change="handleTTSEngineChange(($event.target as HTMLSelectElement).value)">
@@ -307,7 +307,7 @@
       <div class="setting-row align-start">
         <div class="setting-label">
           <div class="label-main">语音模型</div>
-          <div class="label-desc">系统引擎使用系统内置语音模型；Kokoro 支持离线模型、远程缓存和自定义兼容模型 ID；Edge 神经语音则直接使用在线神经语音服务。</div>
+          <div class="label-desc">Azure 与 Edge 直接使用在线神经语音服务；系统引擎使用系统内置模型；Kokoro 支持离线模型、远程缓存和自定义兼容模型 ID。</div>
         </div>
         <div class="tts-resource-stack">
           <div class="tts-search-row">
@@ -327,7 +327,7 @@
             </option>
           </select>
           <span v-if="ttsModelSearchQuery && filteredTTSModelOptions.length === 0" class="field-tip">没有找到匹配模型，已保留当前模型。你也可以直接输入兼容模型 ID。</span>
-          <div v-if="!isSystemSpeechEngine && !isEdgeSpeechEngine" class="tts-custom-model-row">
+          <div v-if="!isSystemSpeechEngine && !isEdgeSpeechEngine && !isAzureSpeechEngine" class="tts-custom-model-row">
             <input v-model="ttsCustomModelInput" class="setting-input" placeholder="输入兼容 Hugging Face / ONNX 模型标识，例如 onnx-community/Kokoro-82M-v1.0-ONNX-timestamped" />
             <div class="tts-action-row">
               <button class="btn btn-secondary btn-sm" :disabled="!ttsCustomModelInput.trim()" @click="applyCustomTTSModel">应用模型</button>
@@ -336,6 +336,7 @@
               </button>
             </div>
           </div>
+          <span v-else-if="isAzureSpeechEngine" class="field-tip">Azure Speech 不需要下载模型，但必须先填写 Azure Speech Key 和 Region，之后才会读取支持真实 style/styledegree 的中文音色。</span>
           <span v-else-if="isEdgeSpeechEngine" class="field-tip">Edge 神经语音不需要额外下载模型，联网后即可直接使用在线神经音色与韵律情绪控制。</span>
           <span v-else class="field-tip">系统语音引擎不需要额外下载模型，切换后会直接走系统内置语音能力。</span>
           <div v-if="selectedTTSModel" class="ai-capability-panel">
@@ -345,7 +346,7 @@
             </div>
             <div class="ai-capability-tags">
               <span class="ai-capability-tag" :class="{ 'is-muted': !selectedTTSModel.builtIn && !ttsModelCached }">
-                {{ isSystemSpeechEngine ? '系统即用' : selectedTTSModel.builtIn ? '内置离线' : ttsModelCached ? '已缓存' : '远程可缓存' }}
+                {{ isAzureSpeechEngine ? (azureTTSSupported ? '已鉴权' : '待鉴权') : isEdgeSpeechEngine ? '在线即用' : isSystemSpeechEngine ? '系统即用' : selectedTTSModel.builtIn ? '内置离线' : ttsModelCached ? '已缓存' : '远程可缓存' }}
               </span>
               <span v-if="selectedTTSModel.recommended" class="ai-capability-tag">推荐</span>
               <span class="ai-capability-tag is-limit">{{ selectedTTSModel.sourceLabel }}</span>
@@ -356,16 +357,47 @@
         </div>
       </div>
 
+      <div v-if="isAzureSpeechEngine" class="setting-row align-start">
+        <div class="setting-label">
+          <div class="label-main">Azure Speech 鉴权</div>
+          <div class="label-desc">真正情绪语音依赖 Azure Speech Key 和 Region。若要更完整地使用预览情绪风格，优先考虑 southeastasia、eastus 或 westeurope。</div>
+        </div>
+        <div class="tts-resource-stack">
+          <div class="input-wrap">
+            <input
+              :type="showAzureTTSKey ? 'text' : 'password'"
+              class="setting-input"
+              :value="settings.ttsAzureKey"
+              placeholder="填写 Azure Speech Key"
+              @change="updateSetting('ttsAzureKey', ($event.target as HTMLInputElement).value)"
+            />
+            <button class="toggle-visibility-btn" :title="showAzureTTSKey ? '隐藏' : '显示'" @click="showAzureTTSKey = !showAzureTTSKey">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path v-if="showAzureTTSKey" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle v-if="showAzureTTSKey" cx="12" cy="12" r="3"/>
+                <path v-if="!showAzureTTSKey" d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line v-if="!showAzureTTSKey" x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <input class="setting-input" :value="settings.ttsAzureRegion" placeholder="例如 southeastasia / eastus / westeurope" @change="updateSetting('ttsAzureRegion', ($event.target as HTMLInputElement).value)" />
+          <div class="tts-action-row">
+            <button class="btn btn-secondary btn-sm" :disabled="refreshingAzureVoiceCatalog" @click="refreshAzureVoiceCatalog()">
+              {{ refreshingAzureVoiceCatalog ? '校验中...' : '校验并刷新 Azure 音色' }}
+            </button>
+          </div>
+          <span class="field-tip">Azure voices/list 会返回每个音色的可用风格与角色。Key/Region 配置完成后，这里会自动读取可用中文情绪音色。</span>
+        </div>
+      </div>
+
       <div class="setting-row align-start">
         <div class="setting-label">
           <div class="label-main">默认音色</div>
-          <div class="label-desc">系统引擎会读取 Windows 已安装音色；Kokoro 提供稳定的离线音色；Edge 神经语音会在线拉取更自然的中文神经音色。</div>
+          <div class="label-desc">Azure 会读取官方中文情绪音色，Edge 会读取在线神经音色，系统引擎读取 Windows 已安装音色，Kokoro 提供稳定的离线音色。</div>
         </div>
         <div class="tts-resource-stack">
           <div class="tts-search-row">
             <input v-model="ttsVoiceSearchQuery" class="setting-input" placeholder="搜索音色名称、语言、性别或口音" />
             <div class="tts-action-row">
-              <button class="btn btn-secondary btn-sm" :disabled="isEdgeSpeechEngine ? refreshingEdgeVoiceCatalog : isSystemSpeechEngine || cachingTTSVoice || Boolean(selectedTTSVoice?.builtIn) || ttsVoiceCached" @click="cacheSelectedTTSVoice">
+              <button class="btn btn-secondary btn-sm" :disabled="isAzureSpeechEngine ? refreshingAzureVoiceCatalog : isEdgeSpeechEngine ? refreshingEdgeVoiceCatalog : isSystemSpeechEngine || cachingTTSVoice || Boolean(selectedTTSVoice?.builtIn) || ttsVoiceCached" @click="cacheSelectedTTSVoice">
                 {{ ttsVoiceSaveLabel }}
               </button>
             </div>
@@ -381,12 +413,13 @@
             </div>
             <div class="ai-capability-tags">
               <span class="ai-capability-tag" :class="{ 'is-muted': !selectedTTSVoice.builtIn && !ttsVoiceCached }">
-                {{ selectedTTSVoice.builtIn ? '内置离线' : ttsVoiceCached ? '已缓存' : '远程可缓存' }}
+                {{ isAzureSpeechEngine || isEdgeSpeechEngine ? '在线即用' : selectedTTSVoice.builtIn ? '内置离线' : ttsVoiceCached ? '已缓存' : '远程可缓存' }}
               </span>
               <span class="ai-capability-tag">{{ selectedTTSVoice.gender === 'female' ? '女声' : '男声' }}</span>
               <span class="ai-capability-tag is-limit">{{ selectedTTSVoice.accent }}</span>
             </div>
             <span class="field-tip">{{ selectedTTSVoice.description }}</span>
+            <span v-if="selectedTTSVoiceEmotionStyles.length > 0" class="field-tip">支持风格：{{ selectedTTSVoiceEmotionStyles.join(' / ') }}</span>
             <span class="field-tip">试听样句：{{ selectedTTSVoice.sampleText }}</span>
           </div>
           <div class="tts-status-row">
@@ -402,10 +435,10 @@
         </div>
       </div>
 
-      <div v-if="isEdgeSpeechEngine" class="setting-row">
+      <div v-if="isAzureSpeechEngine || isEdgeSpeechEngine" class="setting-row">
         <div class="setting-label">
           <div class="label-main">情绪风格</div>
-          <div class="label-desc">Edge 神经语音会通过语速、音高和响度的组合来模拟情绪风格。建议先用自动或助手，再按场景切换为愉快、共情、严肃等风格。</div>
+          <div class="label-desc">{{ isAzureSpeechEngine ? 'Azure Speech 会直接使用官方 style 与 styledegree 输出真实情绪语气；若当前音色不支持所选风格，会自动回退到最接近的可用风格。' : 'Edge 神经语音会通过语速、音高和响度的组合来模拟情绪风格。建议先用自动或助手，再按场景切换为愉快、共情、严肃等风格。' }}</div>
         </div>
         <div class="ai-input-stack">
           <select class="setting-select" :value="settings.ttsEmotionStyle" @change="updateSetting('ttsEmotionStyle', ($event.target as HTMLSelectElement).value as AppSettings['ttsEmotionStyle'])">
@@ -415,7 +448,7 @@
             <input type="range" min="0.6" max="1.6" step="0.1" :value="settings.ttsEmotionIntensity" @input="updateSetting('ttsEmotionIntensity', parseFloat(($event.target as HTMLInputElement).value))" />
             <span class="range-val">{{ settings.ttsEmotionIntensity.toFixed(1) }}x</span>
           </div>
-          <span class="field-tip">当前风格：{{ selectedTTSEmotionOption.label }}。自动模式会根据文本语气选取风格；强度建议保持在 0.9 到 1.2 之间。</span>
+          <span class="field-tip">{{ ttsEmotionStatusHint }}</span>
         </div>
       </div>
 
@@ -506,6 +539,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
 import {
+  AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
   EDGE_TTS_ENGINE,
   SYSTEM_TTS_ENGINE,
@@ -524,10 +558,12 @@ import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import {
   cacheTTSModel,
   cacheTTSVoice,
+  isAzureSpeechSupported,
   isEdgeSpeechSupported,
   isSystemSpeechSupported,
   isTTSModelCached,
   isTTSVoiceCached,
+  listAzureSpeechVoices,
   listEdgeSpeechVoices,
   listSystemSpeechVoices
 } from '@/utils/ttsRuntime'
@@ -544,6 +580,7 @@ const settings = computed(() => settingsStore.settings)
 const aiConfig = computed(() => aiStore.config)
 const normalizedSearchQuery = computed(() => normalizeSearchQuery(props.searchQuery))
 const showApiKey = ref(false)
+const showAzureTTSKey = ref(false)
 const availableAiModels = ref<AIProviderModel[]>([])
 const loadingAiModels = ref(false)
 const savingAIConfig = ref(false)
@@ -564,6 +601,9 @@ const ttsModelCached = ref(false)
 const ttsVoiceCached = ref(false)
 const systemTTSVoices = ref<TTSVoiceLibraryItem[]>([])
 const systemTTSSupported = ref(false)
+const azureTTSVoices = ref<TTSVoiceLibraryItem[]>([])
+const azureTTSSupported = ref(false)
+const refreshingAzureVoiceCatalog = ref(false)
 const edgeTTSVoices = ref<TTSVoiceLibraryItem[]>([])
 const edgeTTSSupported = ref(false)
 const refreshingEdgeVoiceCatalog = ref(false)
@@ -735,11 +775,31 @@ const selectedAiModelCapabilityLabels = computed(() => getModelCapabilityLabels(
 const selectedAiModelLimitLabels = computed(() => getModelLimitLabels(selectedAiModelLimits.value))
 const activeTTSEngine = computed(() => normalizeTTSEngine(settings.value.ttsEngine))
 const isSystemSpeechEngine = computed(() => activeTTSEngine.value === SYSTEM_TTS_ENGINE)
+const isAzureSpeechEngine = computed(() => activeTTSEngine.value === AZURE_TTS_ENGINE)
 const isEdgeSpeechEngine = computed(() => activeTTSEngine.value === EDGE_TTS_ENGINE)
 const ttsEngineOptions = TTS_ENGINE_OPTIONS
 const ttsEmotionStyleOptions = TTS_EMOTION_STYLE_OPTIONS
 const selectedTTSEmotionOption = computed(() => ttsEmotionStyleOptions.find(option => option.value === settings.value.ttsEmotionStyle) || ttsEmotionStyleOptions[0])
+const selectedTTSVoiceEmotionStyles = computed<TTSEmotionStyle[]>(() => selectedTTSVoice.value?.emotionStyles || [])
+const ttsEmotionStatusHint = computed(() => {
+  const styleLabel = selectedTTSEmotionOption.value.label
+  if (isAzureSpeechEngine.value) {
+    if (selectedTTSVoiceEmotionStyles.value.length > 0) {
+      return `当前风格：${styleLabel}。该音色支持 ${selectedTTSVoiceEmotionStyles.value.join(' / ')}；若当前风格不在支持列表中，会自动回退到最接近的官方风格。`
+    }
+
+    return `当前风格：${styleLabel}。Azure 会直接使用官方 style/styledegree；强度建议保持在 0.9 到 1.2 之间。`
+  }
+
+  return `当前风格：${styleLabel}。自动模式会根据文本语气选取风格；强度建议保持在 0.9 到 1.2 之间。`
+})
 const ttsEngineDescription = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return azureTTSSupported.value
+      ? 'Azure Speech 已连通，当前会优先使用官方中文 style/styledegree 做真实情绪播报。'
+      : '当前尚未完成 Azure Speech 鉴权，请填写 Key 与 Region 后刷新音色列表。'
+  }
+
   if (isEdgeSpeechEngine.value) {
     return edgeTTSSupported.value
       ? 'Edge 神经语音会在线读取中文神经音色，并通过韵律控制模拟情绪风格，适合作为 AI 主播报引擎。'
@@ -765,6 +825,12 @@ const ttsModelOptions = computed(() => {
   return models
 })
 const ttsVoiceOptions = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return azureTTSVoices.value.length > 0
+      ? azureTTSVoices.value
+      : listTTSVoices(settings.value.ttsModelId, activeTTSEngine.value)
+  }
+
   if (isEdgeSpeechEngine.value) {
     return edgeTTSVoices.value.length > 0
       ? edgeTTSVoices.value
@@ -812,6 +878,10 @@ const visibleTTSVoiceOptions = computed(() => filteredTTSVoiceOptions.value.leng
   ? filteredTTSVoiceOptions.value
   : (selectedTTSVoice.value ? [selectedTTSVoice.value] : []))
 const ttsModelSaveLabel = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return azureTTSSupported.value ? '在线鉴权完成' : '等待鉴权'
+  }
+
   if (isEdgeSpeechEngine.value) {
     return '在线即用'
   }
@@ -835,6 +905,10 @@ const ttsModelSaveLabel = computed(() => {
   return '下载并保存模型'
 })
 const ttsVoiceSaveLabel = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return refreshingAzureVoiceCatalog.value ? '校验中...' : '校验并刷新音色'
+  }
+
   if (isEdgeSpeechEngine.value) {
     return refreshingEdgeVoiceCatalog.value ? '刷新中...' : '刷新在线音色'
   }
@@ -867,13 +941,17 @@ const ttsSummaryHint = computed(() => {
     return '当前不会输出 AI 语音，可随时重新开启。'
   }
 
-  const engineHint = isEdgeSpeechEngine.value ? 'Edge 神经语音 + 情绪风格' : isSystemSpeechEngine.value ? '系统语音低延迟' : 'Kokoro 离线模型'
+  const engineHint = isAzureSpeechEngine.value ? 'Azure 真情绪语音' : isEdgeSpeechEngine.value ? 'Edge 神经语音 + 情绪风格' : isSystemSpeechEngine.value ? '系统语音低延迟' : 'Kokoro 离线模型'
   const live2dHint = settings.value.ttsAutoPlayLive2D ? 'Live2D 自动播报' : 'Live2D 手动播放'
   const mainHint = settings.value.ttsShowMainReplyButton ? '主窗口带播放按钮' : '主窗口纯文本'
   return `${engineHint}，${live2dHint}，${mainHint}。`
 })
 
 const ttsModelStatusLabel = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return azureTTSSupported.value ? 'Azure 情绪语音已就绪' : '等待 Azure Speech 鉴权'
+  }
+
   if (isEdgeSpeechEngine.value) {
     return edgeTTSSupported.value ? '在线神经语音模型已就绪' : '等待连接在线神经语音服务'
   }
@@ -886,6 +964,10 @@ const ttsModelStatusLabel = computed(() => {
 })
 
 const ttsVoiceStatusLabel = computed(() => {
+  if (isAzureSpeechEngine.value) {
+    return azureTTSSupported.value ? `已读取 ${azureTTSVoices.value.length} 个 Azure 中文情绪音色` : 'Azure 中文音色尚未读取'
+  }
+
   if (isEdgeSpeechEngine.value) {
     return edgeTTSSupported.value ? `已读取 ${edgeTTSVoices.value.length} 个在线中文音色` : '在线音色尚未读取'
   }
@@ -1099,6 +1181,43 @@ async function refreshSystemVoiceCatalog() {
   }
 }
 
+async function refreshAzureVoiceCatalog(silent = false) {
+  if (!silent) {
+    refreshingAzureVoiceCatalog.value = true
+  }
+
+  azureTTSSupported.value = isAzureSpeechSupported()
+  if (!azureTTSSupported.value) {
+    azureTTSVoices.value = []
+    if (!silent) {
+      setTTSError('当前环境暂不支持 Azure Speech 桥接。')
+    }
+    refreshingAzureVoiceCatalog.value = false
+    return
+  }
+
+  try {
+    azureTTSVoices.value = await listAzureSpeechVoices()
+    azureTTSSupported.value = azureTTSVoices.value.length > 0
+    if (!silent) {
+      setTTSStatus(azureTTSSupported.value
+        ? `已读取 ${azureTTSVoices.value.length} 个 Azure 中文情绪音色，可直接试听。`
+        : '当前未读取到 Azure 中文音色，请检查 Key、Region 或网络。')
+    }
+  } catch (error) {
+    azureTTSVoices.value = []
+    azureTTSSupported.value = false
+    if (!silent) {
+      setTTSError(error instanceof Error ? error.message : '读取 Azure Speech 音色列表失败')
+    }
+    console.warn('[AISettings] Azure 语音列表读取失败', error)
+  } finally {
+    if (!silent) {
+      refreshingAzureVoiceCatalog.value = false
+    }
+  }
+}
+
 async function refreshEdgeVoiceCatalog(silent = false) {
   if (!silent) {
     refreshingEdgeVoiceCatalog.value = true
@@ -1143,6 +1262,10 @@ async function handleTTSEngineChange(engine: string) {
     nextEngine
   )
 
+  if (nextEngine === AZURE_TTS_ENGINE) {
+    await refreshAzureVoiceCatalog(true)
+  }
+
   if (nextEngine === EDGE_TTS_ENGINE) {
     await refreshEdgeVoiceCatalog(true)
   }
@@ -1152,8 +1275,10 @@ async function handleTTSEngineChange(engine: string) {
   }
 
   const fallbackVoiceId = getDefaultTTSVoiceId(nextEngine)
-  const preferredVoice = nextEngine === EDGE_TTS_ENGINE
-    ? edgeTTSVoices.value.find(voice => /zh-cn/i.test(voice.locale)) || edgeTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
+  const preferredVoice = nextEngine === AZURE_TTS_ENGINE
+    ? azureTTSVoices.value.find(voice => /zh-cn/i.test(voice.locale)) || azureTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
+    : nextEngine === EDGE_TTS_ENGINE
+      ? edgeTTSVoices.value.find(voice => /zh-cn/i.test(voice.locale)) || edgeTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
     : nextEngine === SYSTEM_TTS_ENGINE
       ? systemTTSVoices.value.find(voice => /zh/i.test(voice.locale)) || systemTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
       : getTTSVoiceOption(settings.value.ttsVoiceId, nextModelId, nextEngine)
@@ -1166,7 +1291,9 @@ async function handleTTSEngineChange(engine: string) {
   })
 
   setTTSStatus(
-    nextEngine === EDGE_TTS_ENGINE
+    nextEngine === AZURE_TTS_ENGINE
+      ? '已切换到 Azure Speech 情绪语音引擎，后续 AI 播报会优先走官方中文 style/styledegree。'
+      : nextEngine === EDGE_TTS_ENGINE
       ? '已切换到 Edge 神经语音引擎，后续 AI 播报会优先走更清晰且可带情绪的中文在线音色。'
       : nextEngine === SYSTEM_TTS_ENGINE
         ? '已切换到系统语音引擎，后续播报会优先走系统低延迟音色。'
@@ -1191,6 +1318,19 @@ async function refreshTTSCacheState(silent = false) {
   }
 
   try {
+    if (isAzureSpeechEngine.value) {
+      await refreshAzureVoiceCatalog(true)
+      ttsModelCached.value = azureTTSSupported.value
+      ttsVoiceCached.value = azureTTSSupported.value && azureTTSVoices.value.length > 0
+
+      if (!silent) {
+        setTTSStatus(azureTTSSupported.value
+          ? `Azure Speech 已可用，当前可选 ${azureTTSVoices.value.length} 个中文情绪音色，支持官方 style/styledegree。`
+          : 'Azure Speech 暂不可用，请检查 Key、Region 与网络，或切换到 Edge / 系统 / Kokoro 引擎。')
+      }
+      return
+    }
+
     if (isEdgeSpeechEngine.value) {
       await refreshEdgeVoiceCatalog(true)
       ttsModelCached.value = edgeTTSSupported.value
@@ -1263,6 +1403,8 @@ async function saveCurrentTTSSelection() {
       ttsModelId: normalizeTTSModelId(settings.value.ttsModelId, activeTTSEngine.value),
       ttsVoiceId: nextVoice.id,
       ttsVoiceName: nextVoice.name,
+      ttsAzureKey: settings.value.ttsAzureKey,
+      ttsAzureRegion: settings.value.ttsAzureRegion,
       ttsEmotionStyle: settings.value.ttsEmotionStyle,
       ttsEmotionIntensity: settings.value.ttsEmotionIntensity,
       ttsSpeed: settings.value.ttsSpeed,
@@ -1295,7 +1437,9 @@ async function handleTTSModelChange(modelId: string) {
       ttsVoiceName: nextVoice?.name || settings.value.ttsVoiceName
     })
     ttsCustomModelInput.value = normalizedModelId
-    if (isEdgeSpeechEngine.value) {
+    if (isAzureSpeechEngine.value) {
+      setTTSStatus('Azure Speech 已切换到在线官方模型配置。')
+    } else if (isEdgeSpeechEngine.value) {
       setTTSStatus('Edge 神经语音已切换到在线模型配置。')
     } else {
       setTTSStatus(getTTSModelOption(normalizedModelId, activeTTSEngine.value).builtIn ? '已切换到内置离线模型。' : '已切换到远程模型，可继续下载并保存到本地缓存。')
@@ -1309,7 +1453,7 @@ async function handleTTSModelChange(modelId: string) {
 }
 
 async function applyCustomTTSModel() {
-  if (isSystemSpeechEngine.value || isEdgeSpeechEngine.value) {
+  if (isSystemSpeechEngine.value || isEdgeSpeechEngine.value || isAzureSpeechEngine.value) {
     setTTSStatus('当前引擎不需要自定义模型 ID。')
     return
   }
@@ -1334,7 +1478,9 @@ async function handleTTSVoiceChange(voiceId: string) {
       ttsVoiceId: nextVoice.id,
       ttsVoiceName: nextVoice.name
     })
-    if (isEdgeSpeechEngine.value) {
+    if (isAzureSpeechEngine.value) {
+      setTTSStatus(`已切换到 Azure 情绪音色 ${nextVoice.name}，现在可以直接试听真实情绪播报。`)
+    } else if (isEdgeSpeechEngine.value) {
       setTTSStatus(`已切换到 Edge 神经音色 ${nextVoice.name}，可直接试听情绪化中文播报。`)
     } else {
       setTTSStatus(nextVoice.builtIn ? `已切换到内置音色 ${nextVoice.name}。` : `已切换到音色 ${nextVoice.name}，可按需下载并保存。`)
@@ -1349,6 +1495,12 @@ async function handleTTSVoiceChange(voiceId: string) {
 
 async function cacheSelectedTTSModel() {
   if (!selectedTTSModel.value) {
+    return
+  }
+
+  if (isAzureSpeechEngine.value) {
+    ttsModelCached.value = azureTTSSupported.value
+    setTTSStatus(azureTTSSupported.value ? 'Azure Speech 为在线情绪引擎，无需下载模型。' : 'Azure Speech 暂不可用，请先完成 Key 与 Region 配置。')
     return
   }
 
@@ -1388,6 +1540,12 @@ async function cacheSelectedTTSModel() {
 
 async function cacheSelectedTTSVoice() {
   if (!selectedTTSVoice.value) {
+    return
+  }
+
+  if (isAzureSpeechEngine.value) {
+    await refreshAzureVoiceCatalog()
+    ttsVoiceCached.value = azureTTSSupported.value && azureTTSVoices.value.length > 0
     return
   }
 
@@ -1530,8 +1688,15 @@ watch(() => settings.value.ttsModelId, (nextModelId) => {
 
 watch(() => settings.value.ttsEngine, () => {
   void refreshSystemVoiceCatalog()
+  void refreshAzureVoiceCatalog(true)
   void refreshEdgeVoiceCatalog(true)
 }, { immediate: true })
+
+watch(() => [settings.value.ttsAzureKey, settings.value.ttsAzureRegion], () => {
+  if (isAzureSpeechEngine.value) {
+    void refreshTTSCacheState(true)
+  }
+})
 
 watch(() => [settings.value.ttsModelId, settings.value.ttsVoiceId], () => {
   void refreshTTSCacheState(true)

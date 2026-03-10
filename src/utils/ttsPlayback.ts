@@ -1,6 +1,6 @@
 import type { AppSettings, TTSSynthesizePayload, TTSSynthesisResult } from '@/types'
-import { isEdgeTTSEngine, isSystemTTSEngine } from '@/utils/ttsCatalog'
-import { playEdgeSpeech, playSystemSpeech, stopSystemSpeechPlayback, synthesizeTextToSpeech } from '@/utils/ttsRuntime'
+import { isAzureTTSEngine, isEdgeTTSEngine, isSystemTTSEngine } from '@/utils/ttsCatalog'
+import { playAzureSpeech, playEdgeSpeech, playSystemSpeech, stopSystemSpeechPlayback, synthesizeTextToSpeech } from '@/utils/ttsRuntime'
 
 let currentAudio: HTMLAudioElement | null = null
 let currentAudioUrl = ''
@@ -66,6 +66,11 @@ export async function playTextToSpeech(settings: AppSettings, text: string, over
   if (isSystemTTSEngine(payload.engine)) {
     stopCurrentAudio()
     return playSystemSpeech(payload, settings.ttsVolume)
+  }
+
+  if (isAzureTTSEngine(payload.engine)) {
+    stopCurrentAudio()
+    return playAzureSpeech(payload, settings.ttsVolume)
   }
 
   if (isEdgeTTSEngine(payload.engine)) {
