@@ -17,7 +17,6 @@
         @error="handleModelError"
         @bounds-change="handleModelBoundsChange"
         @model-tap="handleModelTap"
-        @model-interact="handleModelInteract"
         @pointer-capture-change="handlePointerCaptureChange"
       />
 
@@ -60,7 +59,7 @@
           <div class="drawer-head">
             <div class="drawer-copy">
               <strong>{{ settings.live2dModelName || 'Live2D 悬浮窗' }}</strong>
-              <span>点击模型弹出工具按钮，按住模型即可拖动窗口。</span>
+              <span>双击模型唤出工具按钮，按住模型即可拖动窗口。</span>
             </div>
             <button class="panel-icon-btn" @click="modelPickerVisible = false" title="关闭模型抽屉">
               <svg width="14" height="14"><use href="#icon-close"/></svg>
@@ -105,13 +104,15 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { Live2DCursorPoint, Live2DLibraryItem, Live2DModelBounds, Live2DModelSource } from '@/types'
+import type { Live2DLibraryItem, Live2DModelBounds, Live2DModelSource, WindowShapeRect } from '@/types'
 import Live2DWidget from '@/components/Live2DWidget.vue'
 import AIChatDialog from '@/components/AIChatDialog.vue'
+import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { showToast } from '@/utils/toast'
 import { DEFAULT_BUNDLED_LIVE2D_MODEL, listLocalLive2DModels } from '@/utils/live2d'
 
+const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
 const toolVisible = ref(false)
@@ -127,10 +128,8 @@ const errorPanelRef = ref<HTMLElement | null>(null)
 const aiChatRef = ref<InstanceType<typeof AIChatDialog> | null>(null)
 const aiChatVisible = ref(false)
 const chatDragCapturing = ref(false)
-const lastPointerPosition = ref<{ x: number; y: number } | null>(null)
 const interactionCapturing = ref(false)
 let lastIgnoreMouseEvents: boolean | null = null
-let detachCursorTracking: (() => void) | null = null
 
 interface RectLike {
   left: number
@@ -190,12 +189,43 @@ function setWindowMousePassthrough(ignore: boolean) {
   window.electronAPI.setWindowIgnoreMouseEvents(ignore)
 }
 
-function isPointInRect(point: { x: number; y: number }, rect: RectLike | null) {
+function getViewportRect(): RectLike {
+  return {
+    left: 0,
+    top: 0,
+    right: viewportSize.value.width,
+    bottom: viewportSize.value.height
+  }
+}
+
+function clampRectToViewport(rect: RectLike) {
+  const viewport = getViewportRect()
+  return {
+    left: clamp(rect.left, viewport.left, viewport.right),
+    top: clamp(rect.top, viewport.top, viewport.bottom),
+    right: clamp(rect.right, viewport.left, viewport.right),
+    bottom: clamp(rect.bottom, viewport.top, viewport.bottom)
+  }
+}
+
+function toWindowShapeRect(rect: RectLike | null): WindowShapeRect | null {
   if (!rect) {
-    return false
+    return null
   }
 
-  return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
+  const nextRect = clampRectToViewport(rect)
+  const width = Math.round(nextRect.right - nextRect.left)
+  const height = Math.round(nextRect.bottom - nextRect.top)
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+
+  return {
+    x: Math.round(nextRect.left),
+    y: Math.round(nextRect.top),
+    width,
+    height
+  }
 }
 
 function getElementRect(element: Element | null | undefined): RectLike | null {
@@ -218,12 +248,15 @@ function getModelRect(): RectLike | null {
     return null
   }
 
-  const padding = 10
+  // Live2D 提示气泡和头发摆动通常会超出模型包围盒，上方额外留白可以减少被窗口形状裁掉的概率。
+  const horizontalPadding = Math.max(Math.round(bounds.width * 0.08), 20)
+  const topPadding = Math.max(Math.round(bounds.height * 0.3), 112)
+  const bottomPadding = Math.max(Math.round(bounds.height * 0.05), 20)
   return {
-    left: bounds.x - padding,
-    top: bounds.y - padding,
-    right: bounds.x + bounds.width + padding,
-    bottom: bounds.y + bounds.height + padding
+    left: bounds.x - horizontalPadding,
+    top: bounds.y - topPadding,
+    right: bounds.x + bounds.width + horizontalPadding,
+    bottom: bounds.y + bounds.height + bottomPadding
   }
 }
 
@@ -244,47 +277,38 @@ function hasAiChatBlockingOverlay() {
   return chatInstance?.hasBlockingOverlay?.() ?? false
 }
 
-function syncMousePassthrough(point = lastPointerPosition.value) {
-  if (!window.electronAPI?.setWindowIgnoreMouseEvents) {
+function buildWindowShapeRects() {
+  if (interactionCapturing.value || chatDragCapturing.value || hasAiChatBlockingOverlay()) {
+    const viewportRect = toWindowShapeRect(getViewportRect())
+    return viewportRect ? [viewportRect] : []
+  }
+
+  return [
+    toWindowShapeRect(getModelRect()),
+    toWindowShapeRect(getElementRect(toolboxRef.value)),
+    toWindowShapeRect(getElementRect(drawerRef.value)),
+    toWindowShapeRect(getElementRect(errorPanelRef.value)),
+    toWindowShapeRect(getAiChatRect())
+  ].filter((item): item is WindowShapeRect => Boolean(item))
+}
+
+function syncOverlayWindowInteractivity() {
+  if (!window.electronAPI?.setWindowIgnoreMouseEvents || !window.electronAPI?.setWindowShapeRects) {
     return
   }
 
-  // 模型按下后的拖拽与点击收尾必须持续留在本窗口内，否则会在鼠标离开模型边缘时丢失交互。
-  if (interactionCapturing.value) {
-    setWindowMousePassthrough(false)
-    return
-  }
-
-  if (chatDragCapturing.value) {
-    setWindowMousePassthrough(false)
-    return
-  }
-
-  if (hasAiChatBlockingOverlay()) {
-    setWindowMousePassthrough(false)
-    return
-  }
-
-  if (!point) {
+  const shapeRects = buildWindowShapeRects()
+  if (shapeRects.length === 0) {
+    const viewportRect = toWindowShapeRect(getViewportRect())
+    if (viewportRect) {
+      window.electronAPI.setWindowShapeRects([viewportRect])
+    }
     setWindowMousePassthrough(true)
     return
   }
 
-  const shouldCapture = isPointInRect(point, getModelRect())
-    || isPointInRect(point, getElementRect(toolboxRef.value))
-    || isPointInRect(point, getElementRect(drawerRef.value))
-    || isPointInRect(point, getElementRect(errorPanelRef.value))
-    || isPointInRect(point, getAiChatRect())
-
-  setWindowMousePassthrough(!shouldCapture)
-}
-
-function handleGlobalCursorPoint(point: Live2DCursorPoint) {
-  lastPointerPosition.value = {
-    x: point.localX,
-    y: point.localY
-  }
-  syncMousePassthrough(lastPointerPosition.value)
+  window.electronAPI.setWindowShapeRects(shapeRects)
+  setWindowMousePassthrough(false)
 }
 
 const toolboxStyle = computed(() => {
@@ -350,6 +374,8 @@ function syncViewportSize() {
     width: window.innerWidth,
     height: window.innerHeight
   }
+
+  syncOverlayWindowInteractivity()
 }
 
 function closeFloatingUi() {
@@ -357,7 +383,7 @@ function closeFloatingUi() {
   modelPickerVisible.value = false
   aiChatVisible.value = false
   chatDragCapturing.value = false
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 function openMainWindow() {
@@ -392,12 +418,11 @@ function toggleModelPicker() {
 function toggleAiChat() {
   aiChatVisible.value = !aiChatVisible.value
   if (aiChatVisible.value) modelPickerVisible.value = false
-  syncMousePassthrough()
 }
 
 function handleChatDragStateChange(active: boolean) {
   chatDragCapturing.value = active
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 function openMainWindowToSettings() {
@@ -407,14 +432,18 @@ function openMainWindowToSettings() {
 
 function openMainWindowToAI() {
   closeFloatingUi()
-  window.electronAPI?.navigateMainWindow?.('/ai')
+  const sessionId = aiStore.getActiveSessionId('live2d')
+  const targetPath = sessionId
+    ? `/ai?scope=live2d&sessionId=${encodeURIComponent(sessionId)}`
+    : '/ai?scope=live2d'
+  window.electronAPI?.navigateMainWindow?.(targetPath)
 }
 
 function handleModelReady() {
   modelErrorMessage.value = ''
   modelReady.value = true
   void refreshModels()
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 function handleModelError(message: string) {
@@ -422,12 +451,12 @@ function handleModelError(message: string) {
   closeFloatingUi()
   modelErrorMessage.value = message
   console.warn('[Live2DOverlay] 模型加载失败:', message)
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 function handleModelBoundsChange(bounds: Live2DModelBounds | null) {
   modelBounds.value = bounds
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 function handleModelTap() {
@@ -444,23 +473,12 @@ function handleModelTap() {
     aiChatVisible.value = false
   }
 
-  syncMousePassthrough()
-}
-
-function handleModelInteract(areas: string[]) {
-  if (!modelReady.value) {
-    return
-  }
-
-  if (areas.length > 0) {
-    toolVisible.value = true
-    syncMousePassthrough()
-  }
+  syncOverlayWindowInteractivity()
 }
 
 function handlePointerCaptureChange(capturing: boolean) {
   interactionCapturing.value = capturing
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 }
 
 watch([
@@ -472,25 +490,26 @@ watch([
   modelBounds.value = null
   closeFloatingUi()
   modelErrorMessage.value = ''
-  syncMousePassthrough()
+  syncOverlayWindowInteractivity()
 })
 
-watch(() => [toolVisible.value, modelPickerVisible.value, aiChatVisible.value, modelReady.value, modelErrorMessage.value, modelBounds.value], () => {
-  syncMousePassthrough()
+watch(() => [toolVisible.value, modelPickerVisible.value, aiChatVisible.value, modelReady.value, modelErrorMessage.value, modelBounds.value, chatDragCapturing.value, interactionCapturing.value], () => {
+  syncOverlayWindowInteractivity()
 }, { flush: 'post' })
 
 onMounted(() => {
   syncViewportSize()
   window.addEventListener('resize', syncViewportSize)
-  detachCursorTracking = window.electronAPI?.onLive2DCursorPoint(handleGlobalCursorPoint) ?? null
   setWindowMousePassthrough(true)
+  const viewportRect = toWindowShapeRect(getViewportRect())
+  if (viewportRect) {
+    window.electronAPI?.setWindowShapeRects?.([viewportRect])
+  }
   void refreshModels()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewportSize)
-  detachCursorTracking?.()
-  detachCursorTracking = null
   setWindowMousePassthrough(false)
 })
 </script>

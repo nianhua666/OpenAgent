@@ -9,7 +9,7 @@ import { registerRuntimeAssetProtocol } from './runtimeAssets'
 import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSystemSpeech } from './systemTts'
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
-import type { TTSEngine } from '../src/types'
+import type { TTSEngine, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -416,8 +416,8 @@ const MAIN_WINDOW_WIDTH = 1400
 const MAIN_WINDOW_HEIGHT = 900
 const MAIN_WINDOW_MIN_WIDTH = 1100
 const MAIN_WINDOW_MIN_HEIGHT = 700
-const LIVE2D_WINDOW_MIN_WIDTH = 300
-const LIVE2D_WINDOW_MIN_HEIGHT = 360
+const LIVE2D_WINDOW_MIN_WIDTH = 360
+const LIVE2D_WINDOW_MIN_HEIGHT = 420
 const LIVE2D_CURSOR_BROADCAST_INTERVAL = 16
 const LIVE2D_BUNDLED_MODEL = 'live2d://bundle/shizuku/shizuku.model.json'
 const LIVE2D_DIAGNOSTIC_ARG = '--live2d-diagnose'
@@ -572,6 +572,7 @@ function normalizeSettings(saved: Partial<AppSettings> | null | undefined): AppS
   merged.ttsVoiceName = resolvedVoice?.name || DEFAULT_SETTINGS.ttsVoiceName
   merged.ttsSpeed = Number.isFinite(merged.ttsSpeed) ? Math.min(Math.max(Number(merged.ttsSpeed), 0.7), 1.35) : DEFAULT_SETTINGS.ttsSpeed
   merged.ttsVolume = Number.isFinite(merged.ttsVolume) ? Math.min(Math.max(Number(merged.ttsVolume), 0), 1) : DEFAULT_SETTINGS.ttsVolume
+  merged.live2dScale = Number.isFinite(merged.live2dScale) ? Math.min(Math.max(Number(merged.live2dScale), 0.05), 0.45) : DEFAULT_SETTINGS.live2dScale
 
   if (isLegacyDesktopSettings && merged.live2dPosition.x === 0 && merged.live2dPosition.y === 0) {
     merged.live2dPosition = { x: -1, y: -1 }
@@ -623,8 +624,10 @@ function resolveImageMimeType(filePath: string) {
   }
 }
 
-function getRendererEntryPath() {
-  return join(__dirname, '../dist/index.html')
+function getRendererEntryUrl(hashPath = '') {
+  const url = new URL('openagent://app/index.html')
+  url.hash = hashPath ? `#${hashPath}` : ''
+  return url.toString()
 }
 
 async function loadRendererRoute(win: BrowserWindow, hashPath = '') {
@@ -635,12 +638,7 @@ async function loadRendererRoute(win: BrowserWindow, hashPath = '') {
     return
   }
 
-  if (hashPath) {
-    await win.loadFile(getRendererEntryPath(), { hash: hashPath })
-    return
-  }
-
-  await win.loadFile(getRendererEntryPath())
+  await win.loadURL(getRendererEntryUrl(hashPath))
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -664,10 +662,10 @@ function sanitizeDragPoint(payload: unknown): WindowDragPoint | null {
 }
 
 function getLive2DWindowSize(scale: number) {
-  const normalizedScale = clamp(scale || DEFAULT_SETTINGS.live2dScale, 0.08, 0.3)
+  const normalizedScale = clamp(scale || DEFAULT_SETTINGS.live2dScale, 0.08, 0.45)
   return {
-    width: Math.round(clamp(260 + normalizedScale * 880, LIVE2D_WINDOW_MIN_WIDTH, 520)),
-    height: Math.round(clamp(300 + normalizedScale * 1040, LIVE2D_WINDOW_MIN_HEIGHT, 620))
+    width: Math.round(clamp(320 + normalizedScale * 1700, LIVE2D_WINDOW_MIN_WIDTH, 860)),
+    height: Math.round(clamp(380 + normalizedScale * 2100, LIVE2D_WINDOW_MIN_HEIGHT, 980))
   }
 }
 
@@ -1096,7 +1094,59 @@ function setOverlayIgnoreMouseEvents(senderWindow: BrowserWindow | null, ignore:
   senderWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : undefined)
 }
 
-// 透明悬浮窗在穿透状态下拿不到窗口外鼠标移动，只能由主进程采样全局光标后再回推给渲染层。
+function getFullWindowShapeRect(senderWindow: BrowserWindow): WindowShapeRect[] {
+  const bounds = senderWindow.getBounds()
+  return [{ x: 0, y: 0, width: Math.max(bounds.width, 1), height: Math.max(bounds.height, 1) }]
+}
+
+function sanitizeWindowShapeRect(senderWindow: BrowserWindow, payload: unknown): WindowShapeRect | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const rect = payload as Partial<WindowShapeRect>
+  if (
+    typeof rect.x !== 'number'
+    || typeof rect.y !== 'number'
+    || typeof rect.width !== 'number'
+    || typeof rect.height !== 'number'
+  ) {
+    return null
+  }
+
+  const bounds = senderWindow.getBounds()
+  const left = clamp(Math.round(rect.x), 0, Math.max(bounds.width - 1, 0))
+  const top = clamp(Math.round(rect.y), 0, Math.max(bounds.height - 1, 0))
+  const right = clamp(Math.round(rect.x + rect.width), 0, bounds.width)
+  const bottom = clamp(Math.round(rect.y + rect.height), 0, bounds.height)
+
+  if (right <= left || bottom <= top) {
+    return null
+  }
+
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  }
+}
+
+function setOverlayWindowShape(senderWindow: BrowserWindow | null, rectPayload: unknown) {
+  if (!senderWindow || senderWindow.isDestroyed() || senderWindow !== live2dWindow || typeof senderWindow.setShape !== 'function') {
+    return
+  }
+
+  const shapeRects = Array.isArray(rectPayload)
+    ? rectPayload
+      .map(item => sanitizeWindowShapeRect(senderWindow, item))
+      .filter((item): item is WindowShapeRect => Boolean(item))
+    : []
+
+  senderWindow.setShape(shapeRects.length > 0 ? shapeRects : getFullWindowShapeRect(senderWindow))
+}
+
+// Live2D 模型视线仍然需要全局光标，主进程持续广播可避免异形窗口区域造成的事件缺口。
 function getLive2DCursorPointPayload(win: BrowserWindow): Live2DCursorPoint {
   const bounds = win.getBounds()
   const cursorPoint = screen.getCursorScreenPoint()
@@ -1574,6 +1624,9 @@ app.whenReady().then(() => {
   })
   ipcMain.on('window:endDrag', (event) => {
     endWindowDrag(BrowserWindow.fromWebContents(event.sender))
+  })
+  ipcMain.on('window:setShapeRects', (event, rects: unknown) => {
+    setOverlayWindowShape(BrowserWindow.fromWebContents(event.sender), rects)
   })
   ipcMain.on('window:setIgnoreMouseEvents', (event, ignore: boolean) => {
     setOverlayIgnoreMouseEvents(BrowserWindow.fromWebContents(event.sender), Boolean(ignore))

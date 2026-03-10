@@ -10,9 +10,9 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
 - 多模型协议支持：内置 OpenAI 兼容协议、Anthropic Messages、Ollama 本地与云端接入。
 - 账号管理工作台：支持账号类型设计、账号查询、批量导入、批量导出与业务字段约束。
 - 托管 MCP / Skills：内置 MCP 与 Skill 商城、统一启停、健康检查与托管调用。
-- Live2D 桌面助手：支持桌面悬浮显示、模型切换、独立聊天窗口、拖动与交互。
+- Live2D 桌面助手：支持异形悬浮显示、模型双击唤出工具、独立聊天窗口、拖动与交互。
 - 多模态对话：支持图片附件发送、视觉模型识别、推理过程展示与折叠查看。
-- 多引擎 TTS：支持系统语音与 Kokoro 本地语音，兼顾低延迟和离线能力。
+- 多引擎 TTS：支持系统语音、Edge、Azure 与 Kokoro 本地语音，兼顾低延迟、情绪表达与离线能力。
 - 长期记忆与任务规划：支持长期记忆、分域会话、自动任务步骤推进。
 - Windows MCP：在桌面版中可调用系统级读屏、聚焦、输入与自动化工具链。
 
@@ -39,7 +39,7 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
 ### Live2D 与桌面交互
 
 - 支持 Live2D 悬浮窗独立会话。
-- 支持模型点击、拖动、抽屉工具栏与悬浮聊天窗口。
+- 支持模型双击唤出工具、按住拖动、抽屉工具栏与悬浮聊天窗口。
 - 打包态支持内置模型诊断与资源协议自检。
 
 ### TTS 语音播报
@@ -94,14 +94,14 @@ npm run electron:build:clean
 构建完成后，产物会输出到：
 
 ```text
-release/v2.0.0/
+release/v2.2.0/
 ```
 
 其中包含：
 
-- OpenAgent Setup 2.0.0.exe
-- OpenAgent Setup 2.0.0.exe.blockmap
-- OpenAgent Portable 2.0.0.exe
+- OpenAgent Setup 2.2.0.exe
+- OpenAgent Setup 2.2.0.exe.blockmap
+- OpenAgent Portable 2.2.0.exe
 - win-unpacked/
 
 后续版本会自动按当前 package.json 的版本号输出到对应目录，例如 v2.1.0、v2.2.0。

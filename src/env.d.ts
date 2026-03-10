@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -10,6 +10,7 @@ interface ElectronAPI {
   updateWindowDrag: (pointer: { x: number; y: number }) => void
   endWindowDrag: () => void
   setWindowIgnoreMouseEvents: (ignore: boolean) => void
+  setWindowShapeRects: (rects: WindowShapeRect[]) => void
   showMainWindow: () => void
   navigateMainWindow: (hashPath?: string) => void
   hideMainWindow: () => void

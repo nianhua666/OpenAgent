@@ -128,12 +128,18 @@ function closeWin() {
 }
 
 function openAIPanel() {
-  if (aiStore.runtime.sessionId) {
-    aiStore.switchSession(aiStore.runtime.sessionId)
-  }
+  const runtimeSessionId = aiStore.runtime.sessionId
+  const runtimeScope = aiStore.runtime.sessionScope === 'live2d' ? 'live2d' : 'main'
 
-  if (aiStore.runtime.sessionScope === 'live2d') {
-    void router.push('/ai-settings')
+  if (runtimeSessionId) {
+    aiStore.switchSession(runtimeSessionId, runtimeScope)
+    void router.push({
+      path: '/ai',
+      query: {
+        scope: runtimeScope,
+        sessionId: runtimeSessionId
+      }
+    })
     return
   }
 

@@ -145,6 +145,13 @@ export interface Live2DModelBounds {
   height: number
 }
 
+export interface WindowShapeRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface Live2DCursorPoint {
   screenX: number
   screenY: number

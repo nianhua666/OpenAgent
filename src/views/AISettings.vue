@@ -1591,13 +1591,49 @@ function handleTTSRuntimeProgress(event: Event) {
     return
   }
 
-  if (status === 'loading-model' || status === 'progress') {
-    setTTSStatus('正在准备语音模型资源，请稍候。')
+  if (status === 'loading-model') {
+    const backendLabel = detail.device === 'webgpu'
+      ? 'WebGPU'
+      : detail.device === 'wasm'
+        ? 'WASM'
+        : '默认后端'
+    setTTSStatus(`正在初始化 Kokoro 语音引擎（${backendLabel}），优先读取安装包内置资源。`)
+    return
+  }
+
+  if (status === 'progress') {
+    const progress = detail.progress && typeof detail.progress === 'object'
+      ? detail.progress as Record<string, unknown>
+      : null
+    const file = typeof progress?.file === 'string' ? progress.file : ''
+    const percent = typeof progress?.progress === 'number'
+      ? progress.progress <= 1
+        ? Math.round(progress.progress * 100)
+        : Math.round(progress.progress)
+      : null
+    const resourceLabel = /tokenizer/i.test(file)
+      ? '分词器资源'
+      : /config/i.test(file)
+        ? '模型配置'
+        : /onnx/i.test(file)
+          ? '离线语音模型'
+          : /voice|\.bin$/i.test(file)
+            ? '音色资源'
+            : '语音资源'
+
+    setTTSStatus(percent !== null
+      ? `正在加载${resourceLabel}（${percent}%）。`
+      : `正在加载${resourceLabel}。`)
     return
   }
 
   if (status === 'device-fallback') {
-    setTTSStatus('当前推理设备不可用，正在切换到后备语音后端。')
+    const nextBackendLabel = detail.nextDevice === 'webgpu'
+      ? 'WebGPU'
+      : detail.nextDevice === 'wasm'
+        ? 'WASM'
+        : '后备后端'
+    setTTSStatus(`当前推理设备不可用，正在切换到${nextBackendLabel}。`)
     return
   }
 
@@ -1611,6 +1647,10 @@ function handleTTSRuntimeProgress(event: Event) {
     ttsVoiceCached.value = true
     setTTSStatus('音色资源已缓存到本地，可离线复用。')
     return
+  }
+
+  if (status === 'failed') {
+    setTTSError(typeof detail.error === 'string' && detail.error.trim() ? detail.error : '语音模型初始化失败')
   }
 
   if (status === 'generating') {

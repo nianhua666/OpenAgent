@@ -72,17 +72,18 @@
       <div class="setting-row" v-if="settings.live2dEnabled && showLive2DScaleRow">
         <div class="setting-label">
           <div class="label-main">模型缩放</div>
-          <div class="label-desc">调整 Live2D 角色大小</div>
+          <div class="label-desc">调整 Live2D 角色大小，较大模型会同步放宽异形悬浮窗的显示范围</div>
         </div>
         <div class="range-wrap">
-          <input type="range" min="0.05" max="0.3" step="0.01" :value="settings.live2dScale" @input="updateSetting('live2dScale', parseFloat(($event.target as HTMLInputElement).value))" />
+          <input type="range" min="0.05" max="0.45" step="0.01" :value="settings.live2dScale" @input="updateSetting('live2dScale', parseFloat(($event.target as HTMLInputElement).value))" />
           <span class="range-val">{{ (settings.live2dScale * 100).toFixed(0) }}%</span>
         </div>
       </div>
 
       <template v-if="settings.live2dEnabled">
         <div class="live2d-banner" v-if="showLive2DBanner">
-          <p>默认模型已经改为 Shizuku，并且直接随安装包内置，不再依赖首次联网下载。Live2D 现在会以独立透明悬浮窗运行，关闭主窗口后仍可继续显示。</p>
+          <p>默认模型已经改为 Shizuku，并且直接随安装包内置，不再依赖首次联网下载。Live2D 现在会以独立异形悬浮窗运行，关闭主窗口后仍可继续显示。</p>
+          <p>模型默认改为双击唤出工具按钮，空白区域不再保留整块透明点击层；拖动时仍然可以直接按住模型移动窗口。</p>
           <p>远程模型不会自动混进默认配置，只有你主动输入地址并选择下载、缓存、导入后，才会进入本地模型库；不需要的模型也可以随时删除，托盘右键也能直接切换模型。</p>
         </div>
 

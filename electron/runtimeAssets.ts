@@ -42,6 +42,14 @@ function getBundledRendererDistDir() {
     : join(process.cwd(), 'dist')
 }
 
+function resolveRendererDistPath(assetPath: string) {
+  const normalizedAssetPath = normalizeProtocolAssetPath(assetPath || 'index.html')
+  const distRoot = getBundledRendererDistDir()
+  const targetPath = normalize(join(distRoot, normalizedAssetPath))
+
+  return isInsideRoot(distRoot, targetPath) && existsSync(targetPath) ? targetPath : ''
+}
+
 function isInsideRoot(rootPath: string, targetPath: string) {
   const normalizedRoot = normalize(rootPath)
   const normalizedTarget = normalize(targetPath)
@@ -94,13 +102,18 @@ export function registerRuntimeAssetProtocol() {
       return new Response('Not Found', { status: 404 })
     }
 
-    const requestPath = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, '')
+    const requestPath = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, '') || 'index.html'
     const [section, ...segments] = requestPath.split('/')
-    if (!section || segments.length === 0) {
-      return new Response('Not Found', { status: 404 })
+
+    let targetPath = ''
+    if (section && segments.length > 0 && ['assets', 'models', 'voices'].includes(section)) {
+      targetPath = resolveRuntimeAssetPath(section, segments.join('/'))
     }
 
-    const targetPath = resolveRuntimeAssetPath(section, segments.join('/'))
+    if (!targetPath) {
+      targetPath = resolveRendererDistPath(requestPath)
+    }
+
     if (!targetPath || !existsSync(targetPath)) {
       return new Response('Not Found', { status: 404 })
     }

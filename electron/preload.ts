@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, Live2DCursorPoint } from '../src/types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, Live2DCursorPoint, WindowShapeRect } from '../src/types'
 
 // 安全地向渲染进程暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateWindowDrag: (pointer: { x: number; y: number }) => ipcRenderer.send('window:updateDrag', pointer),
   endWindowDrag: () => ipcRenderer.send('window:endDrag'),
   setWindowIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.send('window:setIgnoreMouseEvents', ignore),
+  setWindowShapeRects: (rects: WindowShapeRect[]) => ipcRenderer.send('window:setShapeRects', rects),
   showMainWindow: () => ipcRenderer.send('app:showMainWindow'),
   navigateMainWindow: (hashPath?: string) => ipcRenderer.send('app:navigateMainWindow', hashPath),
   hideMainWindow: () => ipcRenderer.send('app:hideMainWindow'),

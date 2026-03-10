@@ -15,13 +15,14 @@ import { resolveLive2DModelPath } from '@/utils/live2d'
 
 const BASE_LIVE2D_SCALE = 0.12
 const BOUNDS_SYNC_INTERVAL = 180
+const MODEL_DOUBLE_TAP_INTERVAL = 320
+const MODEL_DOUBLE_TAP_DISTANCE = 26
 
 const emit = defineEmits<{
   ready: []
   error: [message: string]
   boundsChange: [bounds: Live2DModelBounds | null]
   modelTap: []
-  modelInteract: [areas: string[]]
   pointerCaptureChange: [capturing: boolean]
 }>()
 
@@ -108,6 +109,8 @@ let detachModelEvents: (() => void) | null = null
 let lastBoundsKey = ''
 let lastCursorPoint: Live2DCursorPoint | null = null
 let detachCursorTracking: (() => void) | null = null
+let lastTapAt = 0
+let lastTapPoint: { x: number; y: number } | null = null
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
@@ -393,10 +396,28 @@ function handleGlobalPointerMove(event: MouseEvent) {
 }
 
 function handleGlobalPointerUp() {
-  const shouldToggleTools = !!pointerDownPoint && !draggingWindow
+  const releasePoint = pointerDownPoint ? { ...pointerDownPoint } : null
+  const shouldToggleTools = !!releasePoint && !draggingWindow
   cleanupPointerTracking()
 
-  if (shouldToggleTools) {
+  if (!shouldToggleTools || !releasePoint) {
+    lastTapAt = 0
+    lastTapPoint = null
+    return
+  }
+
+  const now = Date.now()
+  const isDoubleTap = !!lastTapPoint
+    && now - lastTapAt <= MODEL_DOUBLE_TAP_INTERVAL
+    && Math.hypot(releasePoint.x - lastTapPoint.x, releasePoint.y - lastTapPoint.y) <= MODEL_DOUBLE_TAP_DISTANCE
+
+  lastTapAt = now
+  lastTapPoint = releasePoint
+
+  // 拖拽和点击都发生在模型表面上，改成双击才能避免每次整理窗口位置时误弹工具面板。
+  if (isDoubleTap) {
+    lastTapAt = 0
+    lastTapPoint = null
     emit('modelTap')
   }
 }
@@ -431,24 +452,10 @@ function bindModelInteractions(instance: Oml2dInstance, requestId: number) {
     window.addEventListener('mouseup', handleGlobalPointerUp)
   }
 
-  const handleHit = (payload?: unknown) => {
-    if (requestId !== initRequestId) {
-      return
-    }
-
-    const areas = Array.isArray(payload)
-      ? payload.filter((item): item is string => typeof item === 'string')
-      : []
-
-    emit('modelInteract', areas)
-  }
-
   model.on('pointerdown', handlePointerDown)
-  model.on('hit', handleHit)
 
   detachModelEvents = () => {
     model.off?.('pointerdown', handlePointerDown)
-    model.off?.('hit', handleHit)
     cleanupPointerTracking()
   }
 }
@@ -505,8 +512,9 @@ async function applyModelLayout(instance: Oml2dInstance, requestId: number) {
   model.anchor?.set?.(0.5, 1)
 
   const initialBounds = readModelBounds(instance)
-  const horizontalPadding = Math.max(Math.round(stageWidth.value * 0.08), 18)
-  const bottomPadding = Math.max(Math.round(stageHeight.value * 0.04), 16)
+  const horizontalPadding = Math.max(Math.round(stageWidth.value * 0.05), 16)
+  const topPadding = Math.max(Math.round(stageHeight.value * 0.16), 72)
+  const bottomPadding = Math.max(Math.round(stageHeight.value * 0.04), 20)
   const userScaleRatio = settingsStore.settings.live2dScale / BASE_LIVE2D_SCALE
 
   let finalScale = settingsStore.settings.live2dScale
@@ -516,7 +524,7 @@ async function applyModelLayout(instance: Oml2dInstance, requestId: number) {
     const sourceWidth = sourceSize.width
     const sourceHeight = sourceSize.height
     const fitWidth = (stageWidth.value - horizontalPadding * 2) / sourceWidth
-    const fitHeight = (stageHeight.value - bottomPadding - 8) / sourceHeight
+    const fitHeight = (stageHeight.value - topPadding - bottomPadding) / sourceHeight
     const fitScale = Math.min(fitWidth, fitHeight)
     finalScale = Math.max(fitScale * userScaleRatio, 0.01)
   }
@@ -538,8 +546,8 @@ async function applyModelLayout(instance: Oml2dInstance, requestId: number) {
   if (adjustedBounds) {
     const rightLimit = stageWidth.value - horizontalPadding
     const leftLimit = horizontalPadding
-    const topLimit = 8
-    const bottomLimit = stageHeight.value - 6
+    const topLimit = topPadding
+    const bottomLimit = stageHeight.value - 10
 
     const overflowRight = adjustedBounds.x + adjustedBounds.width - rightLimit
     const overflowLeft = leftLimit - adjustedBounds.x

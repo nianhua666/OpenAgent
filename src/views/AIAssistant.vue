@@ -391,7 +391,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
 import { useAIStore } from '@/stores/ai'
@@ -402,6 +402,7 @@ import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 import dayjs from 'dayjs'
 
+const route = useRoute()
 const router = useRouter()
 const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
@@ -535,7 +536,24 @@ function sessionScopeLabel(scope: AIConversationScope) {
   return scope === 'live2d' ? 'Live2D' : '主窗口'
 }
 
-function syncSelectedSession(preferredScope: AIConversationScope = selectedScope.value) {
+function getRoutePreferredScope() {
+  return route.query.scope === 'live2d' || route.query.scope === 'main'
+    ? route.query.scope
+    : null
+}
+
+function getRoutePreferredSessionId() {
+  return typeof route.query.sessionId === 'string' ? route.query.sessionId.trim() : ''
+}
+
+function syncSelectedSession(preferredScope: AIConversationScope = selectedScope.value, preferredSessionId = '') {
+  const preferredSession = preferredSessionId ? aiStore.getSessionById(preferredSessionId) : null
+  if (preferredSession) {
+    selectedScope.value = preferredSession.scope
+    selectedSessionId.value = preferredSession.id
+    return
+  }
+
   const current = selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null
   if (current) {
     selectedScope.value = current.scope
@@ -566,6 +584,18 @@ function syncSelectedSession(preferredScope: AIConversationScope = selectedScope
 
   selectedScope.value = preferredScope
   selectedSessionId.value = ''
+}
+
+function applyPreferredSessionSelection(preferredScope: AIConversationScope, preferredSessionId = '') {
+  syncSelectedSession(preferredScope, preferredSessionId)
+
+  if (selectedSessionId.value) {
+    aiStore.switchSession(selectedSessionId.value, selectedScope.value)
+  }
+
+  if (!showAddMemory.value) {
+    memoryScope.value = selectedScope.value
+  }
 }
 
 function taskStatusLabel(status: string) {
@@ -914,7 +944,10 @@ onMounted(() => {
     void aiStore.init()
   }
 
-  if (aiStore.runtime.running && aiStore.runtime.sessionId) {
+  const preferredScope = getRoutePreferredScope()
+  const preferredSessionId = getRoutePreferredSessionId()
+
+  if (!preferredScope && !preferredSessionId && aiStore.runtime.running && aiStore.runtime.sessionId) {
     const runtimeSession = aiStore.getSessionById(aiStore.runtime.sessionId)
     if (runtimeSession) {
       selectedScope.value = runtimeSession.scope
@@ -922,7 +955,7 @@ onMounted(() => {
       memoryScope.value = runtimeSession.scope
       aiStore.switchSession(runtimeSession.id, runtimeSession.scope)
     }
-  } else {
+  } else if (!preferredScope && !preferredSessionId) {
     syncSelectedSession('main')
     memoryScope.value = selectedScope.value
   }
@@ -938,6 +971,20 @@ onMounted(() => {
 watch(() => [aiConfig.value.protocol, aiConfig.value.baseUrl, aiConfig.value.apiKey], () => {
   void refreshModelOptions()
 })
+
+watch(
+  () => [route.query.scope, route.query.sessionId],
+  () => {
+    const preferredScope = getRoutePreferredScope()
+    const preferredSessionId = getRoutePreferredSessionId()
+    if (!preferredScope && !preferredSessionId) {
+      return
+    }
+
+    applyPreferredSessionSelection(preferredScope || selectedScope.value, preferredSessionId)
+  },
+  { immediate: true }
+)
 
 watch(
   () => [
