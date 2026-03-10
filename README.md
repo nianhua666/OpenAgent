@@ -91,6 +91,20 @@ npm run build
 npm run electron:build:clean
 ```
 
+### 上传当前版本 GitHub Release 资产
+
+```bash
+npm run release:publish
+```
+
+该命令会自动读取当前 package.json 版本号，若远端不存在对应 Tag / Release，会自动创建 Release，并用当前版本目录下的安装包、便携版、blockmap 和 latest.yml 覆盖上传。
+
+### 构建并自动发布当前版本
+
+```bash
+npm run electron:release
+```
+
 构建完成后，产物会输出到：
 
 ```text
