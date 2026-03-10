@@ -1,7 +1,7 @@
 <template>
   <transition name="chat-slide">
     <div v-if="visible" ref="rootRef" class="ai-chat-dialog" :style="dialogStyle" @mousedown.stop>
-      <div class="chat-header" @mousedown.left="handleHeaderPointerDown">
+      <div class="chat-header" :class="{ 'is-window-drag-enabled': useNativeWindowDrag }" @mousedown.left="handleHeaderPointerDown">
         <div class="chat-title">
           <svg class="chat-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -36,213 +36,269 @@
 
       <!-- 对话区域 -->
       <template v-else>
-        <div class="chat-top-panel">
-          <div class="chat-runtime-toolbar">
-            <button class="runtime-chip" :class="{ active: aiStore.preferences.thinkingEnabled }" @click="toggleThinkingMode">
-              思考 {{ aiStore.preferences.thinkingEnabled ? aiStore.preferences.thinkingLevel : '关' }}
-            </button>
-            <button class="runtime-chip" :disabled="!aiStore.preferences.thinkingEnabled" @click="cycleThinkingLevel">
-              强度
-            </button>
-            <button class="runtime-chip" :class="{ active: aiStore.preferences.planningMode }" @click="togglePlanningMode">
-              规划
-            </button>
-            <button class="runtime-chip" :class="{ active: aiStore.preferences.autoMemory }" @click="toggleAutoMemory">
-              记忆
-            </button>
-          </div>
-
-          <div v-if="currentModelBadges.length || currentContextMetrics" class="chat-status-strip">
-            <div v-if="currentModelBadges.length" class="model-badge-row">
-              <span v-for="badge in currentModelBadges" :key="badge" class="model-badge">{{ badge }}</span>
-            </div>
-            <div v-if="currentContextMetrics" class="context-inline-status">
-              <span>上下文 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }} / {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }}</span>
-              <span v-if="aiStore.runtime.phase === 'compressing'">压缩中</span>
-            </div>
-          </div>
-
-          <div v-if="modelLoadError" class="model-load-error">{{ modelLoadError }}</div>
-        </div>
-
-        <div class="chat-messages" ref="messagesRef">
-          <details v-if="currentTask" class="task-inline-board">
-            <summary class="task-inline-toggle">
-              <div class="task-inline-head">
-                <div class="task-inline-main">
-                  <strong>{{ currentTask.goal }}</strong>
-                </div>
-                <span class="task-status" :class="`is-${currentTask.status}`">{{ taskStatusLabel(currentTask.status) }}</span>
+        <div class="chat-shell" :class="{ 'has-session-manager': showSessionManager }">
+          <aside v-if="showSessionManager" class="chat-manager-panel">
+            <div class="manager-head">
+              <div class="manager-copy">
+                <strong>会话管理</strong>
+                <span>Live2D 会话会同步显示到主窗口 AI 助手。</span>
               </div>
-              <div class="task-inline-meta">
-                <span>自动循环 {{ currentTask.iterationCount }}/{{ currentTask.maxIterations > 0 ? currentTask.maxIterations : '无限' }}</span>
-                <span v-if="currentTask.summary" class="task-inline-summary">{{ currentTask.summary }}</span>
-                <span v-if="currentTask.steps.length">步骤 {{ currentTask.steps.length }}</span>
-              </div>
-            </summary>
-            <div v-if="currentTask.summary" class="task-inline-summary-text">{{ currentTask.summary }}</div>
-            <div v-if="currentTask.steps.length" class="task-inline-step-list">
-              <div v-for="step in currentTask.steps" :key="step.id" class="task-inline-step" :class="`is-${step.status}`">
-                <span class="task-inline-step-title">{{ step.title }}</span>
-                <span v-if="step.note" class="task-inline-step-note">{{ step.note }}</span>
-              </div>
-            </div>
-          </details>
-
-          <div v-if="!messages.length" class="chat-empty">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-            <span>点击下方输入框开始对话</span>
-            <span class="chat-hint">{{ emptyHint }}</span>
-          </div>
-          <div
-            v-for="msg in messages"
-            :key="msg.id"
-            class="chat-msg"
-            :class="[`is-${msg.role}`, { 'has-tool-calls': msg.toolCalls?.length }]"
-          >
-            <div class="msg-avatar" v-if="msg.role === 'assistant'">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 10v1a6 6 0 0 0 12 0v-1"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
-              </svg>
-            </div>
-            <div class="msg-body">
-              <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
-              <div v-if="canPlayAssistantReply(msg)" class="msg-inline-actions">
-                <button class="voice-btn" :class="{ active: playingMessageId === msg.id }" @click="playAssistantMessage(msg)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="5 3 19 12 5 21 5 3"/>
-                  </svg>
-                  <span>{{ playingMessageId === msg.id ? '播放中' : '播放语音' }}</span>
-                </button>
-              </div>
-              <details v-if="msg.reasoningContent" class="msg-reasoning">
-                <summary>模型思考过程</summary>
-                <div v-html="renderMarkdown(msg.reasoningContent)"></div>
-              </details>
-              <div v-if="msg.attachments?.length" class="msg-attachment-grid">
-                <button v-for="attachment in msg.attachments" :key="attachment.id" class="msg-attachment-card" @click="openAttachmentPreview(attachment)">
-                  <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="msg-attachment-image" />
-                  <div v-else class="msg-file-badge">文件</div>
-                  <span>{{ attachment.name }}</span>
-                </button>
-              </div>
-              <div v-if="msg.toolCalls?.length" class="msg-tools">
-                <div v-for="tc in msg.toolCalls" :key="tc.id" class="tool-call-badge">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                  </svg>
-                  <span>{{ tc.name }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-if="aiStore.streaming" class="chat-msg is-assistant is-streaming">
-            <div class="msg-avatar">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 10v1a6 6 0 0 0 12 0v-1"/>
-              </svg>
-            </div>
-            <div class="msg-body">
-              <div class="msg-content" v-html="renderMarkdown(streamingContent)"></div>
-              <details v-if="streamingReasoningContent" class="msg-reasoning is-live" open>
-                <summary>模型思考过程</summary>
-                <div v-html="renderMarkdown(streamingReasoningContent)"></div>
-              </details>
-              <div class="streaming-indicator">
-                <span></span><span></span><span></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="chat-input-area">
-          <input ref="fileInputRef" type="file" :accept="filePickerAccept" multiple class="hidden-file-input" @change="handleAttachmentSelection" />
-          <div v-if="pendingAttachments.length" class="pending-attachment-list">
-            <div v-for="attachment in pendingAttachments" :key="attachment.id" class="pending-attachment-item">
-              <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="pending-attachment-image" />
-              <div v-else class="pending-file-badge">文件</div>
-              <div class="pending-attachment-copy">
-                <strong>{{ attachment.name }}</strong>
-                <span v-if="attachment.type === 'image'">{{ attachment.width || '-' }} x {{ attachment.height || '-' }}</span>
-                <span v-else>{{ formatAttachmentMeta(attachment) }}</span>
-              </div>
-              <button class="icon-btn" title="移除图片" @click="removePendingAttachment(attachment.id)">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
+              <button class="panel-icon-btn" title="主窗口查看" @click="openMainView">
+                <svg width="14" height="14"><use href="#icon-menu"/></svg>
               </button>
             </div>
-          </div>
-          <div class="chat-input-row">
-            <button class="icon-btn attach-btn attach-btn-inline" :disabled="aiStore.streaming" title="选择文件或图片" @click="openAttachmentPicker">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
-            </button>
-            <textarea
-              ref="inputRef"
-              v-model="inputText"
-              :placeholder="aiStore.streaming ? 'AI 正在回复中...' : '输入消息，Enter 发送，Shift+Enter 换行'"
-              class="chat-input"
-              rows="1"
-              @keydown="handleKeydown"
-              @paste="handleComposerPaste"
-              @input="autoResize"
-            />
-            <button
-              class="send-btn"
-              :class="{ 'is-stop': aiStore.streaming }"
-              :disabled="sendButtonDisabled"
-              :title="aiStore.streaming ? '停止当前任务' : '发送消息'"
-              @click="handlePrimaryAction"
-            >
-              <svg v-if="aiStore.streaming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="6" y="6" width="12" height="12" rx="2"/>
-              </svg>
-              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-            </button>
-          </div>
-          <details class="composer-control-fold">
-            <summary class="composer-control-summary">
-              <span class="composer-summary-item">模型 {{ currentModelLabel }}</span>
-              <span class="composer-summary-item">附件 {{ pendingAttachments.length }}</span>
-              <span class="composer-summary-item">步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
-            </summary>
-            <div class="composer-control-content">
-              <div class="composer-model-row">
-                <select class="model-select" :value="aiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
-                  <option v-if="!aiConfig.model" value="">请先选择模型</option>
-                  <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
-                    {{ model.label }}
-                  </option>
-                </select>
-                <button class="icon-btn" :disabled="loadingAiModels || !canRefreshModels" title="刷新模型" @click="refreshModelOptions">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10"/>
-                    <polyline points="1 20 1 14 7 14"/>
-                    <path d="M3.51 9a9 9 0 0114.13-3.36L23 10"/>
-                    <path d="M20.49 15a9 9 0 01-14.13 3.36L1 14"/>
+
+            <div class="manager-action-row">
+              <button class="manager-action-btn" :disabled="aiStore.streaming" @click="startNewSession">新建会话</button>
+              <button class="manager-action-btn is-secondary" :disabled="aiStore.streaming" @click="resetScopedSessions">清空会话</button>
+            </div>
+
+            <div class="manager-session-list">
+              <div
+                v-for="session in managerSessions"
+                :key="session.id"
+                class="manager-session-card"
+                :class="{ active: session.id === scopedActiveSessionId, pinned: session.title.trim() === defaultLive2DSessionTitle }"
+                role="button"
+                tabindex="0"
+                @click="selectSession(session.id)"
+                @keydown.enter.prevent="selectSession(session.id)"
+                @keydown.space.prevent="selectSession(session.id)"
+              >
+                <div class="manager-session-head">
+                  <strong>{{ session.title }}</strong>
+                  <span v-if="session.title.trim() === defaultLive2DSessionTitle" class="manager-session-pin">置顶</span>
+                </div>
+                <span class="manager-session-meta">{{ formatSessionMeta(session) }}</span>
+                <button class="manager-session-delete" :disabled="aiStore.streaming" title="删除会话" @click.stop="deleteScopedSession(session.id)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                   </svg>
                 </button>
               </div>
-              <div class="composer-action-row">
-                <div class="runtime-stepper">
-                  <button class="stepper-btn" @click="adjustMaxAutoSteps(-1)">-</button>
-                  <span>步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
-                  <button class="stepper-btn" @click="adjustMaxAutoSteps(1)">+</button>
-                </div>
-                <button class="runtime-chip" title="按当前模型应用推荐的自动步数，用于限制长任务连续调用工具的轮数" @click="applyRecommendedAutoSteps">
-                  推荐 {{ recommendedAutoSteps }}
-                </button>
+
+              <div v-if="!managerSessions.length" class="manager-empty">
+                <span>暂无 Live2D 会话</span>
+                <small>发送第一条消息后会自动创建并同步到主窗口。</small>
               </div>
             </div>
-          </details>
-          <div class="composer-inline-hint">支持任意文件、截图粘贴与工具生成的桌面截图。</div>
+
+            <div class="manager-footer">
+              <button class="manager-link-btn" @click="openSettings">前往设置</button>
+              <button class="manager-link-btn" @click="openMainView">主窗口查看</button>
+            </div>
+          </aside>
+
+          <div class="chat-main-pane">
+            <div class="chat-top-panel">
+              <div class="chat-runtime-toolbar">
+                <button class="runtime-chip" :class="{ active: aiStore.preferences.thinkingEnabled }" @click="toggleThinkingMode">
+                  思考 {{ aiStore.preferences.thinkingEnabled ? aiStore.preferences.thinkingLevel : '关' }}
+                </button>
+                <button class="runtime-chip" :disabled="!aiStore.preferences.thinkingEnabled" @click="cycleThinkingLevel">
+                  强度
+                </button>
+                <button class="runtime-chip" :class="{ active: aiStore.preferences.planningMode }" @click="togglePlanningMode">
+                  规划
+                </button>
+                <button class="runtime-chip" :class="{ active: aiStore.preferences.autoMemory }" @click="toggleAutoMemory">
+                  记忆
+                </button>
+              </div>
+
+              <div v-if="currentModelBadges.length || currentContextMetrics" class="chat-status-strip">
+                <div v-if="currentModelBadges.length" class="model-badge-row">
+                  <span v-for="badge in currentModelBadges" :key="badge" class="model-badge">{{ badge }}</span>
+                </div>
+                <div v-if="currentContextMetrics" class="context-inline-status">
+                  <span>上下文 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }} / {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }}</span>
+                  <span v-if="aiStore.runtime.phase === 'compressing'">压缩中</span>
+                </div>
+              </div>
+
+              <div v-if="modelLoadError" class="model-load-error">{{ modelLoadError }}</div>
+            </div>
+
+            <div class="chat-messages" ref="messagesRef">
+              <details v-if="currentTask" class="task-inline-board">
+                <summary class="task-inline-toggle">
+                  <div class="task-inline-head">
+                    <div class="task-inline-main">
+                      <strong>{{ currentTask.goal }}</strong>
+                    </div>
+                    <span class="task-status" :class="`is-${currentTask.status}`">{{ taskStatusLabel(currentTask.status) }}</span>
+                  </div>
+                  <div class="task-inline-meta">
+                    <span>自动循环 {{ currentTask.iterationCount }}/{{ currentTask.maxIterations > 0 ? currentTask.maxIterations : '无限' }}</span>
+                    <span v-if="currentTask.summary" class="task-inline-summary">{{ currentTask.summary }}</span>
+                    <span v-if="currentTask.steps.length">步骤 {{ currentTask.steps.length }}</span>
+                  </div>
+                </summary>
+                <div v-if="currentTask.summary" class="task-inline-summary-text">{{ currentTask.summary }}</div>
+                <div v-if="currentTask.steps.length" class="task-inline-step-list">
+                  <div v-for="step in currentTask.steps" :key="step.id" class="task-inline-step" :class="`is-${step.status}`">
+                    <span class="task-inline-step-title">{{ step.title }}</span>
+                    <span v-if="step.note" class="task-inline-step-note">{{ step.note }}</span>
+                  </div>
+                </div>
+              </details>
+
+              <div v-if="!messages.length" class="chat-empty">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>点击下方输入框开始对话</span>
+                <span class="chat-hint">{{ emptyHint }}</span>
+              </div>
+              <div
+                v-for="msg in messages"
+                :key="msg.id"
+                class="chat-msg"
+                :class="[`is-${msg.role}`, { 'has-tool-calls': msg.toolCalls?.length }]"
+              >
+                <div class="msg-avatar" v-if="msg.role === 'assistant'">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 10v1a6 6 0 0 0 12 0v-1"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
+                  </svg>
+                </div>
+                <div class="msg-body">
+                  <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
+                  <div v-if="canPlayAssistantReply(msg)" class="msg-inline-actions">
+                    <button class="voice-btn" :class="{ active: playingMessageId === msg.id }" @click="playAssistantMessage(msg)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                      </svg>
+                      <span>{{ playingMessageId === msg.id ? '播放中' : '播放语音' }}</span>
+                    </button>
+                  </div>
+                  <details v-if="msg.reasoningContent" class="msg-reasoning">
+                    <summary>模型思考过程</summary>
+                    <div v-html="renderMarkdown(msg.reasoningContent)"></div>
+                  </details>
+                  <div v-if="msg.attachments?.length" class="msg-attachment-grid">
+                    <button v-for="attachment in msg.attachments" :key="attachment.id" class="msg-attachment-card" @click="openAttachmentPreview(attachment)">
+                      <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="msg-attachment-image" />
+                      <div v-else class="msg-file-badge">文件</div>
+                      <span>{{ attachment.name }}</span>
+                    </button>
+                  </div>
+                  <div v-if="msg.toolCalls?.length" class="msg-tools">
+                    <div v-for="tc in msg.toolCalls" :key="tc.id" class="tool-call-badge">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                      </svg>
+                      <span>{{ tc.name }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-if="aiStore.streaming" class="chat-msg is-assistant is-streaming">
+                <div class="msg-avatar">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 10v1a6 6 0 0 0 12 0v-1"/>
+                  </svg>
+                </div>
+                <div class="msg-body">
+                  <div class="msg-content" v-html="renderMarkdown(streamingContent)"></div>
+                  <details v-if="streamingReasoningContent" class="msg-reasoning is-live" open>
+                    <summary>模型思考过程</summary>
+                    <div v-html="renderMarkdown(streamingReasoningContent)"></div>
+                  </details>
+                  <div class="streaming-indicator">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-input-area">
+              <input ref="fileInputRef" type="file" :accept="filePickerAccept" multiple class="hidden-file-input" @change="handleAttachmentSelection" />
+              <div v-if="pendingAttachments.length" class="pending-attachment-list">
+                <div v-for="attachment in pendingAttachments" :key="attachment.id" class="pending-attachment-item">
+                  <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="pending-attachment-image" />
+                  <div v-else class="pending-file-badge">文件</div>
+                  <div class="pending-attachment-copy">
+                    <strong>{{ attachment.name }}</strong>
+                    <span v-if="attachment.type === 'image'">{{ attachment.width || '-' }} x {{ attachment.height || '-' }}</span>
+                    <span v-else>{{ formatAttachmentMeta(attachment) }}</span>
+                  </div>
+                  <button class="icon-btn" title="移除图片" @click="removePendingAttachment(attachment.id)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="chat-input-row">
+                <button class="icon-btn attach-btn attach-btn-inline" :disabled="aiStore.streaming" title="选择文件或图片" @click="openAttachmentPicker">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                </button>
+                <textarea
+                  ref="inputRef"
+                  v-model="inputText"
+                  :placeholder="aiStore.streaming ? 'AI 正在回复中...' : '输入消息，Enter 发送，Shift+Enter 换行'"
+                  class="chat-input"
+                  rows="1"
+                  @keydown="handleKeydown"
+                  @paste="handleComposerPaste"
+                  @input="autoResize"
+                />
+                <button
+                  class="send-btn"
+                  :class="{ 'is-stop': aiStore.streaming }"
+                  :disabled="sendButtonDisabled"
+                  :title="aiStore.streaming ? '停止当前任务' : '发送消息'"
+                  @click="handlePrimaryAction"
+                >
+                  <svg v-if="aiStore.streaming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="6" y="6" width="12" height="12" rx="2"/>
+                  </svg>
+                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                </button>
+              </div>
+              <details class="composer-control-fold">
+                <summary class="composer-control-summary">
+                  <span class="composer-summary-item">模型 {{ currentModelLabel }}</span>
+                  <span class="composer-summary-item">附件 {{ pendingAttachments.length }}</span>
+                  <span class="composer-summary-item">步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
+                </summary>
+                <div class="composer-control-content">
+                  <div class="composer-model-row">
+                    <select class="model-select" :value="aiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
+                      <option v-if="!aiConfig.model" value="">请先选择模型</option>
+                      <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
+                        {{ model.label }}
+                      </option>
+                    </select>
+                    <button class="icon-btn" :disabled="loadingAiModels || !canRefreshModels" title="刷新模型" @click="refreshModelOptions">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"/>
+                        <polyline points="1 20 1 14 7 14"/>
+                        <path d="M3.51 9a9 9 0 0114.13-3.36L23 10"/>
+                        <path d="M20.49 15a9 9 0 01-14.13 3.36L1 14"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="composer-action-row">
+                    <div class="runtime-stepper">
+                      <button class="stepper-btn" @click="adjustMaxAutoSteps(-1)">-</button>
+                      <span>步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
+                      <button class="stepper-btn" @click="adjustMaxAutoSteps(1)">+</button>
+                    </div>
+                    <button class="runtime-chip" title="按当前模型应用推荐的自动步数，用于限制长任务连续调用工具的轮数" @click="applyRecommendedAutoSteps">
+                      推荐 {{ recommendedAutoSteps }}
+                    </button>
+                  </div>
+                </div>
+              </details>
+              <div class="composer-inline-hint">支持任意文件、截图粘贴与工具生成的桌面截图。</div>
+            </div>
+          </div>
         </div>
 
         <AttachmentPreviewDialog :attachment="previewAttachment" @close="previewAttachment = null" />
@@ -253,7 +309,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import type { AIChatAttachment, AIChatMessage, AIConversationScope, AIProviderModel } from '@/types'
+import type { AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
@@ -274,6 +330,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   openSettings: []
+  openMain: []
   dragStateChange: [active: boolean]
 }>()
 
@@ -292,8 +349,11 @@ const loadingAiModels = ref(false)
 const modelLoadError = ref('')
 const playingMessageId = ref('')
 const autoPlayedMessageId = ref('')
+const defaultLive2DSessionTitle = 'Live2D'
 
 const chatScope = computed(() => props.scope || 'main')
+const showSessionManager = computed(() => chatScope.value === 'live2d')
+const useNativeWindowDrag = computed(() => chatScope.value === 'live2d')
 const dialogTitle = computed(() => props.title || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'AI 助手'))
 const dialogSubtitle = computed(() => props.subtitle || (chatScope.value === 'live2d' ? '独立记忆与自动语音' : '主窗口文本对话'))
 const emptyHint = computed(() => chatScope.value === 'live2d'
@@ -370,6 +430,21 @@ const dialogStyle = computed(() => ({
   minHeight: 'min(480px, calc(100vh - 48px))',
   maxHeight: 'min(760px, calc(100vh - 20px))'
 }))
+const managerSessions = computed(() => {
+  if (!showSessionManager.value) {
+    return []
+  }
+
+  return [...scopedSessions.value].sort((left, right) => {
+    const leftPinned = left.title.trim() === defaultLive2DSessionTitle
+    const rightPinned = right.title.trim() === defaultLive2DSessionTitle
+    if (leftPinned !== rightPinned) {
+      return leftPinned ? -1 : 1
+    }
+
+    return right.updatedAt - left.updatedAt
+  })
+})
 
 let pointerDownPoint: { x: number; y: number } | null = null
 let draggingWindow = false
@@ -378,6 +453,76 @@ defineExpose({
   getRootElement: () => rootRef.value,
   hasBlockingOverlay: () => Boolean(previewAttachment.value)
 })
+
+function formatSessionMeta(session: AIChatSession) {
+  const stamp = new Date(session.updatedAt).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+  return `${stamp} · ${session.messages.length} 条`
+}
+
+function openMainView() {
+  emit('openMain')
+}
+
+function selectSession(sessionId: string) {
+  if (aiStore.streaming) {
+    return
+  }
+
+  aiStore.switchSession(sessionId, chatScope.value)
+  scrollToBottom()
+}
+
+async function ensureScopedSession() {
+  const existingActive = aiStore.getActiveSession(chatScope.value)
+  if (existingActive) {
+    return existingActive
+  }
+
+  const fallbackSession = scopedSessions.value[0]
+  if (fallbackSession) {
+    aiStore.switchSession(fallbackSession.id, chatScope.value)
+    return fallbackSession
+  }
+
+  return aiStore.createSession(chatScope.value === 'live2d' ? defaultLive2DSessionTitle : undefined, chatScope.value)
+}
+
+async function deleteScopedSession(sessionId: string) {
+  if (aiStore.streaming) {
+    return
+  }
+
+  await aiStore.deleteSession(sessionId)
+  if (props.visible && chatScope.value === 'live2d') {
+    await ensureScopedSession()
+  }
+}
+
+async function resetScopedSessions() {
+  if (aiStore.streaming) {
+    return
+  }
+
+  const targetLabel = chatScope.value === 'live2d' ? 'Live2D 会话' : '当前对话域'
+  if (!confirm(`确定要清空${targetLabel}的全部聊天记录吗？此操作不可恢复。`)) {
+    return
+  }
+
+  await aiStore.clearAllSessions(chatScope.value)
+  inputText.value = ''
+  pendingAttachments.value = []
+  previewAttachment.value = null
+  autoResize()
+
+  if (props.visible && chatScope.value === 'live2d') {
+    await ensureScopedSession()
+  }
+}
 
 function renderMarkdown(content: string): string {
   if (!content) return ''
@@ -620,6 +765,10 @@ function handleHeaderPointerDown(event: MouseEvent) {
     return
   }
 
+  if (useNativeWindowDrag.value) {
+    return
+  }
+
   pointerDownPoint = { x: event.screenX, y: event.screenY }
   draggingWindow = false
   emit('dragStateChange', true)
@@ -699,9 +848,7 @@ async function autoPlayLatestAssistantMessage() {
 
 watch(() => props.visible, (val) => {
   if (val) {
-    if (!currentSession.value && chatScope.value === 'live2d') {
-      aiStore.createSession('Live2D 对话', chatScope.value)
-    }
+    void ensureScopedSession()
 
     nextTick(() => {
       inputRef.value?.focus()
@@ -754,7 +901,7 @@ onMounted(() => {
   } else if (scopedSessions.value[0] && !scopedActiveSessionId.value) {
     aiStore.switchSession(scopedSessions.value[0].id, chatScope.value)
   } else if (chatScope.value === 'live2d' && !scopedActiveSessionId.value) {
-    aiStore.createSession('Live2D 对话', chatScope.value)
+    void ensureScopedSession()
   }
 
   if (props.visible) {
@@ -784,6 +931,224 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.chat-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+
+  &.has-session-manager {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+}
+
+.chat-manager-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 10px;
+  border-right: 1px solid rgba(255, 200, 220, 0.2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 244, 248, 0.7));
+}
+
+.manager-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manager-copy {
+  display: grid;
+  gap: 4px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  span {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+}
+
+.panel-icon-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--primary);
+  }
+}
+
+.manager-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.manager-action-btn,
+.manager-link-btn {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 200, 220, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: rgba(255, 140, 180, 0.45);
+    color: var(--primary);
+  }
+
+  &:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+  }
+}
+
+.manager-action-btn.is-secondary,
+.manager-link-btn {
+  background: rgba(255, 248, 251, 0.86);
+}
+
+.manager-session-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.manager-session-card {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 10px 36px 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 200, 220, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255, 140, 180, 0.38);
+    box-shadow: 0 12px 24px rgba(171, 119, 144, 0.12);
+  }
+
+  &.active {
+    border-color: rgba(255, 140, 180, 0.45);
+    background: rgba(255, 237, 243, 0.86);
+  }
+
+  &.pinned {
+    box-shadow: inset 0 0 0 1px rgba(255, 170, 200, 0.16);
+  }
+}
+
+.manager-session-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+}
+
+.manager-session-pin {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 170, 200, 0.16);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.manager-session-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.manager-session-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: rgba(255, 200, 220, 0.2);
+    color: var(--primary);
+  }
+}
+
+.manager-empty {
+  display: grid;
+  gap: 4px;
+  padding: 14px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+
+  small {
+    font-size: 10px;
+  }
+}
+
+.manager-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.chat-main-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -792,6 +1157,14 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(255, 200, 220, 0.25);
   background: rgba(255, 255, 255, 0.4);
   cursor: move;
+}
+
+.chat-header.is-window-drag-enabled {
+  -webkit-app-region: drag;
+}
+
+.chat-header.is-window-drag-enabled .icon-btn {
+  -webkit-app-region: no-drag;
 }
 
 .chat-header button {
@@ -842,6 +1215,7 @@ onBeforeUnmount(() => {
 .chat-actions {
   display: flex;
   gap: 4px;
+  -webkit-app-region: no-drag;
 }
 
 .icon-btn {
@@ -1681,6 +2055,26 @@ onBeforeUnmount(() => {
 
   .task-inline-head {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 780px) {
+  .chat-shell.has-session-manager {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-manager-panel {
+    grid-template-rows: auto auto auto auto;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 200, 220, 0.2);
+  }
+
+  .manager-session-list {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(180px, 1fr);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
   }
 }
 </style>

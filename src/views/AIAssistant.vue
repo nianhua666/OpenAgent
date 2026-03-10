@@ -15,7 +15,7 @@
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
           </svg>
           长期记忆
-          <span class="tab-badge" v-if="aiStore.memories.length">{{ aiStore.memories.length }}</span>
+          <span class="tab-badge" v-if="allMemoryCount">{{ allMemoryCount }}</span>
         </button>
       </div>
     </div>
@@ -34,19 +34,23 @@
         </div>
 
         <div class="session-list">
-          <div v-if="aiStore.sortedSessions.length === 0" class="empty-hint">暂无对话记录</div>
+          <div v-if="combinedSessions.length === 0" class="empty-hint">暂无对话记录</div>
           <div
-            v-for="session in aiStore.sortedSessions"
+            v-for="session in combinedSessions"
             :key="session.id"
             class="session-item"
-            :class="{ active: session.id === aiStore.activeSessionId, disabled: aiStore.streaming }"
-            @click="handleSessionSelect(session.id)"
+            :class="{ active: session.id === selectedSessionId, disabled: aiStore.streaming }"
+            @click="handleSessionSelect(session)"
           >
             <div class="session-info">
-              <span class="session-title">{{ session.title }}</span>
+              <div class="session-title-row">
+                <span class="session-title">{{ session.title }}</span>
+                <span class="session-scope-badge" :class="`is-${session.scope}`">{{ sessionScopeLabel(session.scope) }}</span>
+                <span v-if="session.isPinned" class="session-pin-badge">置顶</span>
+              </div>
               <span class="session-meta">{{ formatTime(session.updatedAt) }} · {{ session.messages.length }} 条</span>
             </div>
-            <button class="delete-btn" :disabled="aiStore.streaming" title="删除对话" @click.stop="deleteSession(session.id)">
+            <button class="delete-btn" :disabled="aiStore.streaming" title="删除对话" @click.stop="deleteSession(session)">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -54,8 +58,8 @@
           </div>
         </div>
 
-        <div class="sidebar-footer" v-if="aiStore.sortedSessions.length > 0">
-          <button class="btn btn-secondary btn-sm" :disabled="aiStore.streaming" @click="clearAllSessions">清空所有对话</button>
+        <div class="sidebar-footer" v-if="combinedSessions.length > 0">
+          <button class="btn btn-secondary btn-sm" :disabled="aiStore.streaming" @click="clearAllSessions">清空当前域对话</button>
         </div>
       </div>
 
@@ -141,7 +145,10 @@
               <template v-else>
                 <div class="chat-detail-header">
                   <h3>{{ currentSession.title }}</h3>
-                  <span>{{ formatTime(currentSession.createdAt) }}</span>
+                  <div class="chat-detail-meta">
+                    <span class="session-scope-badge" :class="`is-${currentSession.scope}`">{{ sessionScopeLabel(currentSession.scope) }}</span>
+                    <span>{{ formatTime(currentSession.createdAt) }}</span>
+                  </div>
                 </div>
 
                 <div v-if="currentSession.summary" class="session-summary">
@@ -294,7 +301,13 @@
         <!-- 长期记忆管理 -->
         <div v-if="activeTab === 'memory'" class="memory-panel glass-panel">
           <div class="memory-header">
-            <h3>长期记忆 ({{ aiStore.memories.length }})</h3>
+            <div class="memory-header-copy">
+              <h3>长期记忆 ({{ displayedMemories.length }})</h3>
+              <div class="memory-scope-switch">
+                <button class="memory-scope-btn" :class="{ active: memoryScope === 'main' }" @click="memoryScope = 'main'">主窗口</button>
+                <button class="memory-scope-btn" :class="{ active: memoryScope === 'live2d' }" @click="memoryScope = 'live2d'">Live2D</button>
+              </div>
+            </div>
             <div class="memory-actions">
               <button class="btn btn-primary btn-sm" @click="showAddMemory = true">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -302,7 +315,7 @@
                 </svg>
                 添加记忆
               </button>
-              <button v-if="aiStore.memories.length > 0" class="btn btn-secondary btn-sm" @click="clearMemories">清空全部</button>
+              <button v-if="displayedMemories.length > 0" class="btn btn-secondary btn-sm" @click="clearMemories">清空当前域</button>
             </div>
           </div>
 
@@ -325,7 +338,7 @@
             </div>
           </div>
 
-          <div v-if="aiStore.memories.length === 0 && !showAddMemory" class="panel-empty">
+          <div v-if="displayedMemories.length === 0 && !showAddMemory" class="panel-empty">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
             </svg>
@@ -333,7 +346,7 @@
           </div>
 
           <div class="memory-list">
-            <div v-for="memory in aiStore.memories" :key="memory.id" class="memory-item">
+            <div v-for="memory in displayedMemories" :key="memory.id" class="memory-item">
               <div class="memory-content">
                 <span class="memory-category" :class="`is-${memory.category}`">{{ categoryLabel(memory.category) }}</span>
                 <p v-if="editingMemoryId !== memory.id">{{ memory.content }}</p>
@@ -379,7 +392,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIProviderModel } from '@/types'
+import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
@@ -393,6 +406,9 @@ const router = useRouter()
 const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
 const activeTab = ref<'chat' | 'memory'>('chat')
+const selectedScope = ref<AIConversationScope>('main')
+const selectedSessionId = ref('')
+const memoryScope = ref<AIConversationScope>('main')
 const showAddMemory = ref(false)
 const newMemoryContent = ref('')
 const newMemoryCategory = ref<AIMemoryEntry['category']>('fact')
@@ -410,9 +426,35 @@ const loadingAiModels = ref(false)
 const modelLoadError = ref('')
 const playingMessageId = ref('')
 
+type SessionListItem = AIChatSession & {
+  isPinned: boolean
+}
+
 const aiConfig = computed(() => aiStore.config)
-const currentSession = computed(() => aiStore.activeSession)
-const currentTask = computed(() => aiStore.activeTask)
+const mainSessions = computed(() => aiStore.getSortedSessions('main'))
+const live2dSessions = computed(() => aiStore.getSortedSessions('live2d'))
+const combinedSessions = computed<SessionListItem[]>(() => {
+  const normalizedLive2D = live2dSessions.value.map(session => ({
+    ...session,
+    isPinned: session.title.trim() === 'Live2D'
+  }))
+    .sort((left, right) => {
+      if (left.isPinned !== right.isPinned) {
+        return left.isPinned ? -1 : 1
+      }
+
+      return right.updatedAt - left.updatedAt
+    })
+
+  const normalizedMain = mainSessions.value.map(session => ({
+    ...session,
+    isPinned: false
+  }))
+
+  return [...normalizedLive2D, ...normalizedMain]
+})
+const currentSession = computed(() => selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null)
+const currentTask = computed(() => currentSession.value ? aiStore.getLatestTaskForSession(currentSession.value.id) : null)
 const streamingContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.content : ''))
 const streamingReasoningContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.reasoningContent : ''))
 const currentContextMetrics = computed(() => {
@@ -426,6 +468,8 @@ const currentContextMetrics = computed(() => {
 
   return aiStore.runtime.context
 })
+const displayedMemories = computed(() => aiStore.getMemories(memoryScope.value))
+const allMemoryCount = computed(() => aiStore.getMemories('main').length + aiStore.getMemories('live2d').length)
 const canRefreshModels = computed(() => Boolean(aiConfig.value.baseUrl.trim()) && (aiStore.isConfigured || aiConfig.value.protocol === 'ollama-local' || aiConfig.value.protocol === 'custom'))
 const currentModelMeta = computed(() => {
   const matchedModel = availableAiModels.value.find(model => model.name === aiConfig.value.model)
@@ -485,6 +529,43 @@ function roleLabel(role: string) {
 
 function categoryLabel(category: string) {
   return categoryLabelMap[category] || category
+}
+
+function sessionScopeLabel(scope: AIConversationScope) {
+  return scope === 'live2d' ? 'Live2D' : '主窗口'
+}
+
+function syncSelectedSession(preferredScope: AIConversationScope = selectedScope.value) {
+  const current = selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null
+  if (current) {
+    selectedScope.value = current.scope
+    return
+  }
+
+  const activeInPreferredScope = aiStore.getActiveSession(preferredScope)
+  if (activeInPreferredScope) {
+    selectedScope.value = activeInPreferredScope.scope
+    selectedSessionId.value = activeInPreferredScope.id
+    return
+  }
+
+  const alternateScope: AIConversationScope = preferredScope === 'live2d' ? 'main' : 'live2d'
+  const activeInAlternateScope = aiStore.getActiveSession(alternateScope)
+  if (activeInAlternateScope) {
+    selectedScope.value = activeInAlternateScope.scope
+    selectedSessionId.value = activeInAlternateScope.id
+    return
+  }
+
+  const fallbackSession = combinedSessions.value[0]
+  if (fallbackSession) {
+    selectedScope.value = fallbackSession.scope
+    selectedSessionId.value = fallbackSession.id
+    return
+  }
+
+  selectedScope.value = preferredScope
+  selectedSessionId.value = ''
 }
 
 function taskStatusLabel(status: string) {
@@ -697,7 +778,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 function canPlayAssistantReply(message: AIChatMessage) {
   return settingsStore.settings.ttsEnabled
-    && settingsStore.settings.ttsShowMainReplyButton
+    && (currentSession.value?.scope === 'live2d' || settingsStore.settings.ttsShowMainReplyButton)
     && message.role === 'assistant'
     && !!message.content.trim()
 }
@@ -720,16 +801,23 @@ function startNewSession() {
     return
   }
 
-  aiStore.createSession()
+  const nextScope = currentSession.value?.scope || selectedScope.value
+  const session = aiStore.createSession(undefined, nextScope)
+  selectedScope.value = session.scope
+  selectedSessionId.value = session.id
+  memoryScope.value = session.scope
   scrollToBottom()
 }
 
-function handleSessionSelect(sessionId: string) {
+function handleSessionSelect(session: SessionListItem) {
   if (aiStore.streaming) {
     return
   }
 
-  aiStore.switchSession(sessionId)
+  selectedScope.value = session.scope
+  selectedSessionId.value = session.id
+  memoryScope.value = session.scope
+  aiStore.switchSession(session.id, session.scope)
 }
 
 function openSettingsPage() {
@@ -742,11 +830,13 @@ async function sendMessage() {
     return
   }
 
-  if (!aiStore.activeSession) {
-    aiStore.createSession()
+  let session = currentSession.value
+  if (!session) {
+    session = aiStore.createSession(undefined, selectedScope.value)
+    selectedSessionId.value = session.id
   }
 
-  const sessionId = aiStore.activeSessionId
+  const sessionId = session.id
   const attachments = [...pendingAttachments.value]
   inputText.value = ''
   pendingAttachments.value = []
@@ -765,12 +855,13 @@ async function sendMessage() {
   )
 }
 
-async function deleteSession(id: string) {
+async function deleteSession(session: SessionListItem) {
   if (aiStore.streaming) {
     return
   }
 
-  await aiStore.deleteSession(id)
+  await aiStore.deleteSession(session.id)
+  syncSelectedSession(session.scope)
 }
 
 async function clearAllSessions() {
@@ -778,15 +869,18 @@ async function clearAllSessions() {
     return
   }
 
-  if (confirm('确定要清空所有对话记录吗？此操作不可恢复。')) {
-    await aiStore.clearAllSessions()
+  const scope = currentSession.value?.scope || selectedScope.value
+  const label = scope === 'live2d' ? 'Live2D 会话' : '主窗口会话'
+  if (confirm(`确定要清空${label}吗？此操作不可恢复。`)) {
+    await aiStore.clearAllSessions(scope)
+    syncSelectedSession(scope === 'live2d' ? 'main' : scope)
   }
 }
 
 function addMemory() {
   const content = newMemoryContent.value.trim()
   if (!content) return
-  aiStore.addMemory(content, newMemoryCategory.value, 'manual')
+  aiStore.addMemory(content, newMemoryCategory.value, 'manual', memoryScope.value)
   newMemoryContent.value = ''
   showAddMemory.value = false
 }
@@ -809,8 +903,9 @@ async function deleteMemory(id: string) {
 }
 
 async function clearMemories() {
-  if (confirm('确定要清空所有长期记忆吗？AI 将忘记之前记住的所有信息。')) {
-    await aiStore.clearAllMemories()
+  const label = memoryScope.value === 'live2d' ? 'Live2D 长期记忆' : '主窗口长期记忆'
+  if (confirm(`确定要清空${label}吗？AI 将忘记这一对话域之前记住的所有信息。`)) {
+    await aiStore.clearAllMemories(memoryScope.value)
   }
 }
 
@@ -820,9 +915,16 @@ onMounted(() => {
   }
 
   if (aiStore.runtime.running && aiStore.runtime.sessionId) {
-    aiStore.switchSession(aiStore.runtime.sessionId)
-  } else if (aiStore.sortedSessions[0] && !aiStore.activeSessionId) {
-    aiStore.switchSession(aiStore.sortedSessions[0].id)
+    const runtimeSession = aiStore.getSessionById(aiStore.runtime.sessionId)
+    if (runtimeSession) {
+      selectedScope.value = runtimeSession.scope
+      selectedSessionId.value = runtimeSession.id
+      memoryScope.value = runtimeSession.scope
+      aiStore.switchSession(runtimeSession.id, runtimeSession.scope)
+    }
+  } else {
+    syncSelectedSession('main')
+    memoryScope.value = selectedScope.value
   }
 
   nextTick(() => {
@@ -838,7 +940,20 @@ watch(() => [aiConfig.value.protocol, aiConfig.value.baseUrl, aiConfig.value.api
 })
 
 watch(
-  () => [activeTab.value, aiStore.activeSessionId, currentSession.value?.messages.at(-1)?.id ?? '', aiStore.runtime.updatedAt],
+  () => [
+    aiStore.activeSessionIds.main,
+    aiStore.activeSessionIds.live2d,
+    mainSessions.value.length,
+    live2dSessions.value.length
+  ],
+  () => {
+    syncSelectedSession(selectedScope.value)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => [activeTab.value, selectedSessionId.value, currentSession.value?.messages.at(-1)?.id ?? '', aiStore.runtime.updatedAt],
   () => {
     if (activeTab.value === 'chat') {
       scrollToBottom()
@@ -846,6 +961,12 @@ watch(
   },
   { flush: 'post' }
 )
+
+watch(selectedScope, (scope) => {
+  if (!showAddMemory.value) {
+    memoryScope.value = scope
+  }
+})
 
 onBeforeUnmount(() => {
   stopTTSPlayback()
@@ -946,6 +1067,13 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .session-title {
   font-size: $font-xs;
   font-weight: 500;
@@ -953,6 +1081,33 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.session-scope-badge,
+.session-pin-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.session-scope-badge.is-main {
+  background: rgba(93, 135, 255, 0.08);
+  color: #2d4f99;
+}
+
+.session-scope-badge.is-live2d {
+  background: rgba(255, 170, 200, 0.14);
+  color: var(--primary);
+}
+
+.session-pin-badge {
+  background: rgba(255, 235, 192, 0.32);
+  color: #9a6b18;
 }
 
 .session-meta {
@@ -986,6 +1141,47 @@ onBeforeUnmount(() => {
   &:disabled {
     opacity: 0.35;
     cursor: not-allowed;
+  }
+}
+
+.chat-detail-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-header-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-scope-switch {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-scope-btn {
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 200, 220, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color $transition-fast, background $transition-fast, color $transition-fast;
+
+  &:hover {
+    border-color: rgba(255, 140, 180, 0.45);
+    color: var(--primary);
+  }
+
+  &.active {
+    border-color: rgba(255, 140, 180, 0.45);
+    background: rgba(255, 170, 200, 0.14);
+    color: var(--primary);
   }
 }
 

@@ -96,6 +96,7 @@
         :style="aiChatStyle"
         @close="aiChatVisible = false"
         @drag-state-change="handleChatDragStateChange"
+        @open-main="openMainWindowToAI"
         @open-settings="openMainWindowToSettings"
       />
     </div>
@@ -323,7 +324,7 @@ const drawerStyle = computed(() => {
 })
 
 const aiChatStyle = computed(() => {
-  const chatWidth = resolvePanelDimension(620, viewportSize.value.width, 380)
+  const chatWidth = resolvePanelDimension(760, viewportSize.value.width, 560)
   const chatHeight = resolvePanelDimension(760, viewportSize.value.height, 460)
   const placement = resolveSidePanelPosition(chatWidth, chatHeight)
 
@@ -402,6 +403,11 @@ function handleChatDragStateChange(active: boolean) {
 function openMainWindowToSettings() {
   closeFloatingUi()
   window.electronAPI?.navigateMainWindow?.('/settings')
+}
+
+function openMainWindowToAI() {
+  closeFloatingUi()
+  window.electronAPI?.navigateMainWindow?.('/ai')
 }
 
 function handleModelReady() {

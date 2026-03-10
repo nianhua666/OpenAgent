@@ -91,6 +91,8 @@ const DEFAULT_ACTIVE_SESSIONS: AIActiveSessions = {
   live2d: ''
 }
 
+const LIVE2D_SESSION_BASE_TITLE = 'Live2D'
+
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let electronAIStoreSyncBound = false
 
@@ -108,6 +110,24 @@ type AIMemoryExportData = {
 
 function cloneSerializable<T>(data: T): T {
   return JSON.parse(JSON.stringify(data)) as T
+}
+
+function buildDefaultSessionTitle(scope: AIConversationScope, existingSessions: AIChatSession[]) {
+  if (scope === 'live2d') {
+    const existingTitles = new Set(existingSessions.map(session => session.title.trim()))
+    if (!existingTitles.has(LIVE2D_SESSION_BASE_TITLE)) {
+      return LIVE2D_SESSION_BASE_TITLE
+    }
+
+    let index = 2
+    while (existingTitles.has(`${LIVE2D_SESSION_BASE_TITLE} ${index}`)) {
+      index += 1
+    }
+
+    return `${LIVE2D_SESSION_BASE_TITLE} ${index}`
+  }
+
+  return `对话 ${existingSessions.length + 1}`
 }
 
 function normalizeConversationScope(scope: string | undefined): AIConversationScope {
@@ -926,7 +946,7 @@ export const useAIStore = defineStore('ai', () => {
     const session: AIChatSession = {
       id: genId(),
       scope,
-      title: title || `${scope === 'live2d' ? 'Live2D 对话' : '对话'} ${nextSessions.length + 1}`,
+      title: title?.trim() || buildDefaultSessionTitle(scope, nextSessions),
       messages: [],
       summary: '',
       summaryUpdatedAt: 0,
@@ -1008,7 +1028,7 @@ export const useAIStore = defineStore('ai', () => {
     session.summaryUpdatedAt = session.summary ? Date.now() : 0
 
     // 自动为新对话生成标题
-    if (session.messages.filter(m => m.role === 'user').length === 1 && message.role === 'user') {
+    if (session.scope === 'main' && session.messages.filter(m => m.role === 'user').length === 1 && message.role === 'user') {
       session.title = message.content.slice(0, 30) + (message.content.length > 30 ? '...' : '')
     }
 
