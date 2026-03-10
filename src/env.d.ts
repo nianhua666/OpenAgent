@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -33,6 +33,10 @@ interface ElectronAPI {
   importLive2DModel: () => Promise<Live2DLibraryItem | null>
   resolveLive2DPath: (runtimePath: string) => Promise<string>
   getLive2DPaths: () => Promise<Live2DStoragePaths>
+  listSystemTTSVoices: () => Promise<TTSVoiceLibraryItem[]>
+  synthesizeSystemTTS: (payload: TTSSynthesizePayload) => Promise<TTSSynthesisResult>
+  listEdgeTTSVoices: () => Promise<TTSVoiceLibraryItem[]>
+  synthesizeEdgeTTS: (payload: TTSSynthesizePayload) => Promise<TTSSynthesisResult>
   getDataPath: () => Promise<string>
   getRuntimeDataStorageInfo: () => Promise<RuntimeDataStorageInfo>
   switchRuntimeDataStorage: (payload: { mode: RuntimeDataStorageMode; targetPath?: string }) => Promise<RuntimeDataStorageInfo>

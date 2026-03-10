@@ -3,9 +3,34 @@ import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { ensureLive2DDirs, listLive2DLibraryItems, migrateLive2DStorageData, registerLive2DHandlers, registerLive2DProtocol, setLive2DDebugLogger, setLive2DStorageDirResolver } from './live2d'
+import { listEdgeNeuralVoices, registerEdgeTTSHandlers, synthesizeEdgeSpeech } from './edgeTts'
+import { registerRuntimeAssetProtocol } from './runtimeAssets'
+import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSystemSpeech } from './systemTts'
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
-import { DEFAULT_TTS_ENGINE, DEFAULT_TTS_MODEL_ID, DEFAULT_TTS_VOICE_ID, getTTSVoiceOption } from '../src/utils/ttsCatalog'
+import type { TTSEngine } from '../src/types'
+import {
+  DEFAULT_TTS_SAMPLE_TEXT,
+  DEFAULT_TTS_ENGINE,
+  DEFAULT_TTS_EMOTION_INTENSITY,
+  DEFAULT_TTS_EMOTION_STYLE,
+  DEFAULT_TTS_MODEL_ID,
+  DEFAULT_TTS_VOICE_ID,
+  EDGE_TTS_ENGINE,
+  EDGE_TTS_MODEL_ID,
+  EDGE_TTS_VOICE_ID,
+  SYSTEM_TTS_ENGINE,
+  SYSTEM_TTS_MODEL_ID,
+  clampTTSEmotionIntensity,
+  getDefaultTTSVoiceId,
+  getTTSVoiceOption,
+  isBuiltinTTSVoice,
+  isEdgeTTSVoiceId,
+  isSystemTTSVoiceId,
+  normalizeTTSEmotionStyle,
+  normalizeTTSEngine,
+  normalizeTTSModelId
+} from '../src/utils/ttsCatalog'
 
 type Live2DModelSource = 'preset' | 'bundled' | 'imported' | 'custom'
 type RuntimeDataStorageMode = 'auto' | 'custom'
@@ -36,12 +61,14 @@ interface AppSettings {
   currencySymbol: string
   windowsMcpEnabled: boolean
   ttsEnabled: boolean
-  ttsEngine: typeof DEFAULT_TTS_ENGINE
+  ttsEngine: TTSEngine
   ttsAutoPlayLive2D: boolean
   ttsShowMainReplyButton: boolean
   ttsModelId: string
   ttsVoiceId: string
   ttsVoiceName: string
+  ttsEmotionStyle: import('../src/types').TTSEmotionStyle
+  ttsEmotionIntensity: number
   ttsSpeed: number
   ttsVolume: number
 }
@@ -389,7 +416,9 @@ const LIVE2D_WINDOW_MIN_HEIGHT = 360
 const LIVE2D_CURSOR_BROADCAST_INTERVAL = 16
 const LIVE2D_BUNDLED_MODEL = 'live2d://bundle/shizuku/shizuku.model.json'
 const LIVE2D_DIAGNOSTIC_ARG = '--live2d-diagnose'
+const TTS_DIAGNOSTIC_ARG = '--tts-diagnose'
 const IS_LIVE2D_DIAGNOSTIC_MODE = process.argv.includes(LIVE2D_DIAGNOSTIC_ARG)
+const IS_TTS_DIAGNOSTIC_MODE = process.argv.includes(TTS_DIAGNOSTIC_ARG)
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'sakura',
   sidebarCollapsed: false,
@@ -413,7 +442,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   ttsShowMainReplyButton: false,
   ttsModelId: DEFAULT_TTS_MODEL_ID,
   ttsVoiceId: DEFAULT_TTS_VOICE_ID,
-  ttsVoiceName: getTTSVoiceOption(DEFAULT_TTS_VOICE_ID, DEFAULT_TTS_MODEL_ID)?.name || '小贝',
+  ttsVoiceName: getTTSVoiceOption(DEFAULT_TTS_VOICE_ID, DEFAULT_TTS_MODEL_ID, DEFAULT_TTS_ENGINE)?.name || '小贝',
+  ttsEmotionStyle: DEFAULT_TTS_EMOTION_STYLE,
+  ttsEmotionIntensity: DEFAULT_TTS_EMOTION_INTENSITY,
   ttsSpeed: 1,
   ttsVolume: 0.92
 }
@@ -424,6 +455,17 @@ function appendLive2DDebugLog(scope: string, message: string) {
     ensureDirectoryExists(logDir)
 
     appendFileSync(join(logDir, 'live2d-debug.log'), `[${new Date().toISOString()}] [${scope}] ${message}\n`, 'utf-8')
+  } catch {
+    // 忽略日志写入失败，避免影响主流程
+  }
+}
+
+function appendTTSDebugLog(scope: string, message: string) {
+  try {
+    const logDir = getLogsDir()
+    ensureDirectoryExists(logDir)
+
+    appendFileSync(join(logDir, 'tts-diagnose.log'), `[${new Date().toISOString()}] [${scope}] ${message}\n`, 'utf-8')
   } catch {
     // 忽略日志写入失败，避免影响主流程
   }
@@ -483,22 +525,38 @@ function ensureDataDir() {
 function normalizeSettings(saved: Partial<AppSettings> | null | undefined): AppSettings {
   const merged = { ...DEFAULT_SETTINGS, ...(saved ?? {}) }
   const isLegacyDesktopSettings = typeof saved?.closeToTray === 'undefined' && typeof saved?.launchAtLogin === 'undefined'
-  const resolvedVoice = getTTSVoiceOption(merged.ttsVoiceId, merged.ttsModelId)
 
   if (typeof merged.live2dStoragePath !== 'string') {
     merged.live2dStoragePath = ''
   }
 
-  if (merged.ttsEngine !== DEFAULT_TTS_ENGINE) {
-    merged.ttsEngine = DEFAULT_TTS_ENGINE
-  }
-
   merged.ttsEnabled = typeof merged.ttsEnabled === 'boolean' ? merged.ttsEnabled : DEFAULT_SETTINGS.ttsEnabled
+  merged.ttsEngine = normalizeTTSEngine(merged.ttsEngine)
   merged.ttsAutoPlayLive2D = typeof merged.ttsAutoPlayLive2D === 'boolean' ? merged.ttsAutoPlayLive2D : DEFAULT_SETTINGS.ttsAutoPlayLive2D
   merged.ttsShowMainReplyButton = typeof merged.ttsShowMainReplyButton === 'boolean' ? merged.ttsShowMainReplyButton : DEFAULT_SETTINGS.ttsShowMainReplyButton
-  merged.ttsModelId = merged.ttsModelId?.trim() || DEFAULT_TTS_MODEL_ID
-  merged.ttsVoiceId = merged.ttsVoiceId?.trim() || DEFAULT_TTS_VOICE_ID
-  merged.ttsVoiceName = merged.ttsVoiceName?.trim() || resolvedVoice?.name || DEFAULT_SETTINGS.ttsVoiceName
+  merged.ttsModelId = normalizeTTSModelId(merged.ttsModelId, merged.ttsEngine)
+  merged.ttsEmotionStyle = normalizeTTSEmotionStyle(merged.ttsEmotionStyle)
+  merged.ttsEmotionIntensity = clampTTSEmotionIntensity(merged.ttsEmotionIntensity)
+
+  if (!merged.ttsVoiceId) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === SYSTEM_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === EDGE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = DEFAULT_TTS_VOICE_ID
+  }
+
+  const resolvedVoice = getTTSVoiceOption(merged.ttsVoiceId, merged.ttsModelId, merged.ttsEngine)
+  merged.ttsVoiceId = resolvedVoice?.id || getDefaultTTSVoiceId(merged.ttsEngine)
+  merged.ttsVoiceName = resolvedVoice?.name || DEFAULT_SETTINGS.ttsVoiceName
   merged.ttsSpeed = Number.isFinite(merged.ttsSpeed) ? Math.min(Math.max(Number(merged.ttsSpeed), 0.7), 1.35) : DEFAULT_SETTINGS.ttsSpeed
   merged.ttsVolume = Number.isFinite(merged.ttsVolume) ? Math.min(Math.max(Number(merged.ttsVolume), 0), 1) : DEFAULT_SETTINGS.ttsVolume
 
@@ -1117,6 +1175,10 @@ function isLive2DDiagnosticMode() {
   return IS_LIVE2D_DIAGNOSTIC_MODE
 }
 
+function isTTSDiagnosticMode() {
+  return IS_TTS_DIAGNOSTIC_MODE
+}
+
 function formatDiagnosticValue(value: unknown) {
   if (typeof value === 'string') {
     return value
@@ -1312,6 +1374,132 @@ async function runLive2DDiagnostics() {
   }
 }
 
+async function inspectTTSDiagnosticAsset(target: { label: string; url: string }) {
+  try {
+    const response = await net.fetch(target.url)
+    const buffer = response.ok ? Buffer.from(await response.arrayBuffer()) : Buffer.alloc(0)
+
+    return {
+      label: target.label,
+      url: target.url,
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get('content-type') || '',
+      size: buffer.byteLength
+    }
+  } catch (error) {
+    return {
+      label: target.label,
+      url: target.url,
+      ok: false,
+      error: (error as Error)?.message ?? String(error)
+    }
+  }
+}
+
+async function runTTSDiagnostics() {
+  appendTTSDebugLog('diagnose', `start packaged=${app.isPackaged} exec=${process.execPath}`)
+  appendTTSDebugLog('diagnose', `argv=${process.argv.join(' | ')}`)
+
+  const assetTargets = [
+    { label: 'runtime-espeak', url: 'openagent://app/assets/espeak-ng.wasm' },
+    { label: 'runtime-ort-loader', url: 'openagent://app/assets/ort.bundle.min.mjs' },
+    { label: 'runtime-ort-jsep-wasm', url: 'openagent://app/assets/ort-wasm-simd-threaded.jsep.wasm' },
+    { label: 'kokoro-config', url: `openagent://app/models/${DEFAULT_TTS_MODEL_ID}/config.json` },
+    { label: 'kokoro-tokenizer', url: `openagent://app/models/${DEFAULT_TTS_MODEL_ID}/tokenizer.json` },
+    { label: 'kokoro-model', url: `openagent://app/models/${DEFAULT_TTS_MODEL_ID}/onnx/model_quantized.onnx` },
+    { label: 'kokoro-voice-default', url: `openagent://app/voices/${DEFAULT_TTS_VOICE_ID}.bin` }
+  ]
+
+  try {
+    const env = {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform
+    }
+    appendTTSDebugLog('diagnose', `env=${formatDiagnosticValue(env)}`)
+
+    const assetResults = [] as Array<{ ok: boolean }>
+    for (const target of assetTargets) {
+      const result = await inspectTTSDiagnosticAsset(target)
+      assetResults.push(result)
+      appendTTSDebugLog('diagnose', formatDiagnosticValue(result))
+    }
+
+    const nativeVoices = await listNativeSystemVoices()
+    const preferredVoice = nativeVoices.find(voice => /zh-cn/i.test(voice.locale || ''))
+      || nativeVoices.find(voice => /zh/i.test(voice.locale || ''))
+      || nativeVoices[0]
+    const edgeVoices = await listEdgeNeuralVoices()
+
+    const systemVoiceSummary = {
+      count: nativeVoices.length,
+      hasChineseVoice: nativeVoices.some(voice => /zh/i.test(voice.locale || '')),
+      preview: nativeVoices.slice(0, 5)
+    }
+    appendTTSDebugLog('diagnose', `systemVoices=${formatDiagnosticValue(systemVoiceSummary)}`)
+
+    const edgeVoiceSummary = {
+      count: edgeVoices.length,
+      hasChineseVoice: edgeVoices.some(voice => /zh/i.test(voice.Locale || '')),
+      preview: edgeVoices.slice(0, 5)
+    }
+    appendTTSDebugLog('diagnose', `edgeVoices=${formatDiagnosticValue(edgeVoiceSummary)}`)
+
+    const synthesis = await synthesizeNativeSystemSpeech({
+      text: DEFAULT_TTS_SAMPLE_TEXT,
+      engine: SYSTEM_TTS_ENGINE,
+      modelId: SYSTEM_TTS_MODEL_ID,
+      voiceId: preferredVoice?.id || '',
+      speed: 1
+    })
+
+    const synthesisSummary = {
+      success: synthesis.success,
+      voiceId: synthesis.voiceId,
+      voiceName: synthesis.voiceName,
+      sampleRate: synthesis.sampleRate,
+      durationMs: synthesis.durationMs,
+      audioBytes: synthesis.audioBase64 ? Buffer.byteLength(synthesis.audioBase64, 'base64') : 0,
+      error: synthesis.error
+    }
+    appendTTSDebugLog('diagnose', `synthesis=${formatDiagnosticValue(synthesisSummary)}`)
+
+    const edgeSynthesis = await synthesizeEdgeSpeech({
+      text: DEFAULT_TTS_SAMPLE_TEXT,
+      engine: EDGE_TTS_ENGINE,
+      modelId: EDGE_TTS_MODEL_ID,
+      voiceId: EDGE_TTS_VOICE_ID,
+      emotionStyle: 'assistant',
+      emotionIntensity: 1.1,
+      speed: 1
+    })
+
+    const edgeSynthesisSummary = {
+      success: edgeSynthesis.success,
+      voiceId: edgeSynthesis.voiceId,
+      voiceName: edgeSynthesis.voiceName,
+      sampleRate: edgeSynthesis.sampleRate,
+      audioBytes: edgeSynthesis.audioBase64 ? Buffer.byteLength(edgeSynthesis.audioBase64, 'base64') : 0,
+      error: edgeSynthesis.error
+    }
+    appendTTSDebugLog('diagnose', `edgeSynthesis=${formatDiagnosticValue(edgeSynthesisSummary)}`)
+
+    const assetCheckPassed = assetResults.every(result => result.ok)
+    const synthesisCheckPassed = synthesis.success && Boolean(synthesis.audioBase64)
+    const edgeCheckPassed = edgeVoices.length > 0 && edgeSynthesis.success && Boolean(edgeSynthesis.audioBase64)
+    const allChecksPassed = assetCheckPassed && nativeVoices.length > 0 && synthesisCheckPassed && edgeCheckPassed
+
+    appendTTSDebugLog('diagnose', `completed success=${allChecksPassed}`)
+    return allChecksPassed
+  } catch (error) {
+    appendTTSDebugLog('diagnose', `failed ${(error as Error)?.message ?? String(error)}`)
+    return false
+  }
+}
+
 app.on('second-instance', () => {
   showMainWindow()
 })
@@ -1328,9 +1516,19 @@ app.whenReady().then(() => {
   ensureLive2DDirs()
   setLive2DDebugLogger(message => appendLive2DDebugLog('protocol', message))
   registerLive2DProtocol()
+  registerRuntimeAssetProtocol()
+  registerEdgeTTSHandlers()
+  registerSystemTTSHandlers()
 
   if (isLive2DDiagnosticMode()) {
     void runLive2DDiagnostics().then(success => {
+      app.exit(success ? 0 : 1)
+    })
+    return
+  }
+
+  if (isTTSDiagnosticMode()) {
+    void runTTSDiagnostics().then(success => {
       app.exit(success ? 0 : 1)
     })
     return

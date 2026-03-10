@@ -294,7 +294,7 @@
       <div class="setting-row">
         <div class="setting-label">
           <div class="label-main">语音引擎</div>
-          <div class="label-desc">系统语音适合低延迟实时播报，Kokoro 更适合离线模型与可控音色，两者都可在这里切换。</div>
+          <div class="label-desc">系统语音适合低延迟实时播报，Kokoro 适合离线模型与可控音色，Edge 神经语音则更适合高质量中文与更自然的情绪化播报。</div>
         </div>
         <div class="ai-input-stack">
           <select class="setting-select" :value="settings.ttsEngine" @change="handleTTSEngineChange(($event.target as HTMLSelectElement).value)">
@@ -307,7 +307,7 @@
       <div class="setting-row align-start">
         <div class="setting-label">
           <div class="label-main">语音模型</div>
-          <div class="label-desc">系统引擎使用系统内置语音模型；Kokoro 引擎支持离线模型、远程缓存和自定义兼容模型 ID。</div>
+          <div class="label-desc">系统引擎使用系统内置语音模型；Kokoro 支持离线模型、远程缓存和自定义兼容模型 ID；Edge 神经语音则直接使用在线神经语音服务。</div>
         </div>
         <div class="tts-resource-stack">
           <div class="tts-search-row">
@@ -327,7 +327,7 @@
             </option>
           </select>
           <span v-if="ttsModelSearchQuery && filteredTTSModelOptions.length === 0" class="field-tip">没有找到匹配模型，已保留当前模型。你也可以直接输入兼容模型 ID。</span>
-          <div v-if="!isSystemSpeechEngine" class="tts-custom-model-row">
+          <div v-if="!isSystemSpeechEngine && !isEdgeSpeechEngine" class="tts-custom-model-row">
             <input v-model="ttsCustomModelInput" class="setting-input" placeholder="输入兼容 Hugging Face / ONNX 模型标识，例如 onnx-community/Kokoro-82M-v1.0-ONNX-timestamped" />
             <div class="tts-action-row">
               <button class="btn btn-secondary btn-sm" :disabled="!ttsCustomModelInput.trim()" @click="applyCustomTTSModel">应用模型</button>
@@ -336,6 +336,7 @@
               </button>
             </div>
           </div>
+          <span v-else-if="isEdgeSpeechEngine" class="field-tip">Edge 神经语音不需要额外下载模型，联网后即可直接使用在线神经音色与韵律情绪控制。</span>
           <span v-else class="field-tip">系统语音引擎不需要额外下载模型，切换后会直接走系统内置语音能力。</span>
           <div v-if="selectedTTSModel" class="ai-capability-panel">
             <div class="ai-capability-header">
@@ -358,13 +359,13 @@
       <div class="setting-row align-start">
         <div class="setting-label">
           <div class="label-main">默认音色</div>
-          <div class="label-desc">系统引擎会读取 Windows 已安装音色；Kokoro 则提供稳定的离线音色与跨语言补充音色。</div>
+          <div class="label-desc">系统引擎会读取 Windows 已安装音色；Kokoro 提供稳定的离线音色；Edge 神经语音会在线拉取更自然的中文神经音色。</div>
         </div>
         <div class="tts-resource-stack">
           <div class="tts-search-row">
             <input v-model="ttsVoiceSearchQuery" class="setting-input" placeholder="搜索音色名称、语言、性别或口音" />
             <div class="tts-action-row">
-              <button class="btn btn-secondary btn-sm" :disabled="isSystemSpeechEngine || cachingTTSVoice || Boolean(selectedTTSVoice?.builtIn) || ttsVoiceCached" @click="cacheSelectedTTSVoice">
+              <button class="btn btn-secondary btn-sm" :disabled="isEdgeSpeechEngine ? refreshingEdgeVoiceCatalog : isSystemSpeechEngine || cachingTTSVoice || Boolean(selectedTTSVoice?.builtIn) || ttsVoiceCached" @click="cacheSelectedTTSVoice">
                 {{ ttsVoiceSaveLabel }}
               </button>
             </div>
@@ -398,6 +399,23 @@
           </div>
           <span v-if="ttsRuntimeStatus" class="field-tip">{{ ttsRuntimeStatus }}</span>
           <span v-if="ttsRuntimeError" class="field-tip field-tip-error">{{ ttsRuntimeError }}</span>
+        </div>
+      </div>
+
+      <div v-if="isEdgeSpeechEngine" class="setting-row">
+        <div class="setting-label">
+          <div class="label-main">情绪风格</div>
+          <div class="label-desc">Edge 神经语音会通过语速、音高和响度的组合来模拟情绪风格。建议先用自动或助手，再按场景切换为愉快、共情、严肃等风格。</div>
+        </div>
+        <div class="ai-input-stack">
+          <select class="setting-select" :value="settings.ttsEmotionStyle" @change="updateSetting('ttsEmotionStyle', ($event.target as HTMLSelectElement).value as AppSettings['ttsEmotionStyle'])">
+            <option v-for="option in ttsEmotionStyleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <div class="range-wrap range-wrap-wide">
+            <input type="range" min="0.6" max="1.6" step="0.1" :value="settings.ttsEmotionIntensity" @input="updateSetting('ttsEmotionIntensity', parseFloat(($event.target as HTMLInputElement).value))" />
+            <span class="range-val">{{ settings.ttsEmotionIntensity.toFixed(1) }}x</span>
+          </div>
+          <span class="field-tip">当前风格：{{ selectedTTSEmotionOption.label }}。自动模式会根据文本语气选取风格；强度建议保持在 0.9 到 1.2 之间。</span>
         </div>
       </div>
 
@@ -480,7 +498,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSVoiceLibraryItem } from '@/types'
+import type { AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSEmotionStyle, TTSVoiceLibraryItem } from '@/types'
 import AIManagedResourcesPanel from '@/components/AIManagedResourcesPanel.vue'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { useAIStore } from '@/stores/ai'
@@ -489,7 +507,9 @@ import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, in
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
 import {
   DEFAULT_TTS_SAMPLE_TEXT,
+  EDGE_TTS_ENGINE,
   SYSTEM_TTS_ENGINE,
+  TTS_EMOTION_STYLE_OPTIONS,
   TTS_ENGINE_OPTIONS,
   getDefaultTTSModelId,
   getDefaultTTSVoiceId,
@@ -504,9 +524,11 @@ import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import {
   cacheTTSModel,
   cacheTTSVoice,
+  isEdgeSpeechSupported,
   isSystemSpeechSupported,
   isTTSModelCached,
   isTTSVoiceCached,
+  listEdgeSpeechVoices,
   listSystemSpeechVoices
 } from '@/utils/ttsRuntime'
 import { showToast } from '@/utils/toast'
@@ -542,6 +564,9 @@ const ttsModelCached = ref(false)
 const ttsVoiceCached = ref(false)
 const systemTTSVoices = ref<TTSVoiceLibraryItem[]>([])
 const systemTTSSupported = ref(false)
+const edgeTTSVoices = ref<TTSVoiceLibraryItem[]>([])
+const edgeTTSSupported = ref(false)
+const refreshingEdgeVoiceCatalog = ref(false)
 
 type AIProtocolPreset = {
   label: string
@@ -710,8 +735,17 @@ const selectedAiModelCapabilityLabels = computed(() => getModelCapabilityLabels(
 const selectedAiModelLimitLabels = computed(() => getModelLimitLabels(selectedAiModelLimits.value))
 const activeTTSEngine = computed(() => normalizeTTSEngine(settings.value.ttsEngine))
 const isSystemSpeechEngine = computed(() => activeTTSEngine.value === SYSTEM_TTS_ENGINE)
+const isEdgeSpeechEngine = computed(() => activeTTSEngine.value === EDGE_TTS_ENGINE)
 const ttsEngineOptions = TTS_ENGINE_OPTIONS
+const ttsEmotionStyleOptions = TTS_EMOTION_STYLE_OPTIONS
+const selectedTTSEmotionOption = computed(() => ttsEmotionStyleOptions.find(option => option.value === settings.value.ttsEmotionStyle) || ttsEmotionStyleOptions[0])
 const ttsEngineDescription = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return edgeTTSSupported.value
+      ? 'Edge 神经语音会在线读取中文神经音色，并通过韵律控制模拟情绪风格，适合作为 AI 主播报引擎。'
+      : '当前尚未连通 Edge 神经语音服务，可能需要联网后刷新在线音色列表。'
+  }
+
   if (isSystemSpeechEngine.value) {
     return systemTTSSupported.value
       ? '系统语音直接使用 Windows / Chromium 已安装音色，几乎无需等待，适合低延迟播报。'
@@ -731,6 +765,12 @@ const ttsModelOptions = computed(() => {
   return models
 })
 const ttsVoiceOptions = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return edgeTTSVoices.value.length > 0
+      ? edgeTTSVoices.value
+      : listTTSVoices(settings.value.ttsModelId, activeTTSEngine.value)
+  }
+
   if (isSystemSpeechEngine.value) {
     return systemTTSVoices.value.length > 0
       ? systemTTSVoices.value
@@ -772,6 +812,10 @@ const visibleTTSVoiceOptions = computed(() => filteredTTSVoiceOptions.value.leng
   ? filteredTTSVoiceOptions.value
   : (selectedTTSVoice.value ? [selectedTTSVoice.value] : []))
 const ttsModelSaveLabel = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return '在线即用'
+  }
+
   if (isSystemSpeechEngine.value) {
     return '系统无需缓存'
   }
@@ -791,6 +835,10 @@ const ttsModelSaveLabel = computed(() => {
   return '下载并保存模型'
 })
 const ttsVoiceSaveLabel = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return refreshingEdgeVoiceCatalog.value ? '刷新中...' : '刷新在线音色'
+  }
+
   if (isSystemSpeechEngine.value) {
     return '系统无需缓存'
   }
@@ -819,13 +867,17 @@ const ttsSummaryHint = computed(() => {
     return '当前不会输出 AI 语音，可随时重新开启。'
   }
 
-  const engineHint = isSystemSpeechEngine.value ? '系统语音低延迟' : 'Kokoro 离线模型'
+  const engineHint = isEdgeSpeechEngine.value ? 'Edge 神经语音 + 情绪风格' : isSystemSpeechEngine.value ? '系统语音低延迟' : 'Kokoro 离线模型'
   const live2dHint = settings.value.ttsAutoPlayLive2D ? 'Live2D 自动播报' : 'Live2D 手动播放'
   const mainHint = settings.value.ttsShowMainReplyButton ? '主窗口带播放按钮' : '主窗口纯文本'
   return `${engineHint}，${live2dHint}，${mainHint}。`
 })
 
 const ttsModelStatusLabel = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return edgeTTSSupported.value ? '在线神经语音模型已就绪' : '等待连接在线神经语音服务'
+  }
+
   if (isSystemSpeechEngine.value) {
     return systemTTSSupported.value ? '系统模型由操作系统直接提供' : '当前环境未检测到系统语音能力'
   }
@@ -834,6 +886,10 @@ const ttsModelStatusLabel = computed(() => {
 })
 
 const ttsVoiceStatusLabel = computed(() => {
+  if (isEdgeSpeechEngine.value) {
+    return edgeTTSSupported.value ? `已读取 ${edgeTTSVoices.value.length} 个在线中文音色` : '在线音色尚未读取'
+  }
+
   if (isSystemSpeechEngine.value) {
     return systemTTSSupported.value ? '系统音色无需单独下载' : '请改用 Kokoro 离线音色'
   }
@@ -1043,6 +1099,43 @@ async function refreshSystemVoiceCatalog() {
   }
 }
 
+async function refreshEdgeVoiceCatalog(silent = false) {
+  if (!silent) {
+    refreshingEdgeVoiceCatalog.value = true
+  }
+
+  edgeTTSSupported.value = isEdgeSpeechSupported()
+  if (!edgeTTSSupported.value) {
+    edgeTTSVoices.value = []
+    if (!silent) {
+      setTTSError('当前环境暂不支持 Edge 神经语音桥接。')
+    }
+    refreshingEdgeVoiceCatalog.value = false
+    return
+  }
+
+  try {
+    edgeTTSVoices.value = await listEdgeSpeechVoices()
+    edgeTTSSupported.value = edgeTTSVoices.value.length > 0
+    if (!silent) {
+      setTTSStatus(edgeTTSSupported.value
+        ? `已读取 ${edgeTTSVoices.value.length} 个在线中文神经音色，可直接试听。`
+        : '当前未读取到在线神经音色，请稍后重试。')
+    }
+  } catch (error) {
+    edgeTTSVoices.value = []
+    edgeTTSSupported.value = false
+    if (!silent) {
+      setTTSError(error instanceof Error ? error.message : '读取 Edge 神经语音列表失败')
+    }
+    console.warn('[AISettings] Edge 语音列表读取失败', error)
+  } finally {
+    if (!silent) {
+      refreshingEdgeVoiceCatalog.value = false
+    }
+  }
+}
+
 async function handleTTSEngineChange(engine: string) {
   const nextEngine = normalizeTTSEngine(engine)
   const nextModelId = normalizeTTSModelId(
@@ -1050,14 +1143,20 @@ async function handleTTSEngineChange(engine: string) {
     nextEngine
   )
 
+  if (nextEngine === EDGE_TTS_ENGINE) {
+    await refreshEdgeVoiceCatalog(true)
+  }
+
   if (nextEngine === SYSTEM_TTS_ENGINE) {
     await refreshSystemVoiceCatalog()
   }
 
   const fallbackVoiceId = getDefaultTTSVoiceId(nextEngine)
-  const preferredVoice = nextEngine === SYSTEM_TTS_ENGINE
-    ? systemTTSVoices.value.find(voice => /zh/i.test(voice.locale)) || systemTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
-    : getTTSVoiceOption(settings.value.ttsVoiceId, nextModelId, nextEngine)
+  const preferredVoice = nextEngine === EDGE_TTS_ENGINE
+    ? edgeTTSVoices.value.find(voice => /zh-cn/i.test(voice.locale)) || edgeTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
+    : nextEngine === SYSTEM_TTS_ENGINE
+      ? systemTTSVoices.value.find(voice => /zh/i.test(voice.locale)) || systemTTSVoices.value[0] || getTTSVoiceOption(fallbackVoiceId, nextModelId, nextEngine)
+      : getTTSVoiceOption(settings.value.ttsVoiceId, nextModelId, nextEngine)
 
   await settingsStore.update({
     ttsEngine: nextEngine,
@@ -1066,7 +1165,13 @@ async function handleTTSEngineChange(engine: string) {
     ttsVoiceName: preferredVoice.name
   })
 
-  setTTSStatus(nextEngine === SYSTEM_TTS_ENGINE ? '已切换到系统语音引擎，后续播报会优先走系统低延迟音色。' : '已切换到 Kokoro 离线引擎，可继续切换模型并缓存。')
+  setTTSStatus(
+    nextEngine === EDGE_TTS_ENGINE
+      ? '已切换到 Edge 神经语音引擎，后续 AI 播报会优先走更清晰且可带情绪的中文在线音色。'
+      : nextEngine === SYSTEM_TTS_ENGINE
+        ? '已切换到系统语音引擎，后续播报会优先走系统低延迟音色。'
+        : '已切换到 Kokoro 离线引擎，可继续切换模型并缓存。'
+  )
   await refreshTTSCacheState(true)
 }
 
@@ -1086,6 +1191,19 @@ async function refreshTTSCacheState(silent = false) {
   }
 
   try {
+    if (isEdgeSpeechEngine.value) {
+      await refreshEdgeVoiceCatalog(true)
+      ttsModelCached.value = edgeTTSSupported.value
+      ttsVoiceCached.value = edgeTTSSupported.value && edgeTTSVoices.value.length > 0
+
+      if (!silent) {
+        setTTSStatus(edgeTTSSupported.value
+          ? `Edge 神经语音在线可用，当前可选 ${edgeTTSVoices.value.length} 个中文音色，无需下载模型或音色。`
+          : 'Edge 神经语音暂不可用，请检查网络后重试，或切换到系统 / Kokoro 引擎。')
+      }
+      return
+    }
+
     if (isSystemSpeechEngine.value) {
       await refreshSystemVoiceCatalog()
       ttsModelCached.value = systemTTSSupported.value
@@ -1145,6 +1263,8 @@ async function saveCurrentTTSSelection() {
       ttsModelId: normalizeTTSModelId(settings.value.ttsModelId, activeTTSEngine.value),
       ttsVoiceId: nextVoice.id,
       ttsVoiceName: nextVoice.name,
+      ttsEmotionStyle: settings.value.ttsEmotionStyle,
+      ttsEmotionIntensity: settings.value.ttsEmotionIntensity,
       ttsSpeed: settings.value.ttsSpeed,
       ttsVolume: settings.value.ttsVolume
     })
@@ -1175,7 +1295,11 @@ async function handleTTSModelChange(modelId: string) {
       ttsVoiceName: nextVoice?.name || settings.value.ttsVoiceName
     })
     ttsCustomModelInput.value = normalizedModelId
-    setTTSStatus(getTTSModelOption(normalizedModelId).builtIn ? '已切换到内置离线模型。' : '已切换到远程模型，可继续下载并保存到本地缓存。')
+    if (isEdgeSpeechEngine.value) {
+      setTTSStatus('Edge 神经语音已切换到在线模型配置。')
+    } else {
+      setTTSStatus(getTTSModelOption(normalizedModelId, activeTTSEngine.value).builtIn ? '已切换到内置离线模型。' : '已切换到远程模型，可继续下载并保存到本地缓存。')
+    }
     await refreshTTSCacheState(true)
   } catch (error) {
     const message = error instanceof Error ? error.message : '切换 TTS 模型失败'
@@ -1185,8 +1309,8 @@ async function handleTTSModelChange(modelId: string) {
 }
 
 async function applyCustomTTSModel() {
-  if (isSystemSpeechEngine.value) {
-    setTTSStatus('系统语音引擎不需要自定义模型 ID。')
+  if (isSystemSpeechEngine.value || isEdgeSpeechEngine.value) {
+    setTTSStatus('当前引擎不需要自定义模型 ID。')
     return
   }
 
@@ -1210,7 +1334,11 @@ async function handleTTSVoiceChange(voiceId: string) {
       ttsVoiceId: nextVoice.id,
       ttsVoiceName: nextVoice.name
     })
-    setTTSStatus(nextVoice.builtIn ? `已切换到内置音色 ${nextVoice.name}。` : `已切换到音色 ${nextVoice.name}，可按需下载并保存。`)
+    if (isEdgeSpeechEngine.value) {
+      setTTSStatus(`已切换到 Edge 神经音色 ${nextVoice.name}，可直接试听情绪化中文播报。`)
+    } else {
+      setTTSStatus(nextVoice.builtIn ? `已切换到内置音色 ${nextVoice.name}。` : `已切换到音色 ${nextVoice.name}，可按需下载并保存。`)
+    }
     await refreshTTSCacheState(true)
   } catch (error) {
     const message = error instanceof Error ? error.message : '切换 TTS 音色失败'
@@ -1221,6 +1349,12 @@ async function handleTTSVoiceChange(voiceId: string) {
 
 async function cacheSelectedTTSModel() {
   if (!selectedTTSModel.value) {
+    return
+  }
+
+  if (isEdgeSpeechEngine.value) {
+    ttsModelCached.value = edgeTTSSupported.value
+    setTTSStatus(edgeTTSSupported.value ? 'Edge 神经语音为在线引擎，无需下载模型。' : 'Edge 神经语音暂不可用，请检查网络后再试。')
     return
   }
 
@@ -1254,6 +1388,12 @@ async function cacheSelectedTTSModel() {
 
 async function cacheSelectedTTSVoice() {
   if (!selectedTTSVoice.value) {
+    return
+  }
+
+  if (isEdgeSpeechEngine.value) {
+    await refreshEdgeVoiceCatalog()
+    ttsVoiceCached.value = edgeTTSSupported.value && edgeTTSVoices.value.length > 0
     return
   }
 
@@ -1295,6 +1435,11 @@ function handleTTSRuntimeProgress(event: Event) {
 
   if (status === 'loading-model' || status === 'progress') {
     setTTSStatus('正在准备语音模型资源，请稍候。')
+    return
+  }
+
+  if (status === 'device-fallback') {
+    setTTSStatus('当前推理设备不可用，正在切换到后备语音后端。')
     return
   }
 
@@ -1385,6 +1530,7 @@ watch(() => settings.value.ttsModelId, (nextModelId) => {
 
 watch(() => settings.value.ttsEngine, () => {
   void refreshSystemVoiceCatalog()
+  void refreshEdgeVoiceCatalog(true)
 }, { immediate: true })
 
 watch(() => [settings.value.ttsModelId, settings.value.ttsVoiceId], () => {

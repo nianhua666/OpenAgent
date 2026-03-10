@@ -1,6 +1,6 @@
 import type { AppSettings, TTSSynthesizePayload, TTSSynthesisResult } from '@/types'
-import { isSystemTTSEngine } from '@/utils/ttsCatalog'
-import { playSystemSpeech, stopSystemSpeechPlayback, synthesizeTextToSpeech } from '@/utils/ttsRuntime'
+import { isEdgeTTSEngine, isSystemTTSEngine } from '@/utils/ttsCatalog'
+import { playEdgeSpeech, playSystemSpeech, stopSystemSpeechPlayback, synthesizeTextToSpeech } from '@/utils/ttsRuntime'
 
 let currentAudio: HTMLAudioElement | null = null
 let currentAudioUrl = ''
@@ -50,6 +50,8 @@ export function createTTSPayload(settings: AppSettings, text: string, overrides:
     engine: overrides.engine || settings.ttsEngine,
     modelId: overrides.modelId || settings.ttsModelId,
     voiceId: overrides.voiceId || settings.ttsVoiceId,
+    emotionStyle: overrides.emotionStyle ?? settings.ttsEmotionStyle,
+    emotionIntensity: overrides.emotionIntensity ?? settings.ttsEmotionIntensity,
     speed: overrides.speed ?? settings.ttsSpeed
   }
 }
@@ -64,6 +66,11 @@ export async function playTextToSpeech(settings: AppSettings, text: string, over
   if (isSystemTTSEngine(payload.engine)) {
     stopCurrentAudio()
     return playSystemSpeech(payload, settings.ttsVolume)
+  }
+
+  if (isEdgeTTSEngine(payload.engine)) {
+    stopCurrentAudio()
+    return playEdgeSpeech(payload, settings.ttsVolume)
   }
 
   const { audioBlob, result } = await synthesizeTextToSpeech(payload)

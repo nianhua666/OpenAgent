@@ -5,20 +5,33 @@ import {
   DEFAULT_TTS_MODEL_ID,
   DEFAULT_TTS_VOICE_ID,
   DEFAULT_TTS_SAMPLE_TEXT,
+  EDGE_TTS_ENGINE,
+  EDGE_TTS_MODEL_ID,
+  EDGE_TTS_VOICE_ID,
   SYSTEM_TTS_ENGINE,
   SYSTEM_TTS_MODEL_ID,
   SYSTEM_TTS_VOICE_ID,
   createSystemTTSVoiceId,
   getTTSVoiceOption,
+  isBuiltinTTSVoice,
   isBuiltinTTSModel,
+  isEdgeTTSEngine,
   isSystemTTSVoiceId,
+  isSystemTTSEngine,
   normalizeTTSEngine,
   normalizeTTSModelId
 } from '@/utils/ttsCatalog'
 
 type KokoroRuntime = {
   modelId: string
+  device: 'webgpu' | 'wasm'
+  dtype: 'fp32' | 'q8'
   instance: InstanceType<typeof KokoroTTS>
+}
+
+type KokoroRuntimePreference = {
+  device: 'webgpu' | 'wasm'
+  dtype: 'fp32' | 'q8'
 }
 
 type TTSAudioBlobResult = {
@@ -30,7 +43,10 @@ const TTS_AUDIO_MIME_TYPE = 'audio/wav'
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache'
 const KOKORO_VOICE_CACHE_NAME = 'kokoro-voices'
 const DEFAULT_MODEL_REVISION = 'main'
+const OPENAGENT_BUNDLED_RESOURCE_BASE = 'openagent://app/'
 const runtimeCache = new Map<string, Promise<KokoroRuntime>>()
+let currentSystemAudio: HTMLAudioElement | null = null
+let currentSystemAudioUrl = ''
 
 function emitTTSRuntimeProgress(detail: Record<string, unknown>) {
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
@@ -71,19 +87,32 @@ function getSpeechSynthesisInstance() {
   return window.speechSynthesis
 }
 
-function resolvePreferredKokoroDevice() {
+function resolvePreferredKokoroRuntimeOrder(): KokoroRuntimePreference[] {
   const navigatorLike = typeof navigator !== 'undefined'
     ? navigator as Navigator & { gpu?: unknown; ml?: unknown }
     : null
 
   if (navigatorLike?.gpu) {
-    return 'webgpu'
+    return [
+      { device: 'webgpu', dtype: 'fp32' },
+      { device: 'wasm', dtype: 'q8' }
+    ]
   }
 
-  return 'wasm'
+  return [{ device: 'wasm', dtype: 'q8' }]
+}
+
+function isBundledDesktopRuntime() {
+  return typeof window !== 'undefined'
+    && Boolean(window.electronAPI)
+    && (window.location.protocol === 'file:' || window.location.protocol === 'openagent:')
 }
 
 function resolveLocalRuntimeAssetBase() {
+  if (isBundledDesktopRuntime()) {
+    return `${OPENAGENT_BUNDLED_RESOURCE_BASE}assets/`
+  }
+
   if (typeof window !== 'undefined' && window.location?.href) {
     return new URL('./assets/', window.location.href).href
   }
@@ -91,7 +120,19 @@ function resolveLocalRuntimeAssetBase() {
   return './assets/'
 }
 
+function resolveLocalModelBase() {
+  return isBundledDesktopRuntime() ? `${OPENAGENT_BUNDLED_RESOURCE_BASE}models/` : './models/'
+}
+
+function resolveBundledVoiceAssetUrl(voiceId: string) {
+  return `${OPENAGENT_BUNDLED_RESOURCE_BASE}voices/${voiceId}.bin`
+}
+
 function resolveVoiceAssetUrl(voiceId: string) {
+  if (isBundledDesktopRuntime() && isBuiltinTTSVoice(voiceId)) {
+    return resolveBundledVoiceAssetUrl(voiceId)
+  }
+
   return `https://huggingface.co/${DEFAULT_TTS_MODEL_ID}/resolve/${DEFAULT_MODEL_REVISION}/voices/${voiceId}.bin`
 }
 
@@ -101,6 +142,49 @@ function resolveModelConfigUrl(modelId: string) {
 
 function canUseCacheStorage() {
   return typeof window !== 'undefined' && typeof window.caches !== 'undefined'
+}
+
+function stopCurrentSystemAudio() {
+  if (!currentSystemAudio) {
+    if (currentSystemAudioUrl) {
+      URL.revokeObjectURL(currentSystemAudioUrl)
+      currentSystemAudioUrl = ''
+    }
+    return
+  }
+
+  currentSystemAudio.pause()
+  currentSystemAudio.src = ''
+  currentSystemAudio.load()
+  currentSystemAudio = null
+
+  if (currentSystemAudioUrl) {
+    URL.revokeObjectURL(currentSystemAudioUrl)
+    currentSystemAudioUrl = ''
+  }
+}
+
+function createObjectUrlFromBase64(base64: string, mimeType: string) {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  return URL.createObjectURL(new Blob([bytes], { type: mimeType }))
+}
+
+function hasNativeSystemTTSBridge() {
+  return typeof window !== 'undefined'
+    && typeof window.electronAPI?.listSystemTTSVoices === 'function'
+    && typeof window.electronAPI?.synthesizeSystemTTS === 'function'
+}
+
+function hasNativeEdgeTTSBridge() {
+  return typeof window !== 'undefined'
+    && typeof window.electronAPI?.listEdgeTTSVoices === 'function'
+    && typeof window.electronAPI?.synthesizeEdgeTTS === 'function'
 }
 
 async function openCache(name: string) {
@@ -213,47 +297,76 @@ async function getKokoroRuntime(modelId: string) {
   }
 
   const runtimePromise = (async () => {
-    const preferredDevice = resolvePreferredKokoroDevice()
+    const runtimePreferences = resolvePreferredKokoroRuntimeOrder()
+    let lastError: unknown = null
 
-    emitTTSRuntimeProgress({
-      status: 'loading-model',
-      modelId: normalizedModelId,
-      device: preferredDevice
-    })
+    for (let index = 0; index < runtimePreferences.length; index += 1) {
+      const runtimePreference = runtimePreferences[index]
 
-    const instance = await KokoroTTS.from_pretrained(normalizedModelId, {
-      dtype: 'q8',
-      device: preferredDevice,
-      progress_callback: (progress: unknown) => {
-        emitTTSRuntimeProgress({
-          status: 'progress',
-          modelId: normalizedModelId,
-          progress
+      emitTTSRuntimeProgress({
+        status: 'loading-model',
+        modelId: normalizedModelId,
+        device: runtimePreference.device,
+        dtype: runtimePreference.dtype
+      })
+
+      try {
+        const instance = await KokoroTTS.from_pretrained(normalizedModelId, {
+          dtype: runtimePreference.dtype,
+          device: runtimePreference.device,
+          progress_callback: (progress: unknown) => {
+            emitTTSRuntimeProgress({
+              status: 'progress',
+              modelId: normalizedModelId,
+              device: runtimePreference.device,
+              dtype: runtimePreference.dtype,
+              progress
+            })
+          },
+          envConfig: {
+            allowLocalModels: true,
+            allowRemoteModels: true,
+            localModelPath: resolveLocalModelBase(),
+            wasmPaths: resolveLocalRuntimeAssetBase(),
+            useFS: false,
+            useFSCache: false,
+            useBrowserCache: true,
+            useCustomCache: false
+          }
         })
-      },
-      envConfig: {
-        allowLocalModels: true,
-        allowRemoteModels: true,
-        localModelPath: './models/',
-        wasmPaths: resolveLocalRuntimeAssetBase(),
-        useFS: false,
-        useFSCache: false,
-        useBrowserCache: true,
-        useCustomCache: false
+
+        emitTTSRuntimeProgress({
+          status: 'model-ready',
+          modelId: normalizedModelId,
+          device: runtimePreference.device,
+          dtype: runtimePreference.dtype,
+          voiceCount: Object.keys(instance.voices || {}).length
+        })
+
+        return {
+          modelId: normalizedModelId,
+          device: runtimePreference.device,
+          dtype: runtimePreference.dtype,
+          instance
+        }
+      } catch (error) {
+        lastError = error
+
+        if (index < runtimePreferences.length - 1) {
+          emitTTSRuntimeProgress({
+            status: 'device-fallback',
+            modelId: normalizedModelId,
+            device: runtimePreference.device,
+            dtype: runtimePreference.dtype,
+            nextDevice: runtimePreferences[index + 1].device,
+            nextDtype: runtimePreferences[index + 1].dtype,
+            error: error instanceof Error ? error.message : '当前设备不可用，正在切换后备推理后端'
+          })
+        }
       }
-    })
-
-    emitTTSRuntimeProgress({
-      status: 'model-ready',
-      modelId: normalizedModelId,
-      device: preferredDevice,
-      voiceCount: Object.keys(instance.voices || {}).length
-    })
-
-    return {
-      modelId: normalizedModelId,
-      instance
     }
+
+    throw lastError instanceof Error ? lastError : new Error('语音模型初始化失败')
   })().catch((error) => {
     emitTTSRuntimeProgress({
       status: 'failed',
@@ -305,6 +418,10 @@ export async function isTTSVoiceCached(voiceId: string) {
   }
 
   if (isSystemTTSVoiceId(normalizedVoiceId)) {
+    return true
+  }
+
+  if (isBuiltinTTSVoice(normalizedVoiceId) && isBundledDesktopRuntime()) {
     return true
   }
 
@@ -370,10 +487,42 @@ export function clearTTSRuntimeCache(modelId?: string) {
 }
 
 export function isSystemSpeechSupported() {
-  return Boolean(getSpeechSynthesisInstance())
+  return hasNativeSystemTTSBridge() || Boolean(getSpeechSynthesisInstance())
+}
+
+export function isEdgeSpeechSupported() {
+  return hasNativeEdgeTTSBridge()
+}
+
+export async function listEdgeSpeechVoices() {
+  if (!hasNativeEdgeTTSBridge()) {
+    return []
+  }
+
+  const remoteVoices = await window.electronAPI.listEdgeTTSVoices()
+  const orderedVoices = [...remoteVoices].sort((left, right) => {
+    const leftWeight = /zh-cn/i.test(left.locale) ? 0 : /zh/i.test(left.locale) ? 1 : 2
+    const rightWeight = /zh-cn/i.test(right.locale) ? 0 : /zh/i.test(right.locale) ? 1 : 2
+    return leftWeight - rightWeight || left.name.localeCompare(right.name, 'zh-Hans-CN')
+  })
+
+  const defaultVoice = getTTSVoiceOption(EDGE_TTS_VOICE_ID, EDGE_TTS_MODEL_ID, EDGE_TTS_ENGINE)
+  return [defaultVoice, ...orderedVoices.filter(voice => voice.id !== defaultVoice.id)]
 }
 
 export async function listSystemSpeechVoices() {
+  if (hasNativeSystemTTSBridge()) {
+    const nativeVoices = await window.electronAPI.listSystemTTSVoices()
+    const orderedVoices = [...nativeVoices].sort((left, right) => {
+      const leftWeight = /zh/i.test(left.locale) ? 0 : 1
+      const rightWeight = /zh/i.test(right.locale) ? 0 : 1
+      return leftWeight - rightWeight || left.name.localeCompare(right.name)
+    })
+
+    const defaultVoice = getTTSVoiceOption(SYSTEM_TTS_VOICE_ID, SYSTEM_TTS_MODEL_ID, SYSTEM_TTS_ENGINE)
+    return [defaultVoice, ...orderedVoices.filter(voice => voice.id !== defaultVoice.id)]
+  }
+
   const voices = await loadSystemSpeechVoices()
   const orderedVoices = [...voices].sort((left, right) => {
     const leftWeight = /zh/i.test(left.lang) ? 0 : 1
@@ -388,6 +537,8 @@ export async function listSystemSpeechVoices() {
 }
 
 export function stopSystemSpeechPlayback() {
+  stopCurrentSystemAudio()
+
   const synthesis = getSpeechSynthesisInstance()
   if (!synthesis) {
     return
@@ -398,7 +549,129 @@ export function stopSystemSpeechPlayback() {
   }
 }
 
+export async function playEdgeSpeech(payload: TTSSynthesizePayload, volume = 1): Promise<TTSSynthesisResult> {
+  if (!hasNativeEdgeTTSBridge()) {
+    throw new Error('当前环境暂不支持 Edge 神经语音播报')
+  }
+
+  const normalizedText = normalizeTTSInputText(payload.text)
+  if (!normalizedText) {
+    throw new Error('缺少要播报的文本')
+  }
+
+  emitTTSRuntimeProgress({
+    status: 'generating',
+    engine: EDGE_TTS_ENGINE,
+    voiceId: payload.voiceId,
+    textLength: normalizedText.length,
+    emotionStyle: payload.emotionStyle,
+    emotionIntensity: payload.emotionIntensity
+  })
+
+  stopSystemSpeechPlayback()
+  const result = await window.electronAPI.synthesizeEdgeTTS({
+    ...payload,
+    text: normalizedText,
+    engine: EDGE_TTS_ENGINE,
+    modelId: EDGE_TTS_MODEL_ID
+  })
+
+  if (!result.success || !result.audioBase64) {
+    const message = result.error || 'Edge 神经语音播放失败'
+    emitTTSRuntimeProgress({
+      status: 'failed',
+      engine: EDGE_TTS_ENGINE,
+      error: message
+    })
+    throw new Error(message)
+  }
+
+  currentSystemAudioUrl = createObjectUrlFromBase64(result.audioBase64, result.mimeType || 'audio/mpeg')
+  const audio = new Audio(currentSystemAudioUrl)
+  audio.volume = clampNumber(volume, 0, 1, 1)
+  currentSystemAudio = audio
+
+  audio.addEventListener('ended', () => {
+    if (currentSystemAudio === audio) {
+      stopCurrentSystemAudio()
+    }
+  }, { once: true })
+
+  audio.addEventListener('error', () => {
+    if (currentSystemAudio === audio) {
+      stopCurrentSystemAudio()
+    }
+  }, { once: true })
+
+  await audio.play()
+  emitTTSRuntimeProgress({
+    status: 'generated',
+    engine: EDGE_TTS_ENGINE,
+    voiceId: result.voiceId,
+    durationMs: result.durationMs
+  })
+  return result
+}
+
 export async function playSystemSpeech(payload: TTSSynthesizePayload, volume = 1): Promise<TTSSynthesisResult> {
+  if (hasNativeSystemTTSBridge()) {
+    const normalizedText = normalizeTTSInputText(payload.text)
+    if (!normalizedText) {
+      throw new Error('缺少要播报的文本')
+    }
+
+    emitTTSRuntimeProgress({
+      status: 'generating',
+      engine: SYSTEM_TTS_ENGINE,
+      voiceId: payload.voiceId,
+      textLength: normalizedText.length
+    })
+
+    stopSystemSpeechPlayback()
+    const result = await window.electronAPI.synthesizeSystemTTS({
+      ...payload,
+      text: normalizedText,
+      engine: SYSTEM_TTS_ENGINE,
+      modelId: SYSTEM_TTS_MODEL_ID
+    })
+
+    if (!result.success || !result.audioBase64) {
+      const message = result.error || '系统语音播放失败'
+      emitTTSRuntimeProgress({
+        status: 'failed',
+        engine: SYSTEM_TTS_ENGINE,
+        error: message
+      })
+      throw new Error(message)
+    }
+
+    currentSystemAudioUrl = createObjectUrlFromBase64(result.audioBase64, result.mimeType || TTS_AUDIO_MIME_TYPE)
+    const audio = new Audio(currentSystemAudioUrl)
+    audio.volume = clampNumber(volume, 0, 1, 1)
+    currentSystemAudio = audio
+
+    audio.addEventListener('ended', () => {
+      if (currentSystemAudio === audio) {
+        stopCurrentSystemAudio()
+      }
+    }, { once: true })
+
+    audio.addEventListener('error', () => {
+      if (currentSystemAudio === audio) {
+        stopCurrentSystemAudio()
+      }
+    }, { once: true })
+
+    await audio.play()
+    emitTTSRuntimeProgress({
+      status: 'generated',
+      engine: SYSTEM_TTS_ENGINE,
+      voiceId: result.voiceId,
+      durationMs: result.durationMs
+    })
+    return result
+  }
+
   const synthesis = getSpeechSynthesisInstance()
   if (!synthesis) {
     throw new Error('当前环境不支持系统语音播报')
@@ -422,15 +695,50 @@ export async function playSystemSpeech(payload: TTSSynthesizePayload, volume = 1
   })
 
   stopSystemSpeechPlayback()
+  if (synthesis.paused) {
+    synthesis.resume()
+  }
 
   return new Promise<TTSSynthesisResult>((resolve, reject) => {
     const utterance = new SpeechSynthesisUtterance(normalizedText)
+    let settled = false
     utterance.voice = selectedVoice || null
     utterance.lang = selectedVoice?.lang || 'zh-CN'
     utterance.rate = clampNumber(payload.speed, 0.7, 1.35, 1)
+    utterance.pitch = 1
     utterance.volume = clampNumber(volume, 0, 1, 1)
 
+    const startupTimeoutId = window.setTimeout(() => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      synthesis.cancel()
+      const message = '系统语音未能启动播放，请检查当前 Windows 语音组件或改用其他音色。'
+      emitTTSRuntimeProgress({
+        status: 'failed',
+        engine: SYSTEM_TTS_ENGINE,
+        error: message
+      })
+      reject(new Error(message))
+    }, 4000)
+
+    const clearStartupTimeout = () => {
+      window.clearTimeout(startupTimeoutId)
+    }
+
+    utterance.onstart = () => {
+      clearStartupTimeout()
+    }
+
     utterance.onend = (event) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearStartupTimeout()
       emitTTSRuntimeProgress({
         status: 'generated',
         engine: SYSTEM_TTS_ENGINE,
@@ -449,6 +757,12 @@ export async function playSystemSpeech(payload: TTSSynthesizePayload, volume = 1
     }
 
     utterance.onerror = (event) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearStartupTimeout()
       const message = event.error || '系统语音播放失败'
       emitTTSRuntimeProgress({
         status: 'failed',
@@ -458,7 +772,23 @@ export async function playSystemSpeech(payload: TTSSynthesizePayload, volume = 1
       reject(new Error(message))
     }
 
-    synthesis.speak(utterance)
+    window.setTimeout(() => {
+      if (settled) {
+        return
+      }
+
+      try {
+        synthesis.speak(utterance)
+      } catch (error) {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        clearStartupTimeout()
+        reject(error instanceof Error ? error : new Error('系统语音播放失败'))
+      }
+    }, 0)
   })
 }
 
@@ -478,7 +808,7 @@ export async function synthesizeTextToSpeech(payload: TTSSynthesizePayload): Pro
     }, voiceOption.name, '缺少要合成的文本')
   }
 
-  if (engine === SYSTEM_TTS_ENGINE) {
+  if (isSystemTTSEngine(engine)) {
     return buildErrorResult({
       ...payload,
       engine,
@@ -488,11 +818,25 @@ export async function synthesizeTextToSpeech(payload: TTSSynthesizePayload): Pro
     }, voiceOption.name, '系统语音引擎不输出离线音频文件，请直接调用播放接口')
   }
 
+  if (isEdgeTTSEngine(engine)) {
+    return buildErrorResult({
+      ...payload,
+      engine,
+      modelId,
+      voiceId: voiceOption.id,
+      text: normalizedText
+    }, voiceOption.name, 'Edge 神经语音引擎通过主进程直接播放，请调用实时播放接口')
+  }
+
   try {
     const runtime = await getKokoroRuntime(modelId)
     const availableVoices = runtime.instance.voices
     const resolvedVoiceId = ((voiceOption.id in availableVoices ? voiceOption.id : DEFAULT_TTS_VOICE_ID) as keyof typeof availableVoices)
     const speed = clampNumber(payload.speed, 0.7, 1.35, 1)
+
+    if (isBundledDesktopRuntime() && isBuiltinTTSVoice(String(resolvedVoiceId))) {
+      await cacheTTSVoice(String(resolvedVoiceId))
+    }
 
     emitTTSRuntimeProgress({
       status: 'generating',

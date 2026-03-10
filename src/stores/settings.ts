@@ -14,12 +14,18 @@ import {
 } from '@/utils/live2d'
 import {
   DEFAULT_TTS_ENGINE,
+  DEFAULT_TTS_EMOTION_INTENSITY,
+  DEFAULT_TTS_EMOTION_STYLE,
   DEFAULT_TTS_MODEL_ID,
   DEFAULT_TTS_VOICE_ID,
+  EDGE_TTS_ENGINE,
   getDefaultTTSVoiceId,
   getTTSVoiceOption,
+  clampTTSEmotionIntensity,
   isBuiltinTTSVoice,
+  isEdgeTTSVoiceId,
   isSystemTTSVoiceId,
+  normalizeTTSEmotionStyle,
   normalizeTTSEngine,
   normalizeTTSModelId
 } from '@/utils/ttsCatalog'
@@ -55,6 +61,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   ttsModelId: DEFAULT_TTS_MODEL_ID,
   ttsVoiceId: DEFAULT_TTS_VOICE_ID,
   ttsVoiceName: getTTSVoiceOption(DEFAULT_TTS_VOICE_ID, DEFAULT_TTS_MODEL_ID)?.name || '小贝',
+  ttsEmotionStyle: DEFAULT_TTS_EMOTION_STYLE,
+  ttsEmotionIntensity: DEFAULT_TTS_EMOTION_INTENSITY,
   ttsSpeed: 1,
   ttsVolume: 0.92
 }
@@ -108,21 +116,28 @@ function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
   }
 
   merged.ttsModelId = normalizeTTSModelId(merged.ttsModelId, merged.ttsEngine)
+  merged.ttsEmotionStyle = normalizeTTSEmotionStyle(merged.ttsEmotionStyle)
+  merged.ttsEmotionIntensity = clampTTSEmotionIntensity(merged.ttsEmotionIntensity)
 
   if (!merged.ttsVoiceId) {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === 'system-speech' && isBuiltinTTSVoice(merged.ttsVoiceId)) {
+  if (merged.ttsEngine === 'system-speech' && (isBuiltinTTSVoice(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
   }
 
-  if (merged.ttsEngine === 'kokoro-js-zh' && isSystemTTSVoiceId(merged.ttsVoiceId)) {
+  if (merged.ttsEngine === EDGE_TTS_ENGINE && (isBuiltinTTSVoice(merged.ttsVoiceId) || isSystemTTSVoiceId(merged.ttsVoiceId))) {
+    merged.ttsVoiceId = getDefaultTTSVoiceId(merged.ttsEngine)
+  }
+
+  if (merged.ttsEngine === DEFAULT_TTS_ENGINE && (isSystemTTSVoiceId(merged.ttsVoiceId) || isEdgeTTSVoiceId(merged.ttsVoiceId))) {
     merged.ttsVoiceId = DEFAULT_TTS_VOICE_ID
   }
 
   const resolvedVoice = getTTSVoiceOption(merged.ttsVoiceId, merged.ttsModelId, merged.ttsEngine)
   merged.ttsVoiceId = resolvedVoice?.id || getDefaultTTSVoiceId(merged.ttsEngine)
+  merged.ttsVoiceName = resolvedVoice?.name || DEFAULT_SETTINGS.ttsVoiceName
 
   merged.ttsSpeed = Number.isFinite(merged.ttsSpeed)
     ? Math.min(Math.max(Number(merged.ttsSpeed), 0.7), 1.35)
@@ -131,8 +146,6 @@ function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
   merged.ttsVolume = Number.isFinite(merged.ttsVolume)
     ? Math.min(Math.max(Number(merged.ttsVolume), 0), 1)
     : DEFAULT_SETTINGS.ttsVolume
-
-  merged.ttsVoiceName = merged.ttsVoiceName?.trim() || resolvedVoice?.name || DEFAULT_SETTINGS.ttsVoiceName
 
   if (isLegacyDesktopSettings && merged.live2dPosition.x === 0 && merged.live2dPosition.y === 0) {
     merged.live2dPosition = { x: -1, y: -1 }

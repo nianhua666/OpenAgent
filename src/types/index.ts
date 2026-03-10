@@ -90,6 +90,8 @@ export interface AppSettings {
   ttsModelId: string
   ttsVoiceId: string
   ttsVoiceName: string
+  ttsEmotionStyle: TTSEmotionStyle
+  ttsEmotionIntensity: number
   ttsSpeed: number
   ttsVolume: number
 }
@@ -329,7 +331,22 @@ export interface AIMemoryEntry {
   updatedAt: number
 }
 
-export type TTSEngine = 'kokoro-js-zh' | 'system-speech'
+export type TTSEngine = 'kokoro-js-zh' | 'system-speech' | 'edge-neural'
+
+export type TTSEmotionStyle =
+  | 'auto'
+  | 'neutral'
+  | 'assistant'
+  | 'calm'
+  | 'cheerful'
+  | 'empathetic'
+  | 'excited'
+  | 'friendly'
+  | 'hopeful'
+  | 'narration-professional'
+  | 'narration-relaxed'
+  | 'sad'
+  | 'serious'
 
 export interface TTSModelLibraryItem {
   id: string
@@ -368,6 +385,8 @@ export interface TTSSynthesizePayload {
   engine: TTSEngine
   modelId: string
   voiceId: string
+  emotionStyle?: TTSEmotionStyle
+  emotionIntensity?: number
   speed?: number
 }
 

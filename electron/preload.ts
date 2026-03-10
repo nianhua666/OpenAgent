@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importLive2DModel: () => ipcRenderer.invoke('live2d:importModel'),
   resolveLive2DPath: (runtimePath: string) => ipcRenderer.invoke('live2d:resolvePath', runtimePath),
   getLive2DPaths: () => ipcRenderer.invoke('live2d:getPaths'),
+  listSystemTTSVoices: () => ipcRenderer.invoke('tts:listSystemVoices'),
+  synthesizeSystemTTS: (payload: unknown) => ipcRenderer.invoke('tts:synthesizeSystem', payload),
+  listEdgeTTSVoices: () => ipcRenderer.invoke('tts:listEdgeVoices'),
+  synthesizeEdgeTTS: (payload: unknown) => ipcRenderer.invoke('tts:synthesizeEdge', payload),
 
   // 系统
   getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
