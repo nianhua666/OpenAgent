@@ -634,7 +634,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { AIGatewayTemplate, AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSEmotionStyle, TTSVoiceLibraryItem } from '@/types'
+import type { AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSEmotionStyle, TTSVoiceLibraryItem } from '@/types'
 import AIManagedResourcesPanel from '@/components/AIManagedResourcesPanel.vue'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { useAIStore } from '@/stores/ai'
@@ -643,10 +643,17 @@ import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
 import {
+  SUB2API_GATEWAY_PLACEHOLDER,
+  SUB2API_MODE_PRESETS,
   buildSub2ApiAiPatch,
+  buildSub2ApiBaseUrl,
   createSub2ApiCodexAuthJson,
   createSub2ApiCodexConfigToml,
   getSub2ApiPreferredModel
+  ,normalizeSub2ApiGatewayRoot,
+  resolveSub2ApiMode,
+  type Sub2ApiCheckItem,
+  type Sub2ApiMode
 } from '@/utils/sub2api'
 import {
   AZURE_TTS_ENGINE,
@@ -735,141 +742,6 @@ type AIProtocolPreset = {
   baseUrlPlaceholder: string
   modelPlaceholder: string
   supportsModelFetch: boolean
-}
-
-type Sub2ApiMode = 'claude' | 'openai' | 'antigravity'
-
-type Sub2ApiModePreset = {
-  value: Sub2ApiMode
-  title: string
-  tag: string
-  description: string
-  protocol: AIProtocol
-  connectionTemplate: AIGatewayTemplate
-  routeSuffix: string
-  recommendedModel: string
-  connectionHint: string
-  routeHint: string
-}
-
-type Sub2ApiCheckState = 'success' | 'error' | 'pending'
-
-type Sub2ApiCheckItem = {
-  id: string
-  label: string
-  endpoint: string
-  state: Sub2ApiCheckState
-  message: string
-}
-
-const SUB2API_GATEWAY_PLACEHOLDER = 'https://your-sub2api.example.com'
-
-const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
-  claude: {
-    value: 'claude',
-    title: 'Claude 路由',
-    tag: 'Messages',
-    description: '走标准 /v1/messages，适合 Claude 系列模型与桌面工具调用。',
-    protocol: 'anthropic',
-    connectionTemplate: 'sub2api-claude',
-    routeSuffix: '/v1',
-    recommendedModel: 'claude-3-7-sonnet-latest',
-    connectionHint: '通过 Sub2API 的 Claude 兼容路由接入，适合 Claude 官方与兼容账号池。',
-    routeHint: '会自动映射到 {gateway}/v1/messages 与 {gateway}/v1/models。'
-  },
-  openai: {
-    value: 'openai',
-    title: 'OpenAI 路由',
-    tag: 'Chat / Responses',
-    description: '走 /v1/chat/completions 与 /v1/responses，适合 GPT、o 系列和兼容上游。',
-    protocol: 'openai',
-    connectionTemplate: 'sub2api-openai',
-    routeSuffix: '/v1',
-    recommendedModel: 'gpt-5.4',
-    connectionHint: '通过 Sub2API 的 OpenAI 路由接入，桌面端会优先走原生 Responses，适合 GPT、o 系列和 Codex 风格客户端。',
-    routeHint: '会自动映射到 {gateway}/v1/chat/completions、{gateway}/v1/responses 与 {gateway}/v1/models。'
-  },
-  antigravity: {
-    value: 'antigravity',
-    title: 'Antigravity Claude 专线',
-    tag: '专线',
-    description: '走 /antigravity/v1/messages，只使用 Antigravity 账号池，不混入普通 Claude 调度。',
-    protocol: 'anthropic',
-    connectionTemplate: 'sub2api-antigravity',
-    routeSuffix: '/antigravity/v1',
-    recommendedModel: 'claude-3-7-sonnet-latest',
-    connectionHint: '通过 Sub2API 的 Antigravity 专线访问 Claude 路由，适合需要隔离账号池的场景。',
-    routeHint: '会自动映射到 {gateway}/antigravity/v1/messages 与 {gateway}/antigravity/v1/models。'
-  }
-}
-
-function trimTrailingSlashes(value: string) {
-  return value.trim().replace(/\/+$/, '')
-}
-
-function normalizeSub2ApiGatewayRoot(value: string) {
-  return trimTrailingSlashes(value)
-    .replace(/\/antigravity\/v1beta$/i, '')
-    .replace(/\/antigravity\/v1$/i, '')
-    .replace(/\/v1beta$/i, '')
-    .replace(/\/v1$/i, '')
-    .replace(/\/chat\/completions$/i, '')
-    .replace(/\/responses$/i, '')
-    .replace(/\/messages$/i, '')
-    .replace(/\/models$/i, '')
-}
-
-function buildSub2ApiBaseUrl(root: string, mode: Sub2ApiMode) {
-  const normalizedRoot = normalizeSub2ApiGatewayRoot(root)
-  if (!normalizedRoot) {
-    return ''
-  }
-
-  return `${normalizedRoot}${SUB2API_MODE_PRESETS[mode].routeSuffix}`
-}
-
-function buildSub2ApiHeaders(apiKey: string, protocol: AIProtocol) {
-  if (protocol === 'anthropic') {
-    return {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey.trim(),
-      'anthropic-version': '2023-06-01'
-    }
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  }
-
-  if (apiKey.trim()) {
-    headers.Authorization = `Bearer ${apiKey.trim()}`
-  }
-
-  return headers
-}
-
-async function readSub2ApiErrorText(response: Response) {
-  try {
-    return (await response.text()).slice(0, 240)
-  } catch {
-    return ''
-  }
-}
-
-function resolveSub2ApiMode(template: AIGatewayTemplate): Sub2ApiMode | null {
-  if (template === 'sub2api-claude') {
-    return 'claude'
-  }
-
-  if (template === 'sub2api-openai') {
-    return 'openai'
-  }
-
-  if (template === 'sub2api-antigravity') {
-    return 'antigravity'
-  }
-
-  return null
 }
 
 const AI_PROTOCOL_PRESETS: Record<AIProtocol, AIProtocolPreset> = {
@@ -1371,10 +1243,22 @@ watch(() => [aiConfig.value.connectionTemplate, aiConfig.value.baseUrl], () => {
 }, { immediate: true })
 
 watch(() => sub2ApiStore.config.gatewayRoot, (nextGatewayRoot) => {
-  if (aiConfig.value.connectionTemplate === 'standard' && nextGatewayRoot.trim()) {
+  if (aiConfig.value.connectionTemplate === 'standard') {
     sub2ApiGatewayRoot.value = nextGatewayRoot
   }
 }, { immediate: true })
+
+watch(
+  () => [activeSub2ApiMode.value || sub2ApiStore.config.activeMode, sub2ApiStore.checkRegistry],
+  ([mode]) => {
+    if (checkingSub2ApiCapabilities.value) {
+      return
+    }
+
+    sub2ApiCheckItems.value = [...sub2ApiStore.getChecksForMode(mode as Sub2ApiMode)]
+  },
+  { deep: true, immediate: true }
+)
 
 watch(sub2ApiGatewayRoot, (nextGatewayRoot) => {
   const normalizedRoot = normalizeSub2ApiGatewayRoot(nextGatewayRoot)
@@ -1426,6 +1310,13 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
 
       if (aiConfig.value.connectionTemplate !== 'standard') {
         void sub2ApiStore.setGatewayRoot(String(value || ''))
+      }
+    }
+
+    if (key === 'model' && aiConfig.value.connectionTemplate !== 'standard') {
+      const nextModel = String(value || '').trim()
+      if (nextModel) {
+        void sub2ApiStore.setPreferredModel(activeSub2ApiMode.value || sub2ApiStore.config.activeMode, nextModel)
       }
     }
   }
