@@ -68,7 +68,7 @@
             :plans="workspacePlans"
             :selected-plan-id="selectedPlanId"
             @select-plan="selectedPlanId = $event"
-            @create-plan="createPlanDraft"
+            @create-plan="createGeneratedPlanDraft"
           />
 
           <IDEDevLog :plan="selectedPlan" />
@@ -100,7 +100,7 @@ import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
 import { workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
-import { flushPlanToWorkspace } from '@/utils/aiPlanEngine'
+import { flushPlanToWorkspace, generateInitialPlanPhases } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
 
 interface EditorTabState {
@@ -374,6 +374,54 @@ async function saveAllTabs() {
   }
 
   showToast('success', `已保存 ${dirtyTabs.length} 个文件`)
+}
+
+async function createGeneratedPlanDraft(payload: { goal: string; overview: string; techStack: string[] }) {
+  if (!workspace.value) {
+    return
+  }
+
+  const plan = aiStore.createProjectPlan(workspace.value.id, payload.goal, payload.overview, payload.techStack)
+  let currentPlan = plan
+  let generationError = ''
+
+  try {
+    const phases = await generateInitialPlanPhases(workspace.value, payload)
+    currentPlan = aiStore.setProjectPlanPhases(plan.id, phases) ?? plan
+  } catch (error) {
+    generationError = error instanceof Error ? error.message : '计划自动生成失败'
+    aiStore.addDevLog(plan.id, {
+      type: 'error',
+      title: '计划自动生成失败',
+      content: generationError,
+      metadata: { workspaceId: workspace.value.id },
+    })
+  }
+
+  const phaseCount = currentPlan.phases.length
+  const taskCount = currentPlan.phases.reduce((sum, phase) => sum + phase.tasks.length, 0)
+
+  aiStore.addDevLog(plan.id, {
+    type: 'plan',
+    title: generationError ? '创建 IDE 计划草稿' : '创建 IDE 项目计划',
+    content: generationError
+      ? `在工作区 ${workspace.value.name} 中创建计划草稿：${payload.goal}。自动生成任务失败，已回退为草稿。`
+      : `在工作区 ${workspace.value.name} 中创建项目计划：${payload.goal}。已生成 ${phaseCount} 个阶段 / ${taskCount} 个任务。`,
+    metadata: {
+      workspaceId: workspace.value.id,
+      phaseCount,
+      taskCount,
+    },
+  })
+
+  await flushPlanToWorkspace(workspace.value, currentPlan)
+  selectedPlanId.value = currentPlan.id
+  showToast(
+    'success',
+    generationError
+      ? '项目计划草稿已创建，自动任务生成已回退'
+      : `项目计划已创建：${phaseCount} 个阶段 / ${taskCount} 个任务`,
+  )
 }
 
 async function createPlanDraft(payload: { goal: string; overview: string; techStack: string[] }) {

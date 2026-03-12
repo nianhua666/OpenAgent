@@ -1687,15 +1687,53 @@ export const useAIStore = defineStore('ai', () => {
     }
   }
 
+  function recalculateProjectPlanProgress(plan: ProjectPlan) {
+    for (const phase of plan.phases) {
+      const allCompleted = phase.tasks.length > 0 && phase.tasks.every(task => task.status === 'completed' || task.status === 'skipped')
+      const anyInProgress = phase.tasks.some(task => task.status === 'in-progress')
+      const anyFailed = phase.tasks.some(task => task.status === 'failed')
+
+      if (allCompleted) phase.status = 'completed'
+      else if (anyFailed) phase.status = 'blocked'
+      else if (anyInProgress) phase.status = 'in-progress'
+      else phase.status = 'pending'
+    }
+
+    const allTasks = plan.phases.flatMap(phase => phase.tasks)
+    const doneTasks = allTasks.filter(task => task.status === 'completed' || task.status === 'skipped')
+    plan.progress = allTasks.length > 0 ? Math.round((doneTasks.length / allTasks.length) * 100) : 0
+  }
+
   function addProjectPhase(planId: string, phase: Omit<ProjectPhase, 'id'>): ProjectPhase | null {
     const plan = getProjectPlan(planId)
     if (!plan) return null
 
-    const newPhase: ProjectPhase = { id: genId(), ...phase }
+    const newPhase = normalizeProjectPhase(
+      {
+        ...phase,
+        id: genId()
+      },
+      plan.phases.length + 1
+    )
     plan.phases.push(newPhase)
+    recalculateProjectPlanProgress(plan)
     plan.updatedAt = Date.now()
     scheduleSave('ai_project_plans', projectPlans.value)
     return newPhase
+  }
+
+  function setProjectPlanPhases(planId: string, phases: ProjectPhase[]) {
+    const plan = getProjectPlan(planId)
+    if (!plan) return null
+
+    plan.phases = phases
+      .filter(phase => phase && typeof phase === 'object')
+      .map((phase, index) => normalizeProjectPhase(phase, index + 1))
+
+    recalculateProjectPlanProgress(plan)
+    plan.updatedAt = Date.now()
+    scheduleSave('ai_project_plans', projectPlans.value)
+    return plan
   }
 
   function updateProjectTaskStatus(planId: string, taskId: string, status: ProjectTaskStatus, output?: string) {
@@ -1854,6 +1892,7 @@ export const useAIStore = defineStore('ai', () => {
     getProjectPlan,
     updateProjectPlanStatus,
     addProjectPhase,
+    setProjectPlanPhases,
     updateProjectTaskStatus,
     addDevLog,
     getDevLog,

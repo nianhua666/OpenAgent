@@ -16,7 +16,7 @@ import { coerceToolArguments } from '@/utils/aiToolArgs'
 import { routeModel, recommendSubAgentModel } from '@/utils/aiModelRouter'
 import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
-import { advanceTask, renderPlanToMarkdown, flushPlanToWorkspace } from '@/utils/aiPlanEngine'
+import { advanceTask, renderPlanToMarkdown, flushPlanToWorkspace, generateInitialPlanPhases } from '@/utils/aiPlanEngine'
 import * as devLogger from '@/utils/aiDevLogger'
 
 interface ToolExecutionResult {
@@ -239,7 +239,7 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
     case 'ide_search_files':
       return ideSearchFilesTool(args)
     case 'ide_create_plan':
-      return ideCreatePlanTool(args)
+      return ideCreatePlanToolV2(args)
     case 'ide_advance_task':
       return ideAdvanceTaskTool(args)
     case 'ide_get_plan':
@@ -1239,6 +1239,59 @@ async function ideSearchFilesTool(args: Record<string, unknown>): Promise<ToolEx
   return successResult(`找到 ${results.length} 个匹配文件`, {
     pattern,
     files: results,
+  })
+}
+
+async function ideCreatePlanToolV2(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const workspace = getActiveWorkspace()
+  const goal = normalizeTextValue(args.goal)
+  const overview = normalizeTextValue(args.overview)
+  const techStack = normalizeStringArray(args.techStack)
+
+  if (!workspace || !goal || !overview || techStack.length === 0) {
+    return errorResult('创建计划需要已打开工作区，并提供 goal、overview、techStack')
+  }
+
+  const plan = aiStore.createProjectPlan(workspace.id, goal, overview, techStack)
+  let currentPlan = plan
+  let generationError = ''
+
+  try {
+    const phases = await generateInitialPlanPhases(workspace, { goal, overview, techStack })
+    currentPlan = aiStore.setProjectPlanPhases(plan.id, phases) ?? plan
+  } catch (error) {
+    generationError = error instanceof Error ? error.message : '计划自动生成失败'
+    aiStore.addDevLog(plan.id, {
+      type: 'error',
+      title: '计划自动生成失败',
+      content: generationError,
+      metadata: { workspaceId: workspace.id },
+    })
+  }
+
+  const phaseCount = currentPlan.phases.length
+  const taskCount = currentPlan.phases.reduce((sum, phase) => sum + phase.tasks.length, 0)
+
+  aiStore.addDevLog(plan.id, {
+    type: 'plan',
+    title: generationError ? '初始化项目计划草稿' : '初始化项目计划',
+    content: generationError
+      ? `为工作区 ${workspace.name} 创建计划草稿：${goal}。自动生成任务失败，已回退为草稿。`
+      : `为工作区 ${workspace.name} 创建项目计划：${goal}。已生成 ${phaseCount} 个阶段 / ${taskCount} 个任务。`,
+    metadata: {
+      workspaceId: workspace.id,
+      phaseCount,
+      taskCount,
+    },
+  })
+
+  await flushPlanToWorkspace(workspace, currentPlan)
+
+  return successResult(generationError ? '项目计划草稿已创建，自动任务生成已回退' : '项目计划已创建', {
+    plan: currentPlan,
+    markdown: renderPlanToMarkdown(currentPlan),
+    ...(generationError ? { generationError } : {}),
   })
 }
 

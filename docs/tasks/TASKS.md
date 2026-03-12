@@ -2,7 +2,7 @@
 
 > **创建时间**: 2026-03-13  
 > **当前阶段**: Phase 8 - 测试 + 优化  
-> **总进度**: 97%
+> **总进度**: 98%
 
 ---
 
@@ -89,7 +89,7 @@
 ## 当前剩余缺口
 
 - `IDETerminal` 已接入真实 shell 执行、输出流与取消能力，但还不支持交互式 PTY、多标签终端和 stdin 持久会话。
-- IDE 里的项目计划目前支持草案创建、展示和工作区落盘，但自动 `phase` / `task` 生成仍偏弱，后续要继续补齐。
+- IDE 项目计划现在会基于工作区结构、`package.json`、脚本命令、框架/语言与目标关键词自动生成初始 `phase` / `task`，但还不支持基于真实 diff、失败反馈和上下文快照的动态重规划。
 - 上下文引擎已接入 `buildContextMessages()` 主链路，但还缺一轮长对话、多工具调用、跨模式切换的真实回归验证。
 - 还缺一轮面向 `/ai`、`/ide`、Overlay、Sub2API 的真实交互回归测试。
 
@@ -135,3 +135,6 @@
 | 2026-03-13 | build | Phase 7.2/7.3/8.3 集成修复后 `vue-tsc --noEmit` 通过 |
 | 2026-03-13 | code | Phase 8: `electron/main.ts` / `preload.ts` / `env.d.ts` 接入 IDE 终端命令执行、实时输出事件与取消能力，`IDETerminal.vue` 升级为真实终端面板，`IDEView.vue` 同步识别 `npm` / `pnpm` / `yarn` / `bun` 脚本命令 |
 | 2026-03-13 | build | Phase 8 IDE 终端链路接入后构建验证通过（`npm.cmd run build`） |
+| 2026-03-13 | code | Phase 8: `aiPlanEngine.ts` 重建初始计划生成链路，基于工作区结构、脚本与技术栈推断自动生成阶段/任务；`IDEView.vue` 与 `aiTools.ts` 统一接入同一套计划创建逻辑，避免再次产出空草稿 |
+| 2026-03-13 | review | Phase 8 巡检：复核 IDE 计划链路与 store 状态归一化，确认 `setProjectPlanPhases()` + `addProjectPhase()` 会统一规范 `phaseId` / order；当前无新增阻断项，剩余风险收敛为 PTY 能力与真实交互回归 |
+| 2026-03-13 | build | Phase 8 计划生成链路收口后 `npm.cmd run build` 通过 |
