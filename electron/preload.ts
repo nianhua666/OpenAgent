@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, Live2DCursorPoint, WindowShapeRect } from '../src/types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, Live2DCursorPoint, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
 
 // 安全地向渲染进程暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -69,6 +69,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRuntimeDataStorageInfo: () => ipcRenderer.invoke('app:getRuntimeDataStorageInfo'),
   switchRuntimeDataStorage: (payload: { mode: 'auto' | 'custom'; targetPath?: string }) => ipcRenderer.invoke('app:switchRuntimeDataStorage', payload),
   readImageAsDataUrl: (filePath: string) => ipcRenderer.invoke('file:readImageAsDataUrl', filePath),
+  sub2ApiGetRuntimeState: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:getRuntimeState', config, managedConfig),
+  sub2ApiStartRuntime: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:startRuntime', config, managedConfig),
+  sub2ApiStopRuntime: () => ipcRenderer.invoke('sub2api:stopRuntime'),
+  sub2ApiRestartRuntime: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:restartRuntime', config, managedConfig),
+  sub2ApiInspectSetup: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:inspectSetup', config, managedConfig),
+  sub2ApiTestSetupDatabase: (payload: Sub2ApiSetupDatabaseConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => ipcRenderer.invoke('sub2api:testSetupDatabase', payload, config),
+  sub2ApiTestSetupRedis: (payload: Sub2ApiSetupRedisConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => ipcRenderer.invoke('sub2api:testSetupRedis', payload, config),
+  sub2ApiInstallSetup: (payload: Sub2ApiDesktopSetupProfile, config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:installSetup', payload, config, managedConfig),
+  sub2ApiEnsureDesktopAccess: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>, currentApiKey?: string) => ipcRenderer.invoke('sub2api:ensureDesktopAccess', config, managedConfig, currentApiKey) as Promise<Sub2ApiDesktopAccessResult>,
+  sub2ApiChooseBinary: (defaultPath?: string) => ipcRenderer.invoke('dialog:chooseFile', {
+    title: '选择 Sub2API 本地网关可执行文件',
+    defaultPath,
+    filters: [
+      { name: '可执行文件', extensions: ['exe', 'cmd', 'bat'] },
+      { name: '所有文件', extensions: ['*'] }
+    ]
+  }),
   openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
 
   // MCP 工具

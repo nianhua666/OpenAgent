@@ -3,17 +3,17 @@
     <section v-if="showHeroSection" class="page-hero glass-panel">
       <div class="hero-copy">
         <span class="hero-tag">Sub2API</span>
-        <h2 class="page-title">Sub2API 工作台</h2>
-        <p>把 Sub2API 作为 OpenAgent 的内嵌网关中心使用。这里统一管理网关根地址、API Key、路由模式、模型目录、Codex 配置模板，以及同步到 AI 助手的入口。</p>
+        <h2 class="page-title">Sub2API 本地网关工作台</h2>
+        <p>这里不再只是外部网关配置页，而是 OpenAgent 的 Sub2API 桌面控制台。你可以在这里切换本地桌面网关和外部备用网关，统一管理内嵌运行时、API Key、路由模式、模型目录、Codex 模板，以及同步到 AI 助手的入口。</p>
       </div>
       <div class="hero-metrics">
         <div class="hero-metric">
-          <span>当前路由</span>
-          <strong>{{ activePreset.title }}</strong>
+          <span>接入模式</span>
+          <strong>{{ gatewayModeLabel }}</strong>
         </div>
         <div class="hero-metric">
-          <span>已缓存模型</span>
-          <strong>{{ activeModels.length }}</strong>
+          <span>{{ desktopModeEnabled ? '本地状态' : '已缓存模型' }}</span>
+          <strong>{{ desktopModeEnabled ? runtimeStatusLabel : `${activeModels.length} 个` }}</strong>
         </div>
         <div class="hero-metric">
           <span>AI 绑定</span>
@@ -27,28 +27,109 @@
         <div>
           <h3 class="section-title">
             <svg width="18" height="18"><use href="#icon-gateway"/></svg>
-            内嵌网关配置
+            网关接入与运行时
           </h3>
-          <p class="section-desc">这里保存 OpenAgent 内置的 Sub2API 主配置。保存后可以在 AI 设置里直接切换到任一路由，也可以从本页一键同步到当前 AI 助手。</p>
+          <p class="section-desc">默认推荐桌面模式：OpenAgent 本机直接托管 Sub2API 二进制运行时，不依赖 Docker。若你已经有稳定的外部网关，也可以切回外部模式作为备用入口。</p>
         </div>
         <div class="hero-actions">
           <button class="btn btn-secondary btn-sm" @click="openAISettingsPage">打开 AI 设置</button>
-          <button class="btn btn-primary btn-sm" :disabled="!sub2ApiStore.configured" @click="applyToAI()">同步到 AI 助手</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!desktopModeEnabled" @click="openSub2ApiConsolePage">打开内嵌后台</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.adminUrl" @click="openSub2ApiAdmin">打开后台</button>
+          <button class="btn btn-primary btn-sm" :disabled="!canApplyToAI" @click="applyToAI()">同步到 AI 助手</button>
         </div>
       </div>
 
-      <div class="config-grid">
-        <label class="config-field">
-          <span>网关根地址</span>
-          <input
-            class="setting-input"
-            :value="gatewayRoot"
-            :placeholder="SUB2API_GATEWAY_PLACEHOLDER"
-            @input="gatewayRoot = normalizeSub2ApiGatewayRoot(($event.target as HTMLInputElement).value)"
-          />
-          <small>只填根地址，不要带 /v1、/messages、/responses 或 /antigravity/v1。</small>
-        </label>
+      <div class="mode-switch-row">
+        <button
+          class="mode-switch-card"
+          :class="{ active: gatewayMode === 'desktop' }"
+          @click="setGatewayMode('desktop')"
+        >
+          <span class="provider-card-tag">本地</span>
+          <strong>桌面网关</strong>
+          <small>OpenAgent 主进程直接拉起 Sub2API 本地运行时，AI 设置、模型目录和检查都走本机地址。</small>
+        </button>
+        <button
+          class="mode-switch-card"
+          :class="{ active: gatewayMode === 'external' }"
+          @click="setGatewayMode('external')"
+        >
+          <span class="provider-card-tag">远端</span>
+          <strong>外部网关</strong>
+          <small>继续连接你已经部署好的远端 Sub2API 服务，适合有现成公网网关的场景。</small>
+        </button>
+      </div>
 
+      <div class="status-strip">
+        <span class="status-chip">当前接入：{{ gatewayModeLabel }}</span>
+        <span class="status-chip" :class="{ 'is-accent': runtimeState.healthy }">运行状态：{{ runtimeStatusLabel }}</span>
+        <span class="status-chip">管理地址：{{ effectiveGatewayRoot || '未配置' }}</span>
+        <span v-if="desktopModeEnabled" class="status-chip">健康状态：{{ runtimeHealthLabel }}</span>
+      </div>
+
+      <div v-if="desktopModeEnabled" class="workflow-grid">
+        <article class="workflow-card workflow-card-emphasis">
+          <span class="provider-card-tag">推荐流程</span>
+          <strong>默认本地网关</strong>
+          <p>{{ desktopFlowSummary }}</p>
+          <div class="workflow-step-list">
+            <div class="workflow-step-item">
+              <span>1</span>
+              <div>
+                <strong>启动本地网关</strong>
+                <small>{{ runtimeStatusLabel }}，{{ runtimeHealthLabel }}</small>
+              </div>
+            </div>
+            <div class="workflow-step-item">
+              <span>2</span>
+              <div>
+                <strong>登录后台并加入账号池</strong>
+                <small>{{ setupStatusLabel === '已完成初始化' ? '本地 setup 已完成，可以直接进入后台维护账号池。' : '首次运行先点“打开后台”，完成初始化后再登录并加入账号池。' }}</small>
+              </div>
+            </div>
+            <div class="workflow-step-item">
+              <span>3</span>
+              <div>
+                <strong>刷新支持模型</strong>
+                <small>当前路由已缓存 {{ activeModels.length }} 个模型，账号池变化后建议重新读取一次。</small>
+              </div>
+            </div>
+            <div class="workflow-step-item">
+              <span>4</span>
+              <div>
+                <strong>同步到 AI 助手</strong>
+                <small>{{ currentAiModeLabel }}；点击“同步到 AI 助手”即可一键带上路由、Base URL 与默认模型。</small>
+              </div>
+            </div>
+          </div>
+          <p class="workflow-footnote">{{ desktopNextActionLabel }}</p>
+        </article>
+
+        <article class="workflow-card">
+          <span class="provider-card-tag">本地统计</span>
+          <strong>运行与接入概览</strong>
+          <div class="workflow-metrics-grid">
+            <div class="workflow-metric-card">
+              <span>运行时长</span>
+              <strong>{{ runtimeUptimeLabel }}</strong>
+            </div>
+            <div class="workflow-metric-card">
+              <span>已缓存模型</span>
+              <strong>{{ totalCachedModelCount }}</strong>
+            </div>
+            <div class="workflow-metric-card">
+              <span>最近检查</span>
+              <strong>{{ activeCheckSummaryLabel }}</strong>
+            </div>
+            <div class="workflow-metric-card">
+              <span>启动日志</span>
+              <strong>{{ runtimeLogLineCount }} 行</strong>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="config-grid">
         <label class="config-field">
           <span>Sub2API API Key</span>
           <div class="input-wrap">
@@ -68,6 +149,384 @@
           </div>
           <small>用于 OpenAgent 内嵌 Sub2API 路由与模型列表读取。同步到 AI 助手时会一并写入当前 AI 配置。</small>
         </label>
+
+        <label v-if="!desktopModeEnabled" class="config-field">
+          <span>网关根地址</span>
+          <input
+            class="setting-input"
+            :value="gatewayRoot"
+            :placeholder="SUB2API_GATEWAY_PLACEHOLDER"
+            @input="gatewayRoot = normalizeSub2ApiGatewayRoot(($event.target as HTMLInputElement).value)"
+          />
+          <small>只填根地址，不要带 /v1、/messages、/responses 或 /antigravity/v1。</small>
+        </label>
+
+        <label v-else class="config-field">
+          <span>本地网关地址</span>
+          <input
+            class="setting-input"
+            :value="effectiveGatewayRoot"
+            readonly
+          />
+          <small>桌面模式会根据主机和端口自动推导本地根地址，并同步给 AI 设置页、模型目录和 Codex 模板。</small>
+        </label>
+      </div>
+
+      <div v-if="desktopModeEnabled" class="desktop-runtime-panel">
+        <div class="desktop-runtime-head">
+          <div>
+            <strong>本地桌面接入</strong>
+            <p>{{ runtimeState.healthMessage || 'OpenAgent 会直接管理内嵌 Sub2API 运行时。完成初始化后，可以使用这里的管理员账号与统一密码自动登录后台，并为 OpenAgent 复用或创建专属 API Key。' }}</p>
+          </div>
+          <div class="hero-actions">
+            <button class="btn btn-secondary btn-sm" :disabled="syncingDesktopAccess" @click="syncDesktopAccess">
+              {{ syncingDesktopAccess ? '同步中...' : '同步本地专属 Key' }}
+            </button>
+            <button class="btn btn-secondary btn-sm" :disabled="!effectiveGatewayRoot" @click="openSub2ApiConsolePage">进入内嵌后台</button>
+            <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.adminUrl" @click="openSub2ApiAdmin">打开外部后台</button>
+          </div>
+        </div>
+
+        <div class="status-strip">
+          <span class="status-chip">管理员账号：{{ managedAdminEmail }}</span>
+          <span class="status-chip">统一密码：{{ managedSharedPassword }}</span>
+          <span class="status-chip">专属 Key：{{ managedApiKeyStatusLabel }}</span>
+          <span class="status-chip">当前状态：{{ runtimeStatusLabel }}</span>
+        </div>
+
+        <div class="runtime-note-grid">
+          <div class="runtime-note-card">
+            <strong>默认最佳项</strong>
+            <p>OpenAgent 默认使用 127.0.0.1:38080、本地桌面运行时和 OpenAgentnh 作为初始化密码。首次启动后可以直接在内嵌后台完成 setup 与账号池维护。</p>
+          </div>
+          <div class="runtime-note-card">
+            <strong>专属 Key 自动接入</strong>
+            <p>初始化完成后，OpenAgent 会尝试使用当前管理员账号自动登录后台，并按「{{ managedApiKeyName }}」查找或创建专属 API Key，方便一键同步到 AI 设置。</p>
+          </div>
+        </div>
+
+        <details class="advanced-fold">
+          <summary>自动接入参数</summary>
+
+          <div class="config-grid advanced-fold-body">
+            <label class="config-field">
+              <span>管理员邮箱</span>
+              <input class="setting-input" :value="managedAdminEmail" type="email" placeholder="admin@openagent.local" @input="managedAdminEmail = ($event.target as HTMLInputElement).value" />
+              <small>用于本地自动登录、创建专属 API Key，以及首次进入后台时的默认管理员账号。</small>
+            </label>
+
+            <label class="config-field">
+              <span>统一密码</span>
+              <input class="setting-input" :value="managedSharedPassword" placeholder="OpenAgentnh" @input="managedSharedPassword = ($event.target as HTMLInputElement).value" />
+              <small>默认会作为初始化阶段建议密码，以及后台自动登录时使用的管理员密码。</small>
+            </label>
+
+            <label class="config-field config-field-span">
+              <span>专属 API Key 名称</span>
+              <input class="setting-input" :value="managedApiKeyName" placeholder="OpenAgent Desktop" @input="managedApiKeyName = ($event.target as HTMLInputElement).value" />
+              <small>OpenAgent 会按这个名称在本地后台自动查找或创建专属 API Key，便于 AI 设置一键复用。</small>
+            </label>
+          </div>
+        </details>
+      </div>
+
+      <div v-if="desktopModeEnabled" class="desktop-runtime-panel">
+        <div class="desktop-runtime-head">
+          <div>
+            <strong>本地网关运行时</strong>
+            <p>{{ runtimeState.healthMessage || 'OpenAgent 会默认按本机网关模式管理 Sub2API；常用操作只保留启停、后台入口和模型接入，高级参数折叠到下方。' }}</p>
+          </div>
+          <div class="hero-actions">
+            <button class="btn btn-secondary btn-sm" @click="chooseDesktopBinary">选择二进制</button>
+            <button class="btn btn-secondary btn-sm" @click="chooseDesktopDataDir">选择数据目录</button>
+            <button class="btn btn-primary btn-sm" :disabled="sub2ApiStore.runtimeBusy || runtimeState.status === 'running'" @click="startDesktopRuntime">
+              {{ startRuntimeLabel }}
+            </button>
+            <button class="btn btn-secondary btn-sm" :disabled="sub2ApiStore.runtimeBusy || runtimeState.status !== 'running'" @click="restartDesktopRuntime">重启</button>
+            <button class="btn btn-secondary btn-sm" :disabled="sub2ApiStore.runtimeBusy || !canStopRuntime" @click="stopDesktopRuntime">停止</button>
+          </div>
+        </div>
+
+        <div class="status-strip">
+          <span class="status-chip">自动启动：{{ desktopAutoStart ? '已启用' : '未启用' }}</span>
+          <button class="status-chip status-chip-button" @click="toggleDesktopAutoStart">{{ desktopAutoStart ? '关闭自启动' : '启用自启动' }}</button>
+          <span class="status-chip">依赖目录：{{ runtimeState.dependencyRoot || 'build/sub2api-runtime' }}</span>
+          <button class="status-chip status-chip-button" @click="copyText(runtimeState.dependencyRoot || 'build/sub2api-runtime', '依赖目录')">复制目录</button>
+          <span class="status-chip">日志文件：{{ runtimeState.logFilePath || '将在首次启动后生成' }}</span>
+        </div>
+
+        <details class="advanced-fold">
+          <summary>高级运行时参数</summary>
+
+          <div class="config-grid advanced-fold-body">
+            <label class="config-field">
+              <span>监听主机</span>
+              <input
+                class="setting-input"
+                :value="desktopHost"
+                placeholder="127.0.0.1"
+                @input="desktopHost = ($event.target as HTMLInputElement).value"
+              />
+              <small>建议本机默认使用 127.0.0.1；如果需要让局域网其他设备访问，再改成 0.0.0.0。</small>
+            </label>
+
+            <label class="config-field">
+              <span>监听端口</span>
+              <input
+                class="setting-input"
+                type="number"
+                min="1"
+                max="65535"
+                :value="desktopPort"
+                @input="desktopPort = Number(($event.target as HTMLInputElement).value)"
+              />
+              <small>AI 设置页和本地健康检查都会复用这个端口。</small>
+            </label>
+
+            <label class="config-field">
+              <span>运行模式</span>
+              <select class="setting-input" :value="desktopRunMode" @change="desktopRunMode = ($event.target as HTMLSelectElement).value as 'simple' | 'standard'">
+                <option value="simple">simple</option>
+                <option value="standard">standard</option>
+              </select>
+              <small>simple 适合先把本地网关跑起来；standard 需要更完整的后端依赖与配置。</small>
+            </label>
+
+            <label class="config-field">
+              <span>日志级别</span>
+              <select class="setting-input" :value="desktopLogLevel" @change="desktopLogLevel = ($event.target as HTMLSelectElement).value as 'debug' | 'info' | 'warn' | 'error'">
+                <option value="debug">debug</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+              <small>这里控制主进程传给 Sub2API 的运行级别，启动排障时建议先切到 debug。</small>
+            </label>
+
+            <label class="config-field config-field-span">
+              <span>Sub2API 二进制</span>
+              <div class="path-input-row">
+                <input
+                  class="setting-input"
+                  :value="desktopBinaryPath"
+                  placeholder="留空则优先使用打包内置路径"
+                  @input="desktopBinaryPath = ($event.target as HTMLInputElement).value"
+                />
+                <button class="btn btn-secondary btn-sm" @click="chooseDesktopBinary">浏览</button>
+              </div>
+              <small>开发态默认查找 {{ runtimeState.bundledBinaryPath || 'build/sub2api-runtime/bin/sub2api.exe' }}；打包后会切到 resources/sub2api-runtime/bin。</small>
+            </label>
+
+            <label class="config-field config-field-span">
+              <span>数据目录</span>
+              <div class="path-input-row">
+                <input
+                  class="setting-input"
+                  :value="desktopDataDir"
+                  placeholder="留空则使用应用数据目录/sub2api-runtime"
+                  @input="desktopDataDir = ($event.target as HTMLInputElement).value"
+                />
+                <button class="btn btn-secondary btn-sm" @click="chooseDesktopDataDir">浏览</button>
+              </div>
+              <small>DATA_DIR、.installed 锁文件和桌面启动日志都会落在这里；首次运行没有 config.yaml 时会进入 setup 向导。</small>
+            </label>
+
+            <label class="config-field config-field-span">
+              <span>config.yaml 路径</span>
+              <input
+                class="setting-input"
+                :value="desktopConfigPath"
+                placeholder="可留空；若已有 config.yaml，可填写完整路径"
+                @input="desktopConfigPath = ($event.target as HTMLInputElement).value"
+              />
+              <small>如果填的是非 config.yaml 文件，启动器会在数据目录内复制成标准 config.yaml 再启动，避免参考后端读取不到配置。</small>
+            </label>
+          </div>
+
+          <div class="runtime-note-grid">
+            <div class="runtime-note-card">
+              <strong>内置依赖目录</strong>
+              <p>建议把 Sub2API 可执行文件和相关依赖统一放进项目内的 build/sub2api-runtime 目录，打包时会自动复制到桌面版 resources/sub2api-runtime。</p>
+            </div>
+            <div class="runtime-note-card">
+              <strong>首次启动路径</strong>
+              <p>如果当前数据目录还没有 config.yaml 和 .installed，Sub2API 会优先进入 setup 向导。这时点击「打开后台」即可在本机完成初始化。</p>
+            </div>
+          </div>
+        </details>
+
+        <div class="desktop-setup-panel">
+          <div class="desktop-runtime-head">
+            <div>
+              <strong>页面内初始化</strong>
+              <p>首次部署时，这里保留页面内 setup 能力，但默认只暴露状态与一键初始化；数据库、Redis 和底层诊断收进高级区，避免打断主流程。</p>
+            </div>
+            <div class="hero-actions">
+              <button class="btn btn-secondary btn-sm" :disabled="sub2ApiStore.runtimeBusy || setupBusy" @click="inspectDesktopSetup">
+                {{ inspectSetupLabel }}
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="!canTestSetupDatabase" @click="testDesktopSetupDatabase">
+                {{ testSetupDatabaseLabel }}
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="!canTestSetupRedis" @click="testDesktopSetupRedis">
+                {{ testSetupRedisLabel }}
+              </button>
+              <button class="btn btn-primary btn-sm" :disabled="!canInstallSetup" @click="installDesktopSetup">
+                {{ installSetupLabel }}
+              </button>
+            </div>
+          </div>
+
+          <div class="status-strip">
+            <span class="status-chip" :class="{ 'is-accent': setupStatus.reachable }">setup 状态：{{ setupStatusLabel }}</span>
+            <span class="status-chip">最近检查：{{ setupLastCheckedLabel }}</span>
+            <span class="status-chip">缺失项：{{ setupFormIssues.length }} 项</span>
+            <span class="status-chip">服务端：{{ setupStatus.endpoint || '等待诊断' }}</span>
+          </div>
+
+          <div v-if="setupBlockingIssue" class="inline-error">{{ setupBlockingIssue.message }}</div>
+
+          <details class="advanced-fold">
+            <summary>高级初始化参数与诊断</summary>
+
+            <div v-if="setupFormIssues.length" class="setup-issue-grid advanced-fold-body">
+              <div v-for="item in setupFormIssues" :key="item.id" class="setup-issue-card" :class="`is-${item.level}`">
+                <strong>{{ item.label }}</strong>
+                <p>{{ item.message }}</p>
+              </div>
+            </div>
+
+            <div class="config-grid">
+              <label class="config-field">
+                <span>PostgreSQL 主机</span>
+                <input class="setting-input" :value="setupDatabaseHost" placeholder="127.0.0.1" @input="setupDatabaseHost = ($event.target as HTMLInputElement).value" />
+                <small>指向 Sub2API 使用的 PostgreSQL 实例。首次测试时若数据库不存在，setup 会尝试自动创建。</small>
+              </label>
+
+              <label class="config-field">
+                <span>PostgreSQL 端口</span>
+                <input class="setting-input" type="number" min="1" max="65535" :value="setupDatabasePort" @input="setupDatabasePort = Number(($event.target as HTMLInputElement).value)" />
+                <small>默认 5432。建议和本机 PostgreSQL 实例保持一致。</small>
+              </label>
+
+              <label class="config-field">
+                <span>PostgreSQL 用户</span>
+                <input class="setting-input" :value="setupDatabaseUser" placeholder="postgres" @input="setupDatabaseUser = ($event.target as HTMLInputElement).value" />
+                <small>需要有建库和建表权限，setup 才能执行迁移。</small>
+              </label>
+
+              <label class="config-field">
+                <span>PostgreSQL 数据库</span>
+                <input class="setting-input" :value="setupDatabaseName" placeholder="sub2api" @input="setupDatabaseName = ($event.target as HTMLInputElement).value" />
+                <small>建议使用独立数据库，避免与其他业务混库。</small>
+              </label>
+
+              <label class="config-field config-field-span">
+                <span>PostgreSQL 密码</span>
+                <input class="setting-input" type="password" :value="setupDatabasePassword" placeholder="数据库密码" @input="setupDatabasePassword = ($event.target as HTMLInputElement).value" />
+                <small>仅用于当前安装流程测试与初始化，不会同步到 AI 助手配置。</small>
+              </label>
+
+              <label class="config-field">
+                <span>PostgreSQL SSL 模式</span>
+                <select class="setting-input" :value="setupDatabaseSslMode" @change="setupDatabaseSslMode = ($event.target as HTMLSelectElement).value as 'disable' | 'require' | 'verify-ca' | 'verify-full'">
+                  <option value="disable">disable</option>
+                  <option value="require">require</option>
+                  <option value="verify-ca">verify-ca</option>
+                  <option value="verify-full">verify-full</option>
+                </select>
+                <small>本地默认通常用 disable；连接云数据库时再切到更严格模式。</small>
+              </label>
+
+              <label class="config-field">
+                <span>Redis 主机</span>
+                <input class="setting-input" :value="setupRedisHost" placeholder="127.0.0.1" @input="setupRedisHost = ($event.target as HTMLInputElement).value" />
+                <small>Sub2API 缓存、令牌和部分并发控制会依赖 Redis。</small>
+              </label>
+
+              <label class="config-field">
+                <span>Redis 端口</span>
+                <input class="setting-input" type="number" min="1" max="65535" :value="setupRedisPort" @input="setupRedisPort = Number(($event.target as HTMLInputElement).value)" />
+                <small>默认 6379。</small>
+              </label>
+
+              <label class="config-field">
+                <span>Redis DB</span>
+                <input class="setting-input" type="number" min="0" max="15" :value="setupRedisDb" @input="setupRedisDb = Number(($event.target as HTMLInputElement).value)" />
+                <small>仅支持 0 到 15。建议为 Sub2API 单独分配一个 DB。</small>
+              </label>
+
+              <label class="config-field config-field-span">
+                <span>Redis 密码</span>
+                <input class="setting-input" type="password" :value="setupRedisPassword" placeholder="无密码可留空" @input="setupRedisPassword = ($event.target as HTMLInputElement).value" />
+                <small>如果 Redis 未启用认证，可以留空。</small>
+              </label>
+
+              <label class="config-field config-field-span checkbox-field">
+                <span>Redis TLS</span>
+                <label class="checkbox-row">
+                  <input type="checkbox" :checked="setupRedisEnableTls" @change="setupRedisEnableTls = ($event.target as HTMLInputElement).checked" />
+                  <span>连接 Redis 时启用 TLS</span>
+                </label>
+                <small>连接云 Redis 或托管 Redis 时通常需要启用 TLS。</small>
+              </label>
+
+              <label class="config-field">
+                <span>管理员邮箱</span>
+                <input class="setting-input" type="email" :value="setupAdminEmail" placeholder="admin@example.com" @input="setupAdminEmail = ($event.target as HTMLInputElement).value" />
+                <small>安装完成后使用这个账号登录后台。</small>
+              </label>
+
+              <label class="config-field">
+                <span>管理员密码</span>
+                <input class="setting-input" type="password" :value="setupAdminPassword" placeholder="至少 8 位" @input="setupAdminPassword = ($event.target as HTMLInputElement).value" />
+                <small>setup 接口会拒绝短密码，建议直接使用高强度密码。</small>
+              </label>
+
+              <label class="config-field config-field-span">
+                <span>时区</span>
+                <input class="setting-input" :value="setupTimezone" placeholder="Asia/Shanghai" @input="setupTimezone = ($event.target as HTMLInputElement).value" />
+                <small>当前 setup API 本身不接收 timezone，安装完成后桌面启动器会把这里的值回写到 config.yaml，保证预览和落盘一致。</small>
+              </label>
+            </div>
+
+            <div class="runtime-note-grid">
+              <div class="runtime-note-card">
+                <strong>启动诊断</strong>
+                <p>点击「{{ inspectSetupLabel }}」会先确认本地进程和 setup/status，再把缺失的 binary、config.yaml、.installed 和 setup 可达性全部列出来。</p>
+              </div>
+              <div class="runtime-note-card">
+                <strong>真实安装链路</strong>
+                <p>一键初始化不是前端伪造成功，而是直接调用 Sub2API 原生 setup/install：测试 PostgreSQL、测试 Redis、执行迁移、创建管理员、写 config.yaml，并在完成后尝试自动同步 OpenAgent 专属 API Key。</p>
+              </div>
+            </div>
+
+            <div v-if="setupDiagnostics.items.length" class="check-list">
+              <div v-for="item in setupDiagnostics.items" :key="item.id" class="check-item" :class="`is-${item.level === 'info' ? 'pending' : item.level}`">
+                <div class="check-copy">
+                  <strong>{{ item.label }}</strong>
+                  <small>{{ item.id }}</small>
+                </div>
+                <span>{{ item.message }}</span>
+              </div>
+            </div>
+
+            <div class="config-preview-grid">
+              <div class="config-preview-block">
+                <span class="config-preview-label">config.yaml 预览</span>
+                <textarea class="setting-textarea config-preview-textarea" :value="setupConfigPreview" rows="18" readonly />
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div v-if="runtimeState.logs.length" class="runtime-log-block">
+          <div class="runtime-log-head">
+            <strong>最近启动日志</strong>
+            <button class="btn btn-secondary btn-sm" @click="copyText(runtimeLogPreviewText, '运行时日志')">复制最近日志</button>
+          </div>
+          <textarea class="setting-textarea config-preview-textarea runtime-log-textarea" :value="runtimeLogPreviewText" rows="8" readonly />
+        </div>
       </div>
 
       <div class="route-grid">
@@ -81,13 +540,14 @@
           <span class="provider-card-tag">{{ mode.tag }}</span>
           <strong>{{ mode.title }}</strong>
           <small>{{ mode.description }}</small>
-          <span class="route-pill">{{ (gatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) + mode.routeSuffix }}</span>
+          <span class="route-pill">{{ (effectiveGatewayRoot || gatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) + mode.routeSuffix }}</span>
         </button>
       </div>
 
       <div class="route-strip">
         <span class="route-chip">当前模板：{{ activePreset.title }}</span>
         <span class="route-chip">实际 Base URL：{{ activeBaseUrl || '未配置' }}</span>
+        <span class="route-chip">当前网关：{{ effectiveGatewayRoot || '未配置' }}</span>
         <span class="route-chip is-accent">AI 当前绑定：{{ currentAiModeLabel }}</span>
       </div>
     </section>
@@ -214,7 +674,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAIStore } from '@/stores/ai'
 import { useSub2ApiStore } from '@/stores/sub2api'
@@ -225,6 +685,7 @@ import {
   SUB2API_GATEWAY_PLACEHOLDER,
   SUB2API_MODE_PRESETS,
   buildSub2ApiAiPatch,
+  createSub2ApiSetupConfigPreview,
   createSub2ApiCodexAuthJson,
   createSub2ApiCodexConfigToml,
   getSub2ApiPreferredModel,
@@ -244,6 +705,15 @@ const normalizedSearchQuery = computed(() => normalizeSearchQuery(props.searchQu
 const modeOptions = Object.values(SUB2API_MODE_PRESETS)
 const activeMode = computed(() => sub2ApiStore.config.activeMode)
 const activePreset = computed(() => SUB2API_MODE_PRESETS[activeMode.value])
+const gatewayMode = computed(() => sub2ApiStore.gatewayMode)
+const desktopModeEnabled = computed(() => sub2ApiStore.desktopModeEnabled)
+const runtimeState = computed(() => sub2ApiStore.runtimeState)
+const setupDiagnostics = computed(() => sub2ApiStore.setupDiagnostics)
+const setupStatus = computed(() => sub2ApiStore.setupStatus)
+const setupBusy = computed(() => sub2ApiStore.setupBusy)
+const setupFormIssues = computed(() => sub2ApiStore.setupFormIssues)
+const setupBlockingIssue = computed(() => sub2ApiStore.setupBlockingIssue)
+const effectiveGatewayRoot = computed(() => sub2ApiStore.effectiveGatewayRoot)
 const gatewayRoot = computed({
   get: () => sub2ApiStore.config.gatewayRoot,
   set: (value: string) => {
@@ -256,6 +726,151 @@ const apiKey = computed({
     void sub2ApiStore.setApiKey(value)
   }
 })
+const desktopHost = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.host,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ host: value })
+  }
+})
+const desktopPort = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.port,
+  set: (value: number) => {
+    void sub2ApiStore.setDesktopRuntime({ port: value })
+  }
+})
+const desktopRunMode = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.runMode,
+  set: (value: 'simple' | 'standard') => {
+    void sub2ApiStore.setDesktopRuntime({ runMode: value })
+  }
+})
+const desktopLogLevel = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.logLevel,
+  set: (value: 'debug' | 'info' | 'warn' | 'error') => {
+    void sub2ApiStore.setDesktopRuntime({ logLevel: value })
+  }
+})
+const desktopBinaryPath = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.binaryPath,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ binaryPath: value })
+  }
+})
+const desktopDataDir = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.dataDir,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ dataDir: value })
+  }
+})
+const desktopConfigPath = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.configPath,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ configPath: value })
+  }
+})
+const managedAdminEmail = computed({
+  get: () => sub2ApiStore.config.desktopManaged.adminEmail,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopManaged({ adminEmail: value })
+  }
+})
+const managedSharedPassword = computed({
+  get: () => sub2ApiStore.config.desktopManaged.sharedPassword,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopManaged({ sharedPassword: value })
+  }
+})
+const managedApiKeyName = computed({
+  get: () => sub2ApiStore.config.desktopManaged.apiKeyName,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopManaged({ apiKeyName: value })
+  }
+})
+const setupDatabaseHost = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.host,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ database: { host: value } })
+  }
+})
+const setupDatabasePort = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.port,
+  set: (value: number) => {
+    void sub2ApiStore.setDesktopSetup({ database: { port: value } })
+  }
+})
+const setupDatabaseUser = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.user,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ database: { user: value } })
+  }
+})
+const setupDatabasePassword = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.password,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ database: { password: value } })
+  }
+})
+const setupDatabaseName = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.dbname,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ database: { dbname: value } })
+  }
+})
+const setupDatabaseSslMode = computed({
+  get: () => sub2ApiStore.config.desktopSetup.database.sslmode,
+  set: (value: 'disable' | 'require' | 'verify-ca' | 'verify-full') => {
+    void sub2ApiStore.setDesktopSetup({ database: { sslmode: value } })
+  }
+})
+const setupRedisHost = computed({
+  get: () => sub2ApiStore.config.desktopSetup.redis.host,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ redis: { host: value } })
+  }
+})
+const setupRedisPort = computed({
+  get: () => sub2ApiStore.config.desktopSetup.redis.port,
+  set: (value: number) => {
+    void sub2ApiStore.setDesktopSetup({ redis: { port: value } })
+  }
+})
+const setupRedisPassword = computed({
+  get: () => sub2ApiStore.config.desktopSetup.redis.password,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ redis: { password: value } })
+  }
+})
+const setupRedisDb = computed({
+  get: () => sub2ApiStore.config.desktopSetup.redis.db,
+  set: (value: number) => {
+    void sub2ApiStore.setDesktopSetup({ redis: { db: value } })
+  }
+})
+const setupRedisEnableTls = computed({
+  get: () => sub2ApiStore.config.desktopSetup.redis.enableTls,
+  set: (value: boolean) => {
+    void sub2ApiStore.setDesktopSetup({ redis: { enableTls: value } })
+  }
+})
+const setupAdminEmail = computed({
+  get: () => sub2ApiStore.config.desktopSetup.admin.email,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ admin: { email: value } })
+  }
+})
+const setupAdminPassword = computed({
+  get: () => sub2ApiStore.config.desktopSetup.admin.password,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ admin: { password: value } })
+  }
+})
+const setupTimezone = computed({
+  get: () => sub2ApiStore.config.desktopSetup.timezone,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopSetup({ timezone: value })
+  }
+})
+const desktopAutoStart = computed(() => sub2ApiStore.config.desktopRuntime.autoStart)
 const activeBaseUrl = computed(() => sub2ApiStore.activeBaseUrl)
 const activeCatalog = computed(() => sub2ApiStore.modelRegistry[activeMode.value])
 const activeModels = computed(() => sub2ApiStore.getModelsForMode(activeMode.value))
@@ -263,6 +878,84 @@ const activeChecks = computed(() => sub2ApiStore.getChecksForMode(activeMode.val
 const preferredModel = computed(() => getSub2ApiPreferredModel(sub2ApiStore.config, activeMode.value))
 const currentAiMode = computed(() => resolveSub2ApiMode(aiStore.config.connectionTemplate))
 const currentAiModeLabel = computed(() => currentAiMode.value ? SUB2API_MODE_PRESETS[currentAiMode.value].title : '未绑定 Sub2API')
+const syncingDesktopAccess = ref(false)
+const canApplyToAI = computed(() => {
+  if (!desktopModeEnabled.value) {
+    return sub2ApiStore.configured
+  }
+
+  return !sub2ApiStore.runtimeBusy && runtimeState.value.status !== 'missing-binary'
+})
+const gatewayModeLabel = computed(() => {
+  if (!desktopModeEnabled.value) {
+    return '外部网关'
+  }
+
+  return '本地桌面网关'
+})
+const runtimeStatusLabel = computed(() => {
+  switch (runtimeState.value.status) {
+    case 'running':
+      return runtimeState.value.healthy ? '运行中' : '已启动，等待健康检查'
+    case 'starting':
+      return '启动中'
+    case 'stopping':
+      return '停止中'
+    case 'error':
+      return '启动异常'
+    case 'unavailable':
+      return '当前模式不可用'
+    case 'missing-binary':
+      return '缺少二进制'
+    default:
+      return '未启动'
+  }
+})
+const runtimeHealthLabel = computed(() => runtimeState.value.healthy ? '健康检查通过' : runtimeState.value.healthMessage || '等待启动')
+const runtimeLogPreviewText = computed(() => runtimeState.value.logs.slice(-12).join('\n'))
+const canStopRuntime = computed(() => runtimeState.value.status === 'running' || runtimeState.value.status === 'starting')
+const startRuntimeLabel = computed(() => runtimeState.value.status === 'missing-binary' ? '补齐二进制后启动' : '启动本地网关')
+const setupStatusLabel = computed(() => {
+  if (!setupDiagnostics.value.checkedAt) {
+    return '未检查'
+  }
+
+  if (setupStatus.value.needsSetup === true) {
+    return '等待初始化'
+  }
+
+  if (setupStatus.value.needsSetup === false) {
+    return '已完成初始化'
+  }
+
+  return setupStatus.value.reachable ? '已连接' : '不可达'
+})
+const setupLastCheckedLabel = computed(() => setupDiagnostics.value.checkedAt ? formatTimestamp(setupDiagnostics.value.checkedAt) : '未检查')
+const inspectSetupLabel = computed(() => {
+  if (sub2ApiStore.setupAction === 'inspect') {
+    return '诊断中...'
+  }
+
+  return runtimeState.value.status === 'running' ? '刷新诊断' : '启动并诊断'
+})
+const testSetupDatabaseLabel = computed(() => sub2ApiStore.setupAction === 'test-db' ? '测试中...' : '测试 PostgreSQL')
+const testSetupRedisLabel = computed(() => sub2ApiStore.setupAction === 'test-redis' ? '测试中...' : '测试 Redis')
+const installSetupLabel = computed(() => sub2ApiStore.setupAction === 'install' ? '初始化中...' : '一键初始化')
+const canTestSetupDatabase = computed(() => Boolean(setupDatabaseHost.value.trim()) && Boolean(setupDatabaseUser.value.trim()) && Boolean(setupDatabaseName.value.trim()) && !setupBusy.value)
+const canTestSetupRedis = computed(() => Boolean(setupRedisHost.value.trim()) && !setupBusy.value)
+const canInstallSetup = computed(() => !setupBusy.value && !sub2ApiStore.runtimeBusy && !setupBlockingIssue.value && setupStatus.value.needsSetup !== false)
+const setupConfigPreview = computed(() => createSub2ApiSetupConfigPreview(sub2ApiStore.config.desktopRuntime, sub2ApiStore.config.desktopSetup))
+const managedApiKeyStatusLabel = computed(() => {
+  if (sub2ApiStore.config.apiKey.trim()) {
+    return '已同步到工作台'
+  }
+
+  if (runtimeState.value.managedApiKeyDetected) {
+    return '已识别，等待同步'
+  }
+
+  return setupStatus.value.needsSetup === false ? '等待识别' : '完成初始化后可自动识别'
+})
 const modelStatusLabel = computed(() => {
   if (sub2ApiStore.loadingMode === activeMode.value) {
     return '模型目录同步中'
@@ -291,6 +984,62 @@ const checksSummary = computed(() => {
   const failureCount = activeChecks.value.filter(item => item.state === 'error').length
   return `已完成 ${activeChecks.value.length} 项检查：成功 ${successCount} 项，失败 ${failureCount} 项。`
 })
+const totalCachedModelCount = computed(() => modeOptions.reduce((count, mode) => count + sub2ApiStore.getModelsForMode(mode.value).length, 0))
+const runtimeLogLineCount = computed(() => runtimeState.value.logs.length)
+const activeCheckSuccessCount = computed(() => activeChecks.value.filter(item => item.state === 'success').length)
+const activeCheckFailureCount = computed(() => activeChecks.value.filter(item => item.state === 'error').length)
+const activeCheckSummaryLabel = computed(() => {
+  if (activeChecks.value.length === 0) {
+    return '未检查'
+  }
+
+  return `${activeCheckSuccessCount.value}/${activeChecks.value.length} 通过`
+})
+const runtimeUptimeLabel = computed(() => {
+  if (!runtimeState.value.startedAt) {
+    return '未启动'
+  }
+
+  return formatDuration(Date.now() - runtimeState.value.startedAt)
+})
+const desktopFlowSummary = computed(() => {
+  if (runtimeState.value.status === 'missing-binary') {
+    return '当前只差可执行文件。补齐内置二进制或重新指定路径后，就能继续本地网关初始化。'
+  }
+
+  if (runtimeState.value.status === 'running' && sub2ApiStore.config.apiKey.trim()) {
+    return '本地桌面网关已经启动，OpenAgent 专属 API Key 也已同步完成。接下来可以直接进入内嵌后台维护账号池，然后刷新模型目录并同步到 AI 助手。'
+  }
+
+  if (setupStatus.value.needsSetup === false) {
+    return '本地网关已经完成初始化。接下来只需要进入后台登录、维护账号池，再回到这里刷新支持模型并同步到 AI 助手。'
+  }
+
+  return 'OpenAgent 已默认帮你准备本地网关地址、管理员账号和自动接入参数。首次只需要启动本地网关，打开后台完成初始化、登录与账号池接入。'
+})
+const desktopNextActionLabel = computed(() => {
+  if (runtimeState.value.status === 'missing-binary') {
+    return '下一步：先补齐或重新指定 Sub2API 二进制，然后再次启动本地网关。'
+  }
+
+  if (!sub2ApiStore.config.apiKey.trim()) {
+    return '下一步：完成初始化后点击“同步本地专属 Key”，然后就能把本地网关一键同步到 AI 助手。'
+  }
+
+  if (setupStatus.value.needsSetup !== false) {
+    return '下一步：先启动本地网关并打开后台，完成初始化后再登录并加入账号池。'
+  }
+
+  if (activeModels.value.length === 0) {
+    return '下一步：账号池就绪后刷新模型目录，OpenAgent 会缓存当前路由返回的支持模型。'
+  }
+
+  if (currentAiMode.value === null) {
+    return '下一步：点击“同步到 AI 助手”，把当前 Sub2API 路由和默认模型一键带入 AI 设置。'
+  }
+
+  return '当前本地网关、模型目录和 AI 绑定已经就绪，可以直接开始使用。'
+})
 const codexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai')))
 const codexAuthJson = computed(() => createSub2ApiCodexAuthJson(sub2ApiStore.config.apiKey || aiStore.config.apiKey))
 const filteredActiveModels = computed(() => activeModels.value.filter(model => matchesSearchQuery(
@@ -317,6 +1066,19 @@ const showHeroSection = computed(() => !normalizedSearchQuery.value || matchesSe
 const showConfigSection = computed(() => !normalizedSearchQuery.value || matchesSearchQuery(
   normalizedSearchQuery.value,
   '网关',
+  '本地网关',
+  'desktop',
+  '初始化',
+  'PostgreSQL',
+  'Redis',
+  'setup',
+  '诊断',
+  'binary',
+  'config.yaml',
+  'DATA_DIR',
+  'OpenAgentnh',
+  '管理员',
+  '专属 Key',
   'API Key',
   '路由',
   'Claude',
@@ -366,8 +1128,29 @@ function formatTimestamp(value: number) {
   })
 }
 
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(Math.floor(durationMs / 1000), 0)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+
+  if (hours > 0) {
+    return `${hours} 小时 ${minutes} 分钟`
+  }
+
+  if (minutes > 0) {
+    return `${minutes} 分钟`
+  }
+
+  return `${Math.max(totalSeconds, 1)} 秒`
+}
+
 async function setActiveMode(mode: Sub2ApiMode) {
   await sub2ApiStore.setActiveMode(mode)
+}
+
+async function setGatewayMode(mode: 'desktop' | 'external') {
+  await sub2ApiStore.setGatewayMode(mode)
+  showToast('success', mode === 'desktop' ? '已切换到本地桌面网关模式' : '已切换到外部网关模式')
 }
 
 async function setPreferredModel(modelName: string) {
@@ -375,9 +1158,154 @@ async function setPreferredModel(modelName: string) {
   showToast('success', `已将 ${modelName} 设为 ${activePreset.value.title} 默认模型`)
 }
 
+async function chooseDesktopBinary() {
+  const filePath = await sub2ApiStore.chooseBinary(desktopBinaryPath.value || runtimeState.value.resolvedBinaryPath)
+  if (!filePath) {
+    return
+  }
+
+  await sub2ApiStore.setDesktopRuntime({ binaryPath: filePath })
+  showToast('success', '已更新 Sub2API 二进制路径')
+}
+
+async function chooseDesktopDataDir() {
+  if (!window.electronAPI?.chooseDirectory) {
+    showToast('error', '当前环境不支持目录选择')
+    return
+  }
+
+  const selectedPath = await window.electronAPI.chooseDirectory('选择 Sub2API 数据目录', desktopDataDir.value || runtimeState.value.resolvedDataDir || undefined)
+  if (!selectedPath) {
+    return
+  }
+
+  await sub2ApiStore.setDesktopRuntime({ dataDir: selectedPath })
+  showToast('success', '已更新 Sub2API 数据目录')
+}
+
+async function toggleDesktopAutoStart() {
+  await sub2ApiStore.setDesktopRuntime({ autoStart: !desktopAutoStart.value })
+  showToast('success', desktopAutoStart.value ? '已启用 Sub2API 桌面网关自启动' : '已关闭 Sub2API 桌面网关自启动')
+}
+
+async function startDesktopRuntime() {
+  try {
+    await sub2ApiStore.startDesktopRuntime()
+    showToast(runtimeState.value.healthy ? 'success' : 'info', runtimeState.value.healthy ? '本地 Sub2API 网关已启动' : runtimeState.value.healthMessage || '本地网关进程已启动')
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '本地网关启动失败')
+  }
+}
+
+async function stopDesktopRuntime() {
+  try {
+    await sub2ApiStore.stopDesktopRuntime()
+    showToast('success', '本地 Sub2API 网关已停止')
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '本地网关停止失败')
+  }
+}
+
+async function restartDesktopRuntime() {
+  try {
+    await sub2ApiStore.restartDesktopRuntime()
+    showToast(runtimeState.value.healthy ? 'success' : 'info', runtimeState.value.healthy ? '本地 Sub2API 网关已重启' : runtimeState.value.healthMessage || '本地网关已重启')
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '本地网关重启失败')
+  }
+}
+
+async function inspectDesktopSetup() {
+  try {
+    if (runtimeState.value.status !== 'running' && !sub2ApiStore.runtimeBusy) {
+      await sub2ApiStore.startDesktopRuntime()
+    }
+
+    const diagnostics = await sub2ApiStore.inspectDesktopSetup()
+    showToast(diagnostics.status.reachable ? 'success' : 'info', diagnostics.status.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '初始化诊断失败')
+  }
+}
+
+async function testDesktopSetupDatabase() {
+  try {
+    const result = await sub2ApiStore.testDesktopSetupDatabase()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : 'PostgreSQL 测试失败')
+  }
+}
+
+async function testDesktopSetupRedis() {
+  try {
+    const result = await sub2ApiStore.testDesktopSetupRedis()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : 'Redis 测试失败')
+  }
+}
+
+async function installDesktopSetup() {
+  try {
+    const result = await sub2ApiStore.installDesktopSetup()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : 'Sub2API 初始化失败')
+  }
+}
+
+async function syncDesktopAccess() {
+  syncingDesktopAccess.value = true
+
+  try {
+    if (runtimeState.value.status !== 'running' && !sub2ApiStore.runtimeBusy) {
+      await sub2ApiStore.startDesktopRuntime()
+    }
+
+    const access = await sub2ApiStore.ensureDesktopAccess()
+    showToast('success', access.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '同步本地专属 Key 失败')
+  } finally {
+    syncingDesktopAccess.value = false
+  }
+}
+
+function ensureDesktopRuntimeReady(actionLabel: string) {
+  if (!desktopModeEnabled.value) {
+    return true
+  }
+
+  if (runtimeState.value.status === 'running') {
+    return true
+  }
+
+  if (runtimeState.value.status === 'missing-binary' || runtimeState.value.status === 'error' || runtimeState.value.status === 'unavailable') {
+    showToast('error', runtimeState.value.healthMessage || '当前本地网关不可用')
+    return false
+  }
+
+  showToast('error', `当前处于本地桌面模式，请先启动本地网关后再${actionLabel}`)
+  return false
+}
+
 async function applyToAI(mode = activeMode.value) {
+  if (desktopModeEnabled.value && !sub2ApiStore.config.apiKey.trim()) {
+    try {
+      if (runtimeState.value.status !== 'running' && !sub2ApiStore.runtimeBusy) {
+        await sub2ApiStore.startDesktopRuntime()
+      }
+
+      await sub2ApiStore.ensureDesktopAccess()
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : '同步本地专属 Key 失败')
+      return
+    }
+  }
+
   if (!sub2ApiStore.configured) {
-    showToast('error', '请先完成 Sub2API 网关根地址和 API Key 配置')
+    showToast('error', desktopModeEnabled.value ? '请先完成 API Key 配置，必要时补齐本地二进制并启动网关' : '请先完成 Sub2API 网关根地址和 API Key 配置')
     return
   }
 
@@ -387,7 +1315,11 @@ async function applyToAI(mode = activeMode.value) {
 
 async function refreshActiveModels() {
   if (!sub2ApiStore.configured) {
-    showToast('error', '请先完成 Sub2API 网关根地址和 API Key 配置')
+    showToast('error', desktopModeEnabled.value ? '请先完成 API Key 配置，并确保本地网关已经启动' : '请先完成 Sub2API 网关根地址和 API Key 配置')
+    return
+  }
+
+  if (!ensureDesktopRuntimeReady('读取模型目录')) {
     return
   }
 
@@ -406,7 +1338,11 @@ async function refreshActiveModels() {
 
 async function runChecksForActiveMode() {
   if (!sub2ApiStore.configured) {
-    showToast('error', '请先完成 Sub2API 网关根地址和 API Key 配置')
+    showToast('error', desktopModeEnabled.value ? '请先完成 API Key 配置，并确保本地网关已经启动' : '请先完成 Sub2API 网关根地址和 API Key 配置')
+    return
+  }
+
+  if (!ensureDesktopRuntimeReady('执行核心能力检查')) {
     return
   }
 
@@ -421,7 +1357,7 @@ async function runChecksForActiveMode() {
 
 function openSub2ApiAdmin() {
   if (!sub2ApiStore.adminUrl) {
-    showToast('error', '请先填写 Sub2API 网关根地址')
+    showToast('error', desktopModeEnabled.value ? '请先完成本地网关参数配置' : '请先填写 Sub2API 网关根地址')
     return
   }
 
@@ -436,6 +1372,20 @@ function openSub2ApiAdmin() {
 function openAISettingsPage() {
   void router.push('/ai-settings')
 }
+
+function openSub2ApiConsolePage() {
+  void router.push('/sub2api-console')
+}
+
+onMounted(() => {
+  if (desktopModeEnabled.value) {
+    void sub2ApiStore.inspectDesktopSetup().catch(() => undefined)
+  }
+
+  if (desktopModeEnabled.value && runtimeState.value.status === 'running' && !sub2ApiStore.config.apiKey.trim()) {
+    void sub2ApiStore.ensureDesktopAccess().catch(() => undefined)
+  }
+})
 
 async function copyText(text: string, label: string) {
   try {
@@ -554,6 +1504,46 @@ async function copyText(text: string, label: string) {
   gap: 14px;
 }
 
+.mode-switch-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.mode-switch-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(18, 85, 92, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+  text-align: left;
+  cursor: pointer;
+  transition: transform $transition-fast, border-color $transition-fast, box-shadow $transition-fast;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  small {
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: rgba(18, 85, 92, 0.28);
+    box-shadow: $shadow-card;
+  }
+
+  &.active {
+    border-color: rgba(18, 85, 92, 0.28);
+    background: linear-gradient(135deg, rgba(255, 249, 234, 0.85), rgba(222, 243, 236, 0.82));
+  }
+}
+
 .config-field {
   display: grid;
   gap: 8px;
@@ -567,6 +1557,37 @@ async function copyText(text: string, label: string) {
   small {
     color: var(--text-secondary);
     line-height: 1.7;
+  }
+}
+
+.config-field-span {
+  grid-column: 1 / -1;
+}
+
+.checkbox-field {
+  gap: 10px;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-primary);
+
+  input {
+    width: 16px;
+    height: 16px;
+    accent-color: #12555c;
+  }
+
+  span {
+    font-size: 14px;
+    font-weight: 500;
   }
 }
 
@@ -630,6 +1651,266 @@ async function copyText(text: string, label: string) {
 
 .input-wrap .setting-input {
   padding-right: 42px;
+}
+
+.path-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.desktop-runtime-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: linear-gradient(135deg, rgba(255, 249, 239, 0.76), rgba(241, 249, 246, 0.78));
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.workflow-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 85, 92, 0.12);
+  background: rgba(255, 255, 255, 0.66);
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.8;
+  }
+}
+
+.workflow-card-emphasis {
+  background: linear-gradient(135deg, rgba(255, 249, 234, 0.88), rgba(222, 243, 236, 0.84));
+}
+
+.workflow-step-list {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-step-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: rgba(18, 85, 92, 0.12);
+    color: #12555c;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  strong {
+    display: block;
+    font-size: 14px;
+  }
+
+  small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+}
+
+.workflow-footnote {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.workflow-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-metric-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+
+  span {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  strong {
+    font-size: 16px;
+  }
+}
+
+.desktop-setup-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 85, 92, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.desktop-runtime-head,
+.runtime-log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+}
+
+.runtime-note-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.advanced-fold {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.56);
+
+  summary {
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::after {
+    content: '展开';
+    margin-left: 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  &[open] summary::after {
+    content: '收起';
+  }
+}
+
+.advanced-fold-body {
+  margin-top: 4px;
+}
+
+.setup-issue-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.setup-issue-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+
+  strong {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    font-size: 12px;
+  }
+
+  &.is-error {
+    border-color: rgba(180, 35, 24, 0.16);
+    background: rgba(254, 243, 242, 0.92);
+  }
+
+  &.is-warning {
+    border-color: rgba(176, 107, 10, 0.16);
+    background: rgba(255, 247, 237, 0.9);
+  }
+}
+
+.runtime-note-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.68);
+
+  strong {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+}
+
+.runtime-log-block {
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-log-textarea {
+  min-height: 180px;
+}
+
+.status-chip-button {
+  border: none;
+  cursor: pointer;
 }
 
 .route-grid {
@@ -832,6 +2113,11 @@ async function copyText(text: string, label: string) {
     background: rgba(254, 243, 242, 0.92);
   }
 
+  &.is-warning {
+    border-color: rgba(176, 107, 10, 0.16);
+    background: rgba(255, 247, 237, 0.9);
+  }
+
   &.is-pending {
     border-color: rgba(18, 85, 92, 0.14);
     background: rgba(243, 248, 251, 0.92);
@@ -902,8 +2188,13 @@ async function copyText(text: string, label: string) {
 
 @media (max-width: 1100px) {
   .hero-metrics,
+  .workflow-grid,
+  .workflow-metrics-grid,
   .config-grid,
+  .mode-switch-row,
   .route-grid,
+  .runtime-note-grid,
+  .setup-issue-grid,
   .model-grid {
     grid-template-columns: 1fr;
   }
@@ -912,9 +2203,19 @@ async function copyText(text: string, label: string) {
 @media (max-width: 900px) {
   .page-hero,
   .section-head,
+  .desktop-runtime-head,
+  .runtime-log-head,
   .check-item {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .workflow-step-item {
+    grid-template-columns: 1fr;
+  }
+
+  .path-input-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

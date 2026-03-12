@@ -61,6 +61,18 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
 
 ## 本地开发
 
+### Sub2API 桌面运行时目录
+
+如果你要让 OpenAgent 本机直接作为 Sub2API 网关，请把桌面运行时依赖放在项目内的以下目录。当前方案是 OpenAgent 内嵌二进制运行时，不依赖 Docker 或 Compose：
+
+- build/sub2api-runtime/bin/：放 Sub2API 可执行文件，默认文件名建议为 sub2api.exe
+- build/sub2api-runtime/：放打包时需要一起带走的其他运行时资源
+- 应用数据目录/sub2api-runtime/：运行时生成的 DATA_DIR、.installed、launcher 日志与本地 config.yaml
+
+开发态下，OpenAgent 会优先从 build/sub2api-runtime/bin/sub2api.exe 查找本地网关二进制；打包后会自动复制到 resources/sub2api-runtime/bin/。
+
+如果当前数据目录还没有 config.yaml，首次启动本地网关时会优先进入 Sub2API setup 向导。你可以在应用里的 Sub2API 页面点击“打开后台”完成初始化，后续管理员登录和 OpenAgent 专属 API Key 会继续由桌面端自动接入。
+
 ### 环境要求
 
 - Node.js 20+
@@ -90,6 +102,8 @@ npm run build
 ```bash
 npm run electron:build:clean
 ```
+
+该命令会把 build/sub2api-runtime 目录一并打进桌面包体，供本地 Sub2API 网关模式直接使用。
 
 ### 上传当前版本 GitHub Release 资产
 

@@ -75,28 +75,35 @@
           <div class="sub2api-panel-copy">
             <span class="provider-card-tag">Sub2API</span>
             <strong>内嵌 Sub2API</strong>
-            <p>Sub2API 现在已经作为 OpenAgent 的一级能力接入。这里仍可快速切路由，完整配置、模型目录和 Codex 模板统一放到独立 Sub2API 页面维护。</p>
+            <p>Sub2API 现在不只是外部兼容入口，而是可以由 OpenAgent 本机直接管理的内嵌桌面网关。这里保留快捷切路由，完整运行时、模型目录和 Codex 模板统一放到独立 Sub2API 页面维护。</p>
           </div>
           <div class="sub2api-panel-status">
             <strong>{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '未启用模板' }}</strong>
-            <small>{{ usingSub2ApiTemplate ? aiConnectionHint : '启用后会自动同步协议、Base URL 和推荐模型。' }}</small>
-            <button class="btn btn-secondary btn-sm" @click="openSub2ApiSettingsPage">进入 Sub2API 页面</button>
+            <small>{{ sub2ApiDesktopModeEnabled ? `当前走本地桌面网关，${sub2ApiRuntimeStatusLabel}。` : usingSub2ApiTemplate ? aiConnectionHint : '启用后会自动同步协议、Base URL 和推荐模型。' }}</small>
+            <div class="sub2api-panel-actions">
+              <button class="btn btn-secondary btn-sm" @click="openSub2ApiSettingsPage">进入 Sub2API 页面</button>
+              <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiDesktopModeEnabled" @click="openSub2ApiConsolePage">内嵌后台</button>
+              <button class="btn btn-primary btn-sm" :disabled="!sub2ApiDesktopModeEnabled || detectingSub2ApiAccess" @click="detectLocalSub2ApiAccess">
+                {{ detectingSub2ApiAccess ? '识别中...' : '识别本地网关与专属 Key' }}
+              </button>
+            </div>
           </div>
         </div>
 
         <div class="sub2api-root-row">
           <div class="setting-label">
-            <div class="label-main">网关根地址</div>
-            <div class="label-desc">填写 Sub2API 服务器根地址，不要带 /v1、/messages、/chat/completions 或 /antigravity/v1。</div>
+            <div class="label-main">{{ sub2ApiGatewayInputLocked ? '本地网关地址' : '网关根地址' }}</div>
+            <div class="label-desc">{{ sub2ApiGatewayInputLocked ? '桌面模式下由 Sub2API 页面统一管理主机、端口和运行时；这里仅展示当前本地地址。' : '填写 Sub2API 服务器根地址，不要带 /v1、/messages、/chat/completions 或 /antigravity/v1。' }}</div>
           </div>
           <div class="ai-input-stack">
             <input
               class="setting-input"
               :value="sub2ApiGatewayRoot"
-              :placeholder="SUB2API_GATEWAY_PLACEHOLDER"
-              @input="sub2ApiGatewayRoot = normalizeSub2ApiGatewayRoot(($event.target as HTMLInputElement).value)"
+              :placeholder="sub2ApiGatewayInputLocked ? '由本地桌面网关自动推导' : SUB2API_GATEWAY_PLACEHOLDER"
+              :readonly="sub2ApiGatewayInputLocked"
+              @input="handleSub2ApiGatewayRootInput(($event.target as HTMLInputElement).value)"
             />
-            <span class="field-tip">{{ activeSub2ApiPreset ? activeSub2ApiPreset.routeHint.replace('{gateway}', sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) : '选择下方任一路由后，会自动生成可用的 Base URL。' }}</span>
+            <span class="field-tip">{{ activeSub2ApiPreset ? activeSub2ApiPreset.routeHint.replace('{gateway}', sub2ApiEffectiveGatewayRoot || sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) : '选择下方任一路由后，会自动生成可用的 Base URL。' }}</span>
           </div>
         </div>
 
@@ -111,7 +118,7 @@
             <span class="provider-card-tag">{{ mode.tag }}</span>
             <strong>{{ mode.title }}</strong>
             <small>{{ mode.description }}</small>
-            <span class="sub2api-mode-route">{{ (sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) + mode.routeSuffix }}</span>
+            <span class="sub2api-mode-route">{{ (sub2ApiEffectiveGatewayRoot || sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) + mode.routeSuffix }}</span>
           </button>
         </div>
 
@@ -119,6 +126,7 @@
           <span class="sub2api-route-chip">当前模板：{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '标准直连/自定义' }}</span>
           <span class="sub2api-route-chip">实际 Base URL：{{ aiConfig.baseUrl || '未设置' }}</span>
           <span v-if="sub2ApiResolvedRoute" class="sub2api-route-chip is-accent">当前推导路由：{{ sub2ApiResolvedRoute }}</span>
+          <span v-if="sub2ApiDesktopModeEnabled" class="sub2api-route-chip">本地状态：{{ sub2ApiRuntimeStatusLabel }}</span>
         </div>
 
         <div class="sub2api-tools-grid">
@@ -135,7 +143,7 @@
                 </button>
               </div>
             </div>
-            <span class="field-tip">检查会发送极小请求，用于验证当前 API Key、模型与网关路由是否真的可用。OpenAI 路由会额外验证 Responses，专门检查 Codex 额度路径。</span>
+            <span class="field-tip">检查会发送极小请求，用于验证当前 API Key、模型与网关路由是否真的可用。{{ sub2ApiDesktopModeEnabled ? '桌面模式下请先确保本地网关已经启动；若是首次运行，可以先打开后台完成 setup。' : 'OpenAI 路由会额外验证 Responses，专门检查 Codex 额度路径。' }}</span>
             <div v-if="sub2ApiCheckItems.length" class="sub2api-check-list">
               <div v-for="item in sub2ApiCheckItems" :key="item.id" class="sub2api-check-item" :class="`is-${item.state}`">
                 <div class="sub2api-check-copy">
@@ -245,6 +253,27 @@
           <input class="setting-input" :value="aiConfig.model" :placeholder="aiModelPlaceholder" @change="updateAIConfig('model', ($event.target as HTMLInputElement).value)" />
           <span v-if="aiModelStatusMessage" class="field-tip">{{ aiModelStatusMessage }}</span>
           <span v-if="aiModelLoadError" class="field-tip field-tip-error">{{ aiModelLoadError }}</span>
+          <div v-if="usingSub2ApiTemplate" class="sub2api-model-shortcuts">
+            <div class="sub2api-model-shortcut-actions">
+              <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiPreferredAiModel" @click="usePreferredSub2ApiModel">
+                使用 Sub2API 默认模型
+              </button>
+              <button class="btn btn-secondary btn-sm" :disabled="sub2ApiQuickModels.length === 0" @click="useFirstSub2ApiModel">
+                使用首个可用模型
+              </button>
+            </div>
+            <div v-if="sub2ApiQuickModels.length" class="sub2api-model-chip-row">
+              <button
+                v-for="model in sub2ApiQuickModels"
+                :key="`sub2api-model-${model.id}`"
+                class="sub2api-model-chip"
+                :class="{ active: aiConfig.model === model.name }"
+                @click="applySub2ApiProvidedModel(model.name)"
+              >
+                {{ model.label }}
+              </button>
+            </div>
+          </div>
           <div v-if="selectedAiModelMeta" class="ai-capability-panel">
             <div class="ai-capability-header">
               <strong>{{ selectedAiModelMeta.label }}</strong>
@@ -829,11 +858,33 @@ const activeSub2ApiMode = computed(() => resolveSub2ApiMode(aiConfig.value.conne
 const activeSub2ApiPreset = computed(() => activeSub2ApiMode.value ? SUB2API_MODE_PRESETS[activeSub2ApiMode.value] : null)
 const usingSub2ApiTemplate = computed(() => activeSub2ApiPreset.value !== null)
 const sub2ApiModeOptions = Object.values(SUB2API_MODE_PRESETS)
-const sub2ApiGatewayAdminUrl = computed(() => normalizeSub2ApiGatewayRoot(sub2ApiGatewayRoot.value))
+const sub2ApiDesktopModeEnabled = computed(() => sub2ApiStore.desktopModeEnabled)
+const sub2ApiRuntimeState = computed(() => sub2ApiStore.runtimeState)
+const sub2ApiEffectiveGatewayRoot = computed(() => sub2ApiStore.effectiveGatewayRoot || sub2ApiGatewayRoot.value)
+const sub2ApiGatewayInputLocked = computed(() => sub2ApiDesktopModeEnabled.value)
+const sub2ApiGatewayAdminUrl = computed(() => normalizeSub2ApiGatewayRoot(sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value))
 const sub2ApiOpenAIBaseUrl = computed(() => buildSub2ApiBaseUrl(sub2ApiGatewayAdminUrl.value, 'openai'))
 const sub2ApiResolvedRoute = computed(() => {
   const mode = activeSub2ApiMode.value || 'claude'
-  return buildSub2ApiBaseUrl(sub2ApiGatewayRoot.value, mode)
+  return buildSub2ApiBaseUrl(sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value, mode)
+})
+const sub2ApiRuntimeStatusLabel = computed(() => {
+  switch (sub2ApiRuntimeState.value.status) {
+    case 'running':
+      return sub2ApiRuntimeState.value.healthy ? '本地网关运行中' : '本地服务已启动'
+    case 'starting':
+      return '本地网关启动中'
+    case 'stopping':
+      return '本地网关停止中'
+    case 'error':
+      return '本地网关异常'
+    case 'unavailable':
+      return '本地网关不可用'
+    case 'missing-binary':
+      return '缺少本地二进制'
+    default:
+      return '本地网关未启动'
+  }
 })
 const displayedAiModels = computed(() => {
   if (!usingSub2ApiTemplate.value) {
@@ -844,6 +895,8 @@ const displayedAiModels = computed(() => {
   const cachedModels = sub2ApiStore.getModelsForMode(mode)
   return cachedModels.length > 0 ? cachedModels : availableAiModels.value
 })
+const sub2ApiQuickModels = computed(() => displayedAiModels.value.slice(0, 6))
+const sub2ApiPreferredAiModel = computed(() => getSub2ApiPreferredModel(sub2ApiStore.config, activeSub2ApiMode.value || sub2ApiStore.config.activeMode))
 const sub2ApiCodexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai')))
 const sub2ApiCodexAuthJson = computed(() => createSub2ApiCodexAuthJson(aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey.trim()))
 const sub2ApiCheckSummary = computed(() => {
@@ -859,6 +912,7 @@ const sub2ApiCheckSummary = computed(() => {
   const failureCount = sub2ApiCheckItems.value.filter(item => item.state === 'error').length
   return `已完成 ${sub2ApiCheckItems.value.length} 项检查：成功 ${successCount} 项，失败 ${failureCount} 项。`
 })
+const detectingSub2ApiAccess = ref(false)
 const aiProviderTitle = computed(() => {
   if (activeSub2ApiPreset.value) {
     return `${aiProtocolPreset.value.label} · ${activeSub2ApiPreset.value.title}`
@@ -1232,6 +1286,11 @@ const showManagedResourcesSection = computed(() => !normalizedSearchQuery.value 
 const hasVisibleSection = computed(() => showOverviewSection.value || showRuntimeSection.value || showTTSSection.value || showManagedResourcesSection.value)
 
 watch(() => [aiConfig.value.connectionTemplate, aiConfig.value.baseUrl], () => {
+  if (sub2ApiStore.desktopModeEnabled) {
+    sub2ApiGatewayRoot.value = sub2ApiStore.effectiveGatewayRoot
+    return
+  }
+
   if (aiConfig.value.connectionTemplate === 'standard') {
     if (sub2ApiStore.config.gatewayRoot.trim()) {
       sub2ApiGatewayRoot.value = sub2ApiStore.config.gatewayRoot
@@ -1242,9 +1301,14 @@ watch(() => [aiConfig.value.connectionTemplate, aiConfig.value.baseUrl], () => {
   sub2ApiGatewayRoot.value = normalizeSub2ApiGatewayRoot(aiConfig.value.baseUrl)
 }, { immediate: true })
 
-watch(() => sub2ApiStore.config.gatewayRoot, (nextGatewayRoot) => {
+watch(() => [sub2ApiStore.config.gatewayRoot, sub2ApiStore.effectiveGatewayRoot, sub2ApiStore.desktopModeEnabled], ([nextGatewayRoot, nextEffectiveGatewayRoot, desktopMode]) => {
+  if (desktopMode) {
+    sub2ApiGatewayRoot.value = nextEffectiveGatewayRoot as string
+    return
+  }
+
   if (aiConfig.value.connectionTemplate === 'standard') {
-    sub2ApiGatewayRoot.value = nextGatewayRoot
+    sub2ApiGatewayRoot.value = nextGatewayRoot as string
   }
 }, { immediate: true })
 
@@ -1261,11 +1325,36 @@ watch(
 )
 
 watch(sub2ApiGatewayRoot, (nextGatewayRoot) => {
+  if (sub2ApiStore.desktopModeEnabled) {
+    return
+  }
+
   const normalizedRoot = normalizeSub2ApiGatewayRoot(nextGatewayRoot)
   if (normalizedRoot !== sub2ApiStore.config.gatewayRoot) {
     void sub2ApiStore.setGatewayRoot(normalizedRoot)
   }
 })
+
+function handleSub2ApiGatewayRootInput(value: string) {
+  if (sub2ApiGatewayInputLocked.value) {
+    return
+  }
+
+  sub2ApiGatewayRoot.value = normalizeSub2ApiGatewayRoot(value)
+}
+
+function ensureSub2ApiDesktopRuntimeReady(actionLabel: string) {
+  if (!sub2ApiStore.desktopModeEnabled) {
+    return true
+  }
+
+  if (sub2ApiStore.runtimeState.status === 'running') {
+    return true
+  }
+
+  showToast('error', `当前走本地桌面网关，请先在 Sub2API 页面启动本地网关后再${actionLabel}`)
+  return false
+}
 
 function updateAIProtocol(protocol: AIProtocol) {
   updateAIConfig('protocol', protocol)
@@ -1308,7 +1397,7 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
       aiModelStatus.value = ''
       availableAiModels.value = []
 
-      if (aiConfig.value.connectionTemplate !== 'standard') {
+      if (aiConfig.value.connectionTemplate !== 'standard' && !sub2ApiStore.desktopModeEnabled) {
         void sub2ApiStore.setGatewayRoot(String(value || ''))
       }
     }
@@ -1329,9 +1418,9 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
 }
 
 async function applySub2ApiMode(mode: Sub2ApiMode) {
-  const normalizedRoot = normalizeSub2ApiGatewayRoot(sub2ApiGatewayRoot.value)
+  const normalizedRoot = normalizeSub2ApiGatewayRoot(sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value)
   if (!normalizedRoot) {
-    showToast('error', '请先填写 Sub2API 网关根地址')
+    showToast('error', sub2ApiStore.desktopModeEnabled ? '请先在 Sub2API 页面完成本地网关配置' : '请先填写 Sub2API 网关根地址')
     return
   }
 
@@ -1340,7 +1429,7 @@ async function applySub2ApiMode(mode: Sub2ApiMode) {
   const nextApiKey = aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey.trim()
   const nextConfig = {
     ...sub2ApiStore.config,
-    gatewayRoot: normalizedRoot,
+    gatewayRoot: sub2ApiStore.desktopModeEnabled ? sub2ApiStore.config.gatewayRoot : normalizedRoot,
     apiKey: nextApiKey,
     activeMode: mode
   }
@@ -1354,7 +1443,7 @@ async function applySub2ApiMode(mode: Sub2ApiMode) {
   aiModelStatus.value = `已切换到 ${preset.title}，可以直接读取当前路由模型。`
 
   await sub2ApiStore.updateConfig({
-    gatewayRoot: normalizedRoot,
+    ...(sub2ApiStore.desktopModeEnabled ? {} : { gatewayRoot: normalizedRoot }),
     apiKey: nextApiKey,
     activeMode: mode,
     preferredModels: {
@@ -1372,6 +1461,31 @@ async function applySub2ApiMode(mode: Sub2ApiMode) {
   })
 }
 
+async function applySub2ApiProvidedModel(modelName: string) {
+  const nextModel = modelName.trim()
+  if (!nextModel) {
+    return
+  }
+
+  const mode = activeSub2ApiMode.value || sub2ApiStore.config.activeMode
+  await sub2ApiStore.setPreferredModel(mode, nextModel)
+  await aiStore.updateConfig({ model: nextModel })
+  aiModelLoadError.value = ''
+  aiModelStatus.value = `已采用 Sub2API 提供的模型 ${nextModel}。保存后会作为当前路由的默认模型继续使用。`
+}
+
+async function usePreferredSub2ApiModel() {
+  await applySub2ApiProvidedModel(sub2ApiPreferredAiModel.value)
+}
+
+async function useFirstSub2ApiModel() {
+  if (!sub2ApiQuickModels.value[0]) {
+    return
+  }
+
+  await applySub2ApiProvidedModel(sub2ApiQuickModels.value[0].name)
+}
+
 async function copyText(text: string, label: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -1384,6 +1498,35 @@ async function copyText(text: string, label: string) {
 
 function openSub2ApiSettingsPage() {
   void router.push('/sub2api')
+}
+
+function openSub2ApiConsolePage() {
+  void router.push('/sub2api-console')
+}
+
+async function detectLocalSub2ApiAccess() {
+  if (!sub2ApiDesktopModeEnabled.value) {
+    showToast('error', '请先在 Sub2API 页面切到本地桌面网关模式')
+    return
+  }
+
+  detectingSub2ApiAccess.value = true
+
+  try {
+    if (sub2ApiRuntimeState.value.status !== 'running' && !sub2ApiStore.runtimeBusy) {
+      await sub2ApiStore.startDesktopRuntime()
+    }
+
+    const access = await sub2ApiStore.ensureDesktopAccess()
+    const nextMode = activeSub2ApiMode.value || sub2ApiStore.config.activeMode
+    await aiStore.updateConfig({ apiKey: access.apiKey })
+    await applySub2ApiMode(nextMode)
+    showToast('success', access.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '识别本地 Sub2API 失败')
+  } finally {
+    detectingSub2ApiAccess.value = false
+  }
 }
 
 function openSub2ApiAdmin() {
@@ -1403,7 +1546,11 @@ function openSub2ApiAdmin() {
 async function runSub2ApiCapabilityCheck() {
   const gatewayRoot = sub2ApiGatewayAdminUrl.value
   if (!gatewayRoot) {
-    showToast('error', '请先填写 Sub2API 网关根地址')
+    showToast('error', sub2ApiStore.desktopModeEnabled ? '请先在 Sub2API 页面完成本地网关配置' : '请先填写 Sub2API 网关根地址')
+    return
+  }
+
+  if (!ensureSub2ApiDesktopRuntimeReady('执行能力检查')) {
     return
   }
 
@@ -1418,7 +1565,7 @@ async function runSub2ApiCapabilityCheck() {
 
   try {
     await sub2ApiStore.updateConfig({
-      gatewayRoot,
+      ...(sub2ApiStore.desktopModeEnabled ? {} : { gatewayRoot }),
       apiKey: aiConfig.value.apiKey.trim(),
       activeMode: currentMode,
       preferredModels: {
@@ -1499,6 +1646,10 @@ async function refreshAIModels() {
     return
   }
 
+  if (usingSub2ApiTemplate.value && !ensureSub2ApiDesktopRuntimeReady('读取模型目录')) {
+    return
+  }
+
   loadingAiModels.value = true
   aiModelLoadError.value = ''
   aiModelStatus.value = ''
@@ -1510,7 +1661,7 @@ async function refreshAIModels() {
     availableAiModels.value = models
     if (usingSub2ApiTemplate.value) {
       await sub2ApiStore.updateConfig({
-        gatewayRoot: sub2ApiGatewayRoot.value,
+        ...(sub2ApiStore.desktopModeEnabled ? {} : { gatewayRoot: sub2ApiGatewayRoot.value }),
         apiKey: aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey,
         activeMode: activeSub2ApiMode.value || sub2ApiStore.config.activeMode,
         preferredModels: {
@@ -2379,6 +2530,53 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.sub2api-model-shortcuts {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.sub2api-model-shortcut-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub2api-model-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub2api-model-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(18, 85, 92, 0.14);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color $transition-fast, transform $transition-fast, box-shadow $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: rgba(18, 85, 92, 0.24);
+    box-shadow: $shadow-card;
+  }
+
+  &.active {
+    border-color: rgba(18, 85, 92, 0.28);
+    background: rgba(221, 243, 236, 0.88);
+    color: #12555c;
+  }
+}
+
 .field-tip {
   color: var(--text-secondary);
   font-size: 12px;
@@ -2594,6 +2792,12 @@ onBeforeUnmount(() => {
   border-radius: 16px;
   border: 1px solid rgba(18, 85, 92, 0.12);
   background: rgba(255, 255, 255, 0.58);
+}
+
+.sub2api-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .sub2api-root-row {

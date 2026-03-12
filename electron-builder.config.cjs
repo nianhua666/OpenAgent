@@ -22,6 +22,10 @@ module.exports = {
     {
       from: 'build/live2d-models',
       to: 'live2d-models'
+    },
+    {
+      from: 'build/sub2api-runtime',
+      to: 'sub2api-runtime'
     }
   ],
   artifactName: '${productName}-${version}-${arch}-${target}.${ext}',

@@ -76,6 +76,12 @@ const routes = [
     meta: { title: 'Sub2API' }
   },
   {
+    path: '/sub2api-console',
+    name: 'Sub2ApiConsole',
+    component: () => import('@/views/Sub2ApiConsole.vue'),
+    meta: { title: 'Sub2API 后台' }
+  },
+  {
     path: '/ai',
     name: 'AIAssistant',
     component: () => import('@/views/AIAssistant.vue'),

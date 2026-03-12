@@ -184,6 +184,130 @@ export type AIProtocol = 'openai' | 'anthropic' | 'ollama-local' | 'ollama-cloud
 
 export type AIGatewayTemplate = 'standard' | 'sub2api-openai' | 'sub2api-claude' | 'sub2api-antigravity'
 
+export type Sub2ApiGatewayMode = 'external' | 'desktop'
+
+export type Sub2ApiDesktopRunMode = 'simple' | 'standard'
+
+export type Sub2ApiRuntimeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'missing-binary' | 'unavailable'
+
+export interface Sub2ApiDesktopRuntimeConfig {
+  autoStart: boolean
+  host: string
+  port: number
+  runMode: Sub2ApiDesktopRunMode
+  binaryPath: string
+  dataDir: string
+  configPath: string
+  logLevel: 'debug' | 'info' | 'warn' | 'error'
+}
+
+export interface Sub2ApiDesktopManagedConfig {
+  sharedPassword: string
+  adminEmail: string
+  apiKeyName: string
+}
+
+export interface Sub2ApiRuntimeState {
+  status: Sub2ApiRuntimeStatus
+  mode: Sub2ApiGatewayMode
+  host: string
+  port: number
+  baseUrl: string
+  adminUrl: string
+  pid: number | null
+  startedAt: number
+  healthy: boolean
+  healthEndpoint: string
+  healthMessage: string
+  resolvedBinaryPath: string
+  binaryExists: boolean
+  usingBundledBinary: boolean
+  resolvedDataDir: string
+  resolvedConfigPath: string
+  configExists: boolean
+  logFilePath: string
+  dependencyRoot: string
+  bundledBinaryPath: string
+  lastError: string
+  lastExitCode: number | null
+  managedAdminEmail: string
+  managedApiKeyName: string
+  managedApiKeyDetected: boolean
+  logs: string[]
+}
+
+export interface Sub2ApiSetupDatabaseConfig {
+  host: string
+  port: number
+  user: string
+  password: string
+  dbname: string
+  sslmode: 'disable' | 'require' | 'verify-ca' | 'verify-full'
+}
+
+export interface Sub2ApiSetupRedisConfig {
+  host: string
+  port: number
+  password: string
+  db: number
+  enableTls: boolean
+}
+
+export interface Sub2ApiSetupAdminConfig {
+  email: string
+  password: string
+}
+
+export interface Sub2ApiDesktopSetupProfile {
+  database: Sub2ApiSetupDatabaseConfig
+  redis: Sub2ApiSetupRedisConfig
+  admin: Sub2ApiSetupAdminConfig
+  timezone: string
+}
+
+export type Sub2ApiSetupDiagnosticLevel = 'success' | 'info' | 'warning' | 'error'
+
+export interface Sub2ApiSetupDiagnosticItem {
+  id: string
+  label: string
+  level: Sub2ApiSetupDiagnosticLevel
+  message: string
+}
+
+export interface Sub2ApiSetupStatus {
+  reachable: boolean
+  needsSetup: boolean | null
+  step: string
+  endpoint: string
+  statusCode: number | null
+  message: string
+}
+
+export interface Sub2ApiSetupDiagnostics {
+  checkedAt: number
+  status: Sub2ApiSetupStatus
+  items: Sub2ApiSetupDiagnosticItem[]
+}
+
+export interface Sub2ApiSetupActionResult {
+  success: boolean
+  code: number
+  message: string
+  details: string
+  data?: unknown
+}
+
+export interface Sub2ApiDesktopAccessResult {
+  success: boolean
+  gatewayRoot: string
+  adminUrl: string
+  apiKey: string
+  apiKeyName: string
+  adminEmail: string
+  message: string
+  runtimeState: Sub2ApiRuntimeState
+}
+
 export interface AIProviderModel {
   id: string
   name: string

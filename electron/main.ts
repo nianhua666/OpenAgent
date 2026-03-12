@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, net, screen, shell } from 'electron'
-import type { MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
+import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { registerAzureTTSHandlers } from './azureSpeech'
@@ -9,7 +9,8 @@ import { registerRuntimeAssetProtocol } from './runtimeAssets'
 import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSystemSpeech } from './systemTts'
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
-import type { TTSEngine, WindowShapeRect } from '../src/types'
+import { createSub2ApiDesktopManager } from './sub2apiDesktop'
+import type { Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, TTSEngine, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -108,6 +109,15 @@ const DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE: RuntimeDataStoragePreference = {
   mode: 'auto',
   customUserDataPath: ''
 }
+const SUB2API_CONFIG_STORE_KEY = 'sub2api_config'
+const SUB2API_RUNTIME_STATE_STORE_KEY = 'sub2api_runtime_state'
+
+const sub2ApiRuntimeManager = createSub2ApiDesktopManager({
+  getDataDir: () => getDataDir(),
+  onStateChange: (runtimeState) => {
+    broadcastStoreChanged(SUB2API_RUNTIME_STATE_STORE_KEY, runtimeState)
+  }
+})
 
 function normalizeDirectoryPath(targetPath: string | null | undefined) {
   const normalized = typeof targetPath === 'string' ? targetPath.trim() : ''
@@ -525,6 +535,19 @@ function getDataFilePath(key: string) {
   return join(getDataDir(), `${getSafeKey(key)}.json`)
 }
 
+function readJsonFile<T>(key: string) {
+  const filePath = getDataFilePath(key)
+  if (!existsSync(filePath)) {
+    return null
+  }
+
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8')) as T
+  } catch {
+    return null
+  }
+}
+
 function ensureDataDir() {
   ensureDirectoryExists(getDataDir())
 }
@@ -604,6 +627,87 @@ function loadSettingsFromDisk() {
 function writeJsonFile(key: string, data: unknown) {
   ensureDataDir()
   writeFileSync(getDataFilePath(key), JSON.stringify(data, null, 2), 'utf-8')
+}
+
+function loadPersistedSub2ApiRuntimePreference() {
+  const saved = readJsonFile<{
+    gatewayMode?: string
+    desktopRuntime?: Partial<Sub2ApiDesktopRuntimeConfig>
+    desktopManaged?: Partial<Sub2ApiDesktopManagedConfig>
+  }>(SUB2API_CONFIG_STORE_KEY)
+  return {
+    gatewayMode: saved?.gatewayMode === 'desktop' ? 'desktop' : 'external',
+    desktopRuntime: saved?.desktopRuntime && typeof saved.desktopRuntime === 'object' ? saved.desktopRuntime : undefined,
+    desktopManaged: saved?.desktopManaged && typeof saved.desktopManaged === 'object' ? saved.desktopManaged : undefined
+  }
+}
+
+function sanitizeSub2ApiRuntimePayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined
+  }
+
+  return payload as Partial<Sub2ApiDesktopRuntimeConfig>
+}
+
+function sanitizeSub2ApiSetupDatabasePayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined
+  }
+
+  return payload as Partial<Sub2ApiSetupDatabaseConfig>
+}
+
+function sanitizeSub2ApiSetupRedisPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined
+  }
+
+  return payload as Partial<Sub2ApiSetupRedisConfig>
+}
+
+function sanitizeSub2ApiSetupProfilePayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined
+  }
+
+  return payload as Partial<Sub2ApiDesktopSetupProfile>
+}
+
+function sanitizeSub2ApiManagedPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return undefined
+  }
+
+  return payload as Partial<Sub2ApiDesktopManagedConfig>
+}
+
+function sanitizeDialogFilters(filters: unknown) {
+  if (!Array.isArray(filters)) {
+    return undefined
+  }
+
+  const sanitizedFilters = filters
+    .map(item => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+
+      const candidate = item as Partial<FileFilter>
+      const name = typeof candidate.name === 'string' ? candidate.name.trim() : ''
+      const extensions = Array.isArray(candidate.extensions)
+        ? candidate.extensions.map(ext => String(ext).replace(/^\./, '').trim()).filter(Boolean)
+        : []
+
+      if (!name || extensions.length === 0) {
+        return null
+      }
+
+      return { name, extensions } satisfies FileFilter
+    })
+    .filter((item): item is FileFilter => Boolean(item))
+
+  return sanitizedFilters.length > 0 ? sanitizedFilters : undefined
 }
 
 function resolveImageMimeType(filePath: string) {
@@ -1570,6 +1674,7 @@ app.on('second-instance', () => {
 app.on('before-quit', () => {
   isQuittingApp = true
   stopLive2DCursorBroadcast()
+  void sub2ApiRuntimeManager.shutdown()
 })
 
 app.whenReady().then(() => {
@@ -1603,6 +1708,12 @@ app.whenReady().then(() => {
   registerLive2DHandlers(() => mainWindow)
   applyLaunchAtLoginSetting()
   syncLive2DWindowVisibility()
+
+  const persistedSub2ApiPreference = loadPersistedSub2ApiRuntimePreference()
+  void sub2ApiRuntimeManager.getRuntimeState(persistedSub2ApiPreference.desktopRuntime, persistedSub2ApiPreference.desktopManaged)
+  if (persistedSub2ApiPreference.gatewayMode === 'desktop' && persistedSub2ApiPreference.desktopRuntime?.autoStart) {
+    void sub2ApiRuntimeManager.startRuntime(persistedSub2ApiPreference.desktopRuntime, persistedSub2ApiPreference.desktopManaged)
+  }
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
   ipcMain.on('window:maximize', () => {
@@ -1728,6 +1839,25 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
+  ipcMain.handle('dialog:chooseFile', async (_event, payload?: { title?: string; defaultPath?: string; filters?: FileFilter[] }) => {
+    const ownerWindow = getOwnerWindow() ?? undefined
+    const dialogOptions: OpenDialogOptions = {
+      title: typeof payload?.title === 'string' && payload.title.trim() ? payload.title.trim() : '选择文件',
+      defaultPath: typeof payload?.defaultPath === 'string' && payload.defaultPath.trim() ? payload.defaultPath.trim() : undefined,
+      filters: sanitizeDialogFilters(payload?.filters),
+      properties: ['openFile']
+    }
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    return result.filePaths[0]
+  })
+
   ipcMain.handle('file:readImageAsDataUrl', (_event, filePath: unknown) => {
     if (typeof filePath !== 'string' || !filePath.trim()) {
       return null
@@ -1763,6 +1893,52 @@ app.whenReady().then(() => {
   ipcMain.handle('app:switchRuntimeDataStorage', (_event, payload?: { mode?: RuntimeDataStorageMode; targetPath?: string }) => {
     const nextMode = payload?.mode === 'custom' ? 'custom' : 'auto'
     return switchRuntimeDataStorage(nextMode, payload?.targetPath)
+  })
+  ipcMain.handle('sub2api:getRuntimeState', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.getRuntimeState(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:startRuntime', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.startRuntime(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:stopRuntime', () => {
+    return sub2ApiRuntimeManager.stopRuntime()
+  })
+  ipcMain.handle('sub2api:restartRuntime', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.restartRuntime(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:inspectSetup', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.inspectSetup(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:testSetupDatabase', (_event, payload?: Partial<Sub2ApiSetupDatabaseConfig>, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>) => {
+    const sanitizedPayload = sanitizeSub2ApiSetupDatabasePayload(payload)
+    if (!sanitizedPayload) {
+      throw new Error('PostgreSQL 测试参数无效')
+    }
+
+    return sub2ApiRuntimeManager.testSetupDatabase(sanitizedPayload, sanitizeSub2ApiRuntimePayload(runtimePayload))
+  })
+  ipcMain.handle('sub2api:testSetupRedis', (_event, payload?: Partial<Sub2ApiSetupRedisConfig>, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>) => {
+    const sanitizedPayload = sanitizeSub2ApiSetupRedisPayload(payload)
+    if (!sanitizedPayload) {
+      throw new Error('Redis 测试参数无效')
+    }
+
+    return sub2ApiRuntimeManager.testSetupRedis(sanitizedPayload, sanitizeSub2ApiRuntimePayload(runtimePayload))
+  })
+  ipcMain.handle('sub2api:installSetup', (_event, payload?: Partial<Sub2ApiDesktopSetupProfile>, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    const sanitizedPayload = sanitizeSub2ApiSetupProfilePayload(payload)
+    if (!sanitizedPayload) {
+      throw new Error('Sub2API 初始化参数无效')
+    }
+
+    return sub2ApiRuntimeManager.installSetup(sanitizedPayload, sanitizeSub2ApiRuntimePayload(runtimePayload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:ensureDesktopAccess', (_event, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>, currentApiKey?: string) => {
+    return sub2ApiRuntimeManager.ensureDesktopAccess(
+      sanitizeSub2ApiRuntimePayload(runtimePayload),
+      sanitizeSub2ApiManagedPayload(managedPayload),
+      typeof currentApiKey === 'string' ? currentApiKey : undefined
+    )
   })
 
   // ==================== MCP 工具 IPC 处理 ====================

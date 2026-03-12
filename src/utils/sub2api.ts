@@ -1,4 +1,16 @@
-import type { AIConfig, AIGatewayTemplate, AIProtocol, AIProviderModel } from '@/types'
+import type {
+  AIConfig,
+  AIGatewayTemplate,
+  AIProtocol,
+  AIProviderModel,
+  Sub2ApiDesktopManagedConfig,
+  Sub2ApiDesktopRuntimeConfig,
+  Sub2ApiDesktopSetupProfile,
+  Sub2ApiGatewayMode,
+  Sub2ApiRuntimeState,
+  Sub2ApiSetupDiagnosticItem,
+  Sub2ApiSetupDiagnostics
+} from '@/types'
 import { fetchAvailableModels } from '@/utils/ai'
 
 export type Sub2ApiMode = 'claude' | 'openai' | 'antigravity'
@@ -27,10 +39,14 @@ export type Sub2ApiModePreset = {
 }
 
 export type Sub2ApiStoredConfig = {
+  gatewayMode: Sub2ApiGatewayMode
   gatewayRoot: string
   apiKey: string
   activeMode: Sub2ApiMode
   preferredModels: Record<Sub2ApiMode, string>
+  desktopRuntime: Sub2ApiDesktopRuntimeConfig
+  desktopManaged: Sub2ApiDesktopManagedConfig
+  desktopSetup: Sub2ApiDesktopSetupProfile
 }
 
 export type Sub2ApiModelCatalog = {
@@ -44,6 +60,12 @@ export type Sub2ApiModelRegistry = Record<Sub2ApiMode, Sub2ApiModelCatalog>
 export type Sub2ApiCheckRegistry = Record<Sub2ApiMode, Sub2ApiCheckItem[]>
 
 export const SUB2API_GATEWAY_PLACEHOLDER = 'https://your-sub2api.example.com'
+export const SUB2API_DESKTOP_DEFAULT_HOST = '127.0.0.1'
+export const SUB2API_DESKTOP_DEFAULT_PORT = 38080
+export const SUB2API_SETUP_DEFAULT_TIMEZONE = 'Asia/Shanghai'
+export const SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL = 'admin@openagent.local'
+export const SUB2API_DESKTOP_DEFAULT_API_KEY_NAME = 'OpenAgent Desktop'
+export const SUB2API_DESKTOP_SHARED_PASSWORD = 'OpenAgentnh'
 
 export const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
   claude: {
@@ -86,6 +108,342 @@ export const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
 
 function trimTrailingSlashes(value: string) {
   return value.trim().replace(/\/+$/, '')
+}
+
+function normalizeSub2ApiDesktopHost(value: string | null | undefined) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed || SUB2API_DESKTOP_DEFAULT_HOST
+}
+
+function normalizeSub2ApiDesktopPort(value: unknown) {
+  const nextValue = Number(value)
+  if (!Number.isFinite(nextValue)) {
+    return SUB2API_DESKTOP_DEFAULT_PORT
+  }
+
+  return Math.min(Math.max(Math.round(nextValue), 1), 65535)
+}
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number, max = Number.MAX_SAFE_INTEGER) {
+  const nextValue = Number(value)
+  if (!Number.isFinite(nextValue)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(Math.round(nextValue), 0), max)
+}
+
+function normalizeSslMode(value: unknown): 'disable' | 'require' | 'verify-ca' | 'verify-full' {
+  if (value === 'require' || value === 'verify-ca' || value === 'verify-full') {
+    return value
+  }
+
+  return 'disable'
+}
+
+function quoteYamlString(value: string) {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function resolveDesktopClientHost(host: string) {
+  const normalizedHost = normalizeSub2ApiDesktopHost(host)
+  if (normalizedHost === '0.0.0.0' || normalizedHost === '::' || normalizedHost === '::0') {
+    return SUB2API_DESKTOP_DEFAULT_HOST
+  }
+
+  return normalizedHost
+}
+
+export function createDefaultSub2ApiDesktopRuntimeConfig(): Sub2ApiDesktopRuntimeConfig {
+  return {
+    autoStart: false,
+    host: SUB2API_DESKTOP_DEFAULT_HOST,
+    port: SUB2API_DESKTOP_DEFAULT_PORT,
+    runMode: 'standard',
+    binaryPath: '',
+    dataDir: '',
+    configPath: '',
+    logLevel: 'info'
+  }
+}
+
+export function createDefaultSub2ApiDesktopManagedConfig(): Sub2ApiDesktopManagedConfig {
+  return {
+    sharedPassword: SUB2API_DESKTOP_SHARED_PASSWORD,
+    adminEmail: SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL,
+    apiKeyName: SUB2API_DESKTOP_DEFAULT_API_KEY_NAME
+  }
+}
+
+export function createDefaultSub2ApiDesktopSetupProfile(): Sub2ApiDesktopSetupProfile {
+  return {
+    database: {
+      host: '127.0.0.1',
+      port: 5432,
+      user: 'sub2api',
+      password: SUB2API_DESKTOP_SHARED_PASSWORD,
+      dbname: 'sub2api',
+      sslmode: 'disable'
+    },
+    redis: {
+      host: '127.0.0.1',
+      port: 6379,
+      password: SUB2API_DESKTOP_SHARED_PASSWORD,
+      db: 0,
+      enableTls: false
+    },
+    admin: {
+      email: SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL,
+      password: SUB2API_DESKTOP_SHARED_PASSWORD
+    },
+    timezone: SUB2API_SETUP_DEFAULT_TIMEZONE
+  }
+}
+
+export function normalizeSub2ApiDesktopManagedConfig(saved: Partial<Sub2ApiDesktopManagedConfig> | null | undefined): Sub2ApiDesktopManagedConfig {
+  const defaults = createDefaultSub2ApiDesktopManagedConfig()
+  return {
+    sharedPassword: typeof saved?.sharedPassword === 'string' && saved.sharedPassword.trim()
+      ? saved.sharedPassword
+      : defaults.sharedPassword,
+    adminEmail: typeof saved?.adminEmail === 'string' && saved.adminEmail.trim()
+      ? saved.adminEmail.trim()
+      : defaults.adminEmail,
+    apiKeyName: typeof saved?.apiKeyName === 'string' && saved.apiKeyName.trim()
+      ? saved.apiKeyName.trim()
+      : defaults.apiKeyName
+  }
+}
+
+export function normalizeSub2ApiDesktopSetupProfile(saved: Partial<Sub2ApiDesktopSetupProfile> | null | undefined): Sub2ApiDesktopSetupProfile {
+  const defaults = createDefaultSub2ApiDesktopSetupProfile()
+  return {
+    database: {
+      host: typeof saved?.database?.host === 'string' ? saved.database.host.trim() || defaults.database.host : defaults.database.host,
+      port: normalizeSub2ApiDesktopPort(saved?.database?.port ?? defaults.database.port),
+      user: typeof saved?.database?.user === 'string' ? saved.database.user.trim() : defaults.database.user,
+      password: typeof saved?.database?.password === 'string' ? saved.database.password : defaults.database.password,
+      dbname: typeof saved?.database?.dbname === 'string' ? saved.database.dbname.trim() : defaults.database.dbname,
+      sslmode: normalizeSslMode(saved?.database?.sslmode)
+    },
+    redis: {
+      host: typeof saved?.redis?.host === 'string' ? saved.redis.host.trim() || defaults.redis.host : defaults.redis.host,
+      port: normalizeSub2ApiDesktopPort(saved?.redis?.port ?? defaults.redis.port),
+      password: typeof saved?.redis?.password === 'string' ? saved.redis.password : defaults.redis.password,
+      db: normalizeNonNegativeInteger(saved?.redis?.db, defaults.redis.db, 15),
+      enableTls: typeof saved?.redis?.enableTls === 'boolean' ? saved.redis.enableTls : defaults.redis.enableTls
+    },
+    admin: {
+      email: typeof saved?.admin?.email === 'string' ? saved.admin.email.trim() : defaults.admin.email,
+      password: typeof saved?.admin?.password === 'string' ? saved.admin.password : defaults.admin.password
+    },
+    timezone: typeof saved?.timezone === 'string' && saved.timezone.trim() ? saved.timezone.trim() : defaults.timezone
+  }
+}
+
+export function normalizeSub2ApiDesktopRuntimeConfig(saved: Partial<Sub2ApiDesktopRuntimeConfig> | null | undefined): Sub2ApiDesktopRuntimeConfig {
+  const defaults = createDefaultSub2ApiDesktopRuntimeConfig()
+  return {
+    autoStart: typeof saved?.autoStart === 'boolean' ? saved.autoStart : defaults.autoStart,
+    host: normalizeSub2ApiDesktopHost(saved?.host),
+    port: normalizeSub2ApiDesktopPort(saved?.port),
+    runMode: saved?.runMode === 'simple' || saved?.runMode === 'standard' ? saved.runMode : defaults.runMode,
+    binaryPath: typeof saved?.binaryPath === 'string' ? saved.binaryPath.trim() : defaults.binaryPath,
+    dataDir: typeof saved?.dataDir === 'string' ? saved.dataDir.trim() : defaults.dataDir,
+    configPath: typeof saved?.configPath === 'string' ? saved.configPath.trim() : defaults.configPath,
+    logLevel: saved?.logLevel === 'debug' || saved?.logLevel === 'warn' || saved?.logLevel === 'error' ? saved.logLevel : defaults.logLevel
+  }
+}
+
+export function buildSub2ApiDesktopGatewayRoot(runtimeConfig: Partial<Sub2ApiDesktopRuntimeConfig> | null | undefined) {
+  const normalizedRuntimeConfig = normalizeSub2ApiDesktopRuntimeConfig(runtimeConfig)
+  return `http://${resolveDesktopClientHost(normalizedRuntimeConfig.host)}:${normalizedRuntimeConfig.port}`
+}
+
+export function createDefaultSub2ApiRuntimeState(): Sub2ApiRuntimeState {
+  const defaultBaseUrl = buildSub2ApiDesktopGatewayRoot(createDefaultSub2ApiDesktopRuntimeConfig())
+  return {
+    status: 'stopped',
+    mode: 'desktop',
+    host: SUB2API_DESKTOP_DEFAULT_HOST,
+    port: SUB2API_DESKTOP_DEFAULT_PORT,
+    baseUrl: defaultBaseUrl,
+    adminUrl: defaultBaseUrl,
+    pid: null,
+    startedAt: 0,
+    healthy: false,
+    healthEndpoint: `${defaultBaseUrl}/health`,
+    healthMessage: '本地网关尚未启动',
+    resolvedBinaryPath: '',
+    binaryExists: false,
+    usingBundledBinary: false,
+    resolvedDataDir: '',
+    resolvedConfigPath: '',
+    configExists: false,
+    logFilePath: '',
+    dependencyRoot: '',
+    bundledBinaryPath: '',
+    lastError: '',
+    lastExitCode: null,
+    managedAdminEmail: SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL,
+    managedApiKeyName: SUB2API_DESKTOP_DEFAULT_API_KEY_NAME,
+    managedApiKeyDetected: false,
+    logs: []
+  }
+}
+
+export function normalizeSub2ApiRuntimeState(saved: Partial<Sub2ApiRuntimeState> | null | undefined): Sub2ApiRuntimeState {
+  const defaults = createDefaultSub2ApiRuntimeState()
+  const host = normalizeSub2ApiDesktopHost(saved?.host)
+  const port = normalizeSub2ApiDesktopPort(saved?.port)
+  const baseUrl = typeof saved?.baseUrl === 'string' && saved.baseUrl.trim()
+    ? saved.baseUrl.trim()
+    : `http://${resolveDesktopClientHost(host)}:${port}`
+
+  return {
+    status: saved?.status === 'starting' || saved?.status === 'running' || saved?.status === 'stopping' || saved?.status === 'error' || saved?.status === 'missing-binary' || saved?.status === 'unavailable'
+      ? saved.status
+      : defaults.status,
+    mode: saved?.mode === 'external' ? 'external' : 'desktop',
+    host,
+    port,
+    baseUrl,
+    adminUrl: typeof saved?.adminUrl === 'string' && saved.adminUrl.trim() ? saved.adminUrl.trim() : baseUrl,
+    pid: Number.isFinite(saved?.pid) ? Number(saved?.pid) : null,
+    startedAt: Number.isFinite(saved?.startedAt) ? Number(saved?.startedAt) : defaults.startedAt,
+    healthy: Boolean(saved?.healthy),
+    healthEndpoint: typeof saved?.healthEndpoint === 'string' && saved.healthEndpoint.trim() ? saved.healthEndpoint.trim() : `${baseUrl}/health`,
+    healthMessage: typeof saved?.healthMessage === 'string' ? saved.healthMessage : defaults.healthMessage,
+    resolvedBinaryPath: typeof saved?.resolvedBinaryPath === 'string' ? saved.resolvedBinaryPath.trim() : defaults.resolvedBinaryPath,
+    binaryExists: typeof saved?.binaryExists === 'boolean' ? saved.binaryExists : defaults.binaryExists,
+    usingBundledBinary: typeof saved?.usingBundledBinary === 'boolean' ? saved.usingBundledBinary : defaults.usingBundledBinary,
+    resolvedDataDir: typeof saved?.resolvedDataDir === 'string' ? saved.resolvedDataDir.trim() : defaults.resolvedDataDir,
+    resolvedConfigPath: typeof saved?.resolvedConfigPath === 'string' ? saved.resolvedConfigPath.trim() : defaults.resolvedConfigPath,
+    configExists: typeof saved?.configExists === 'boolean' ? saved.configExists : defaults.configExists,
+    logFilePath: typeof saved?.logFilePath === 'string' ? saved.logFilePath.trim() : defaults.logFilePath,
+    dependencyRoot: typeof saved?.dependencyRoot === 'string' ? saved.dependencyRoot.trim() : defaults.dependencyRoot,
+    bundledBinaryPath: typeof saved?.bundledBinaryPath === 'string' ? saved.bundledBinaryPath.trim() : defaults.bundledBinaryPath,
+    lastError: typeof saved?.lastError === 'string' ? saved.lastError : defaults.lastError,
+    lastExitCode: Number.isFinite(saved?.lastExitCode) ? Number(saved?.lastExitCode) : null,
+    managedAdminEmail: typeof saved?.managedAdminEmail === 'string' && saved.managedAdminEmail.trim() ? saved.managedAdminEmail.trim() : defaults.managedAdminEmail,
+    managedApiKeyName: typeof saved?.managedApiKeyName === 'string' && saved.managedApiKeyName.trim() ? saved.managedApiKeyName.trim() : defaults.managedApiKeyName,
+    managedApiKeyDetected: typeof saved?.managedApiKeyDetected === 'boolean' ? saved.managedApiKeyDetected : defaults.managedApiKeyDetected,
+    logs: Array.isArray(saved?.logs) ? saved.logs.map(item => String(item)).slice(-160) : defaults.logs
+  }
+}
+
+export function createEmptySub2ApiSetupDiagnostics(): Sub2ApiSetupDiagnostics {
+  return {
+    checkedAt: 0,
+    status: {
+      reachable: false,
+      needsSetup: null,
+      step: 'unknown',
+      endpoint: '',
+      statusCode: null,
+      message: '尚未检查 setup 状态'
+    },
+    items: []
+  }
+}
+
+export function normalizeSub2ApiSetupDiagnostics(saved: Partial<Sub2ApiSetupDiagnostics> | null | undefined): Sub2ApiSetupDiagnostics {
+  const defaults = createEmptySub2ApiSetupDiagnostics()
+  return {
+    checkedAt: Number.isFinite(saved?.checkedAt) ? Number(saved?.checkedAt) : defaults.checkedAt,
+    status: {
+      reachable: typeof saved?.status?.reachable === 'boolean' ? saved.status.reachable : defaults.status.reachable,
+      needsSetup: typeof saved?.status?.needsSetup === 'boolean' ? saved.status.needsSetup : defaults.status.needsSetup,
+      step: typeof saved?.status?.step === 'string' && saved.status.step.trim() ? saved.status.step.trim() : defaults.status.step,
+      endpoint: typeof saved?.status?.endpoint === 'string' ? saved.status.endpoint.trim() : defaults.status.endpoint,
+      statusCode: Number.isFinite(saved?.status?.statusCode) ? Number(saved?.status?.statusCode) : defaults.status.statusCode,
+      message: typeof saved?.status?.message === 'string' ? saved.status.message : defaults.status.message
+    },
+    items: Array.isArray(saved?.items)
+      ? saved.items.map(item => ({
+        id: String(item?.id || ''),
+        label: String(item?.label || ''),
+        level: item?.level === 'success' || item?.level === 'info' || item?.level === 'warning' || item?.level === 'error' ? item.level : 'info',
+        message: String(item?.message || '')
+      })).filter(item => item.id && item.label)
+      : defaults.items
+  }
+}
+
+export function buildSub2ApiSetupFormIssues(profile: Sub2ApiDesktopSetupProfile): Sub2ApiSetupDiagnosticItem[] {
+  const normalizedProfile = normalizeSub2ApiDesktopSetupProfile(profile)
+  const issues: Sub2ApiSetupDiagnosticItem[] = []
+
+  if (!normalizedProfile.database.host) {
+    issues.push({ id: 'database-host', label: 'PostgreSQL 主机', level: 'error', message: '缺少 PostgreSQL 主机地址。' })
+  }
+  if (!normalizedProfile.database.user) {
+    issues.push({ id: 'database-user', label: 'PostgreSQL 用户', level: 'error', message: '缺少 PostgreSQL 用户名。' })
+  }
+  if (!normalizedProfile.database.dbname) {
+    issues.push({ id: 'database-name', label: 'PostgreSQL 数据库', level: 'error', message: '缺少 PostgreSQL 数据库名。' })
+  }
+  if (!normalizedProfile.redis.host) {
+    issues.push({ id: 'redis-host', label: 'Redis 主机', level: 'error', message: '缺少 Redis 主机地址。' })
+  }
+  if (!normalizedProfile.admin.email) {
+    issues.push({ id: 'admin-email', label: '管理员邮箱', level: 'error', message: '缺少管理员邮箱。' })
+  } else if (!isLikelyEmail(normalizedProfile.admin.email)) {
+    issues.push({ id: 'admin-email-format', label: '管理员邮箱', level: 'error', message: '管理员邮箱格式无效，setup 接口会直接拒绝该请求。' })
+  }
+  if (!normalizedProfile.admin.password) {
+    issues.push({ id: 'admin-password', label: '管理员密码', level: 'error', message: '缺少管理员密码。' })
+  } else if (normalizedProfile.admin.password.length < 8) {
+    issues.push({ id: 'admin-password-length', label: '管理员密码', level: 'error', message: '管理员密码至少需要 8 位，setup 接口会直接拒绝过短密码。' })
+  }
+  if (!normalizedProfile.timezone) {
+    issues.push({ id: 'timezone', label: '时区', level: 'warning', message: `未设置时区时，预览会回退到 ${SUB2API_SETUP_DEFAULT_TIMEZONE}。` })
+  }
+
+  return issues
+}
+
+export function buildSub2ApiSetupInstallPayload(runtimeConfig: Partial<Sub2ApiDesktopRuntimeConfig> | null | undefined, profile: Partial<Sub2ApiDesktopSetupProfile> | null | undefined) {
+  const normalizedRuntimeConfig = normalizeSub2ApiDesktopRuntimeConfig(runtimeConfig)
+  const normalizedProfile = normalizeSub2ApiDesktopSetupProfile(profile)
+  return {
+    database: {
+      host: normalizedProfile.database.host,
+      port: normalizedProfile.database.port,
+      user: normalizedProfile.database.user,
+      password: normalizedProfile.database.password,
+      dbname: normalizedProfile.database.dbname,
+      sslmode: normalizedProfile.database.sslmode
+    },
+    redis: {
+      host: normalizedProfile.redis.host,
+      port: normalizedProfile.redis.port,
+      password: normalizedProfile.redis.password,
+      db: normalizedProfile.redis.db,
+      enable_tls: normalizedProfile.redis.enableTls
+    },
+    admin: {
+      email: normalizedProfile.admin.email,
+      password: normalizedProfile.admin.password
+    },
+    server: {
+      host: normalizedRuntimeConfig.host,
+      port: normalizedRuntimeConfig.port,
+      mode: normalizedRuntimeConfig.logLevel === 'debug' ? 'debug' : 'release'
+    }
+  }
+}
+
+export function createSub2ApiSetupConfigPreview(runtimeConfig: Partial<Sub2ApiDesktopRuntimeConfig> | null | undefined, profile: Partial<Sub2ApiDesktopSetupProfile> | null | undefined) {
+  const normalizedRuntimeConfig = normalizeSub2ApiDesktopRuntimeConfig(runtimeConfig)
+  const normalizedProfile = normalizeSub2ApiDesktopSetupProfile(profile)
+  const timezone = normalizedProfile.timezone || SUB2API_SETUP_DEFAULT_TIMEZONE
+
+  return `# Sub2API 初始化预览\n# 说明：管理员密码不会写入 config.yaml；JWT 密钥会在安装时自动生成\nserver:\n  host: ${quoteYamlString(normalizedRuntimeConfig.host)}\n  port: ${normalizedRuntimeConfig.port}\n  mode: ${quoteYamlString(normalizedRuntimeConfig.logLevel === 'debug' ? 'debug' : 'release')}\ndatabase:\n  host: ${quoteYamlString(normalizedProfile.database.host)}\n  port: ${normalizedProfile.database.port}\n  user: ${quoteYamlString(normalizedProfile.database.user)}\n  password: ${quoteYamlString(normalizedProfile.database.password)}\n  dbname: ${quoteYamlString(normalizedProfile.database.dbname)}\n  sslmode: ${quoteYamlString(normalizedProfile.database.sslmode)}\nredis:\n  host: ${quoteYamlString(normalizedProfile.redis.host)}\n  port: ${normalizedProfile.redis.port}\n  password: ${quoteYamlString(normalizedProfile.redis.password)}\n  db: ${normalizedProfile.redis.db}\n  enable_tls: ${normalizedProfile.redis.enableTls ? 'true' : 'false'}\njwt:\n  secret: '<install-time autogenerated>'\n  expire_hour: 24\ndefault:\n  user_concurrency: 5\n  user_balance: 0\n  api_key_prefix: 'sk-'\n  rate_multiplier: 1\nrate_limit:\n  requests_per_minute: 60\n  burst_size: 10\ntimezone: ${quoteYamlString(timezone)}\n`
 }
 
 export function normalizeSub2ApiGatewayRoot(value: string) {
@@ -155,6 +513,7 @@ export function resolveSub2ApiMode(template: AIGatewayTemplate): Sub2ApiMode | n
 
 export function createDefaultSub2ApiConfig(): Sub2ApiStoredConfig {
   return {
+    gatewayMode: 'desktop',
     gatewayRoot: '',
     apiKey: '',
     activeMode: 'openai',
@@ -162,7 +521,10 @@ export function createDefaultSub2ApiConfig(): Sub2ApiStoredConfig {
       claude: SUB2API_MODE_PRESETS.claude.recommendedModel,
       openai: SUB2API_MODE_PRESETS.openai.recommendedModel,
       antigravity: SUB2API_MODE_PRESETS.antigravity.recommendedModel
-    }
+    },
+    desktopRuntime: createDefaultSub2ApiDesktopRuntimeConfig(),
+    desktopManaged: createDefaultSub2ApiDesktopManagedConfig(),
+    desktopSetup: createDefaultSub2ApiDesktopSetupProfile()
   }
 }
 
@@ -172,12 +534,18 @@ export function normalizeSub2ApiConfig(saved: Partial<Sub2ApiStoredConfig> | nul
     ...defaults.preferredModels,
     ...(saved?.preferredModels ?? {})
   }
+  const inferredGatewayMode = saved?.gatewayMode === 'desktop' || saved?.gatewayMode === 'external'
+    ? saved.gatewayMode
+    : typeof saved?.gatewayRoot === 'string' && saved.gatewayRoot.trim()
+      ? 'external'
+      : defaults.gatewayMode
 
   const activeMode = saved?.activeMode === 'claude' || saved?.activeMode === 'openai' || saved?.activeMode === 'antigravity'
     ? saved.activeMode
     : defaults.activeMode
 
   return {
+    gatewayMode: inferredGatewayMode,
     gatewayRoot: normalizeSub2ApiGatewayRoot(saved?.gatewayRoot || ''),
     apiKey: typeof saved?.apiKey === 'string' ? saved.apiKey.trim() : '',
     activeMode,
@@ -185,8 +553,23 @@ export function normalizeSub2ApiConfig(saved: Partial<Sub2ApiStoredConfig> | nul
       claude: preferredModels.claude?.trim() || defaults.preferredModels.claude,
       openai: preferredModels.openai?.trim() || defaults.preferredModels.openai,
       antigravity: preferredModels.antigravity?.trim() || defaults.preferredModels.antigravity
-    }
+    },
+    desktopRuntime: normalizeSub2ApiDesktopRuntimeConfig(saved?.desktopRuntime),
+    desktopManaged: normalizeSub2ApiDesktopManagedConfig(saved?.desktopManaged),
+    desktopSetup: normalizeSub2ApiDesktopSetupProfile(saved?.desktopSetup)
   }
+}
+
+export function resolveSub2ApiGatewayRoot(config: Sub2ApiStoredConfig, runtimeState?: Partial<Sub2ApiRuntimeState> | null) {
+  if (config.gatewayMode === 'desktop') {
+    if (typeof runtimeState?.baseUrl === 'string' && runtimeState.baseUrl.trim()) {
+      return normalizeSub2ApiGatewayRoot(runtimeState.baseUrl)
+    }
+
+    return normalizeSub2ApiGatewayRoot(buildSub2ApiDesktopGatewayRoot(config.desktopRuntime))
+  }
+
+  return normalizeSub2ApiGatewayRoot(config.gatewayRoot)
 }
 
 export function createEmptySub2ApiModelRegistry(): Sub2ApiModelRegistry {
@@ -249,7 +632,7 @@ export function buildSub2ApiAiPatch(config: Sub2ApiStoredConfig, mode: Sub2ApiMo
     protocol: preset.protocol,
     connectionTemplate: preset.connectionTemplate,
     apiKey: config.apiKey.trim(),
-    baseUrl: buildSub2ApiBaseUrl(config.gatewayRoot, mode),
+    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), mode),
     model: getSub2ApiPreferredModel(config, mode)
   }
 }
@@ -257,7 +640,7 @@ export function buildSub2ApiAiPatch(config: Sub2ApiStoredConfig, mode: Sub2ApiMo
 export function buildSub2ApiAiConfig(config: Sub2ApiStoredConfig, mode: Sub2ApiMode): AIConfig {
   return {
     apiKey: config.apiKey.trim(),
-    baseUrl: buildSub2ApiBaseUrl(config.gatewayRoot, mode),
+    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), mode),
     model: getSub2ApiPreferredModel(config, mode),
     protocol: SUB2API_MODE_PRESETS[mode].protocol,
     connectionTemplate: SUB2API_MODE_PRESETS[mode].connectionTemplate,
@@ -274,11 +657,11 @@ export async function fetchSub2ApiModels(config: Sub2ApiStoredConfig, mode: Sub2
 
 export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, modelOverride?: string) {
   const normalizedConfig = normalizeSub2ApiConfig(config)
-  const gatewayRoot = normalizedConfig.gatewayRoot
+  const gatewayRoot = resolveSub2ApiGatewayRoot(normalizedConfig)
   const currentPreset = SUB2API_MODE_PRESETS[mode]
 
   if (!gatewayRoot) {
-    throw new Error('请先填写 Sub2API 网关根地址')
+    throw new Error(normalizedConfig.gatewayMode === 'desktop' ? '请先在 Sub2API 页面启动本地网关' : '请先填写 Sub2API 网关根地址')
   }
 
   if (!normalizedConfig.apiKey.trim()) {
@@ -439,7 +822,7 @@ model_auto_compact_token_limit = 900000
 
 [model_providers.OpenAI]
 name = "OpenAI"
-base_url = "${buildSub2ApiBaseUrl(config.gatewayRoot, 'openai') || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
+base_url = "${buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), 'openai') || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
 wire_api = "responses"
 supports_websockets = true
 requires_openai_auth = true

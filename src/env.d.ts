@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -44,6 +44,16 @@ interface ElectronAPI {
   getRuntimeDataStorageInfo: () => Promise<RuntimeDataStorageInfo>
   switchRuntimeDataStorage: (payload: { mode: RuntimeDataStorageMode; targetPath?: string }) => Promise<RuntimeDataStorageInfo>
   readImageAsDataUrl: (filePath: string) => Promise<string | null>
+  sub2ApiGetRuntimeState: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
+  sub2ApiStartRuntime: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
+  sub2ApiStopRuntime: () => Promise<Sub2ApiRuntimeState>
+  sub2ApiRestartRuntime: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
+  sub2ApiInspectSetup: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupDiagnostics>
+  sub2ApiTestSetupDatabase: (payload: Sub2ApiSetupDatabaseConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => Promise<Sub2ApiSetupActionResult>
+  sub2ApiTestSetupRedis: (payload: Sub2ApiSetupRedisConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => Promise<Sub2ApiSetupActionResult>
+  sub2ApiInstallSetup: (payload: Sub2ApiDesktopSetupProfile, config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupActionResult>
+  sub2ApiEnsureDesktopAccess: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>, currentApiKey?: string) => Promise<Sub2ApiDesktopAccessResult>
+  sub2ApiChooseBinary: (defaultPath?: string) => Promise<string | null>
   openExternal: (url: string) => void
   // MCP 工具
   mcpExecuteCommand: (command: string) => Promise<MCPToolResult>
