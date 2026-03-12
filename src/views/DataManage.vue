@@ -233,6 +233,7 @@ import { useAccountStore } from '@/stores/account'
 import { useAIStore } from '@/stores/ai'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { useSettingsStore } from '@/stores/settings'
+import { useSub2ApiStore } from '@/stores/sub2api'
 import { exportJsonFile, importJsonFile } from '@/utils/db'
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
 import { showToast } from '@/utils/toast'
@@ -246,6 +247,7 @@ const accountStore = useAccountStore()
 const aiStore = useAIStore()
 const aiResourcesStore = useAIResourcesStore()
 const settingsStore = useSettingsStore()
+const sub2ApiStore = useSub2ApiStore()
 
 const showClearConfirm = ref(false)
 const clearConfirmText = ref('')
@@ -302,11 +304,13 @@ const showAIConfigSection = computed(() => !normalizedSearchQuery.value || match
   'AI 配置',
   '模型配置',
   'API Key',
+  'Sub2API',
   '托管 MCP',
   'Skills',
   'TTS',
   'Windows MCP',
   aiStore.config,
+  sub2ApiStore.config,
   aiResourcesStore.registry
 ))
 
@@ -466,6 +470,7 @@ async function exportAIConfigDomain() {
   const data = {
     ...buildExportMeta('ai-config'),
     aiConfig: aiStore.getConfigExportData(),
+    sub2Api: sub2ApiStore.getExportData(),
     aiSettings: settingsStore.getAISettingsExportData(),
     aiResources: aiResourcesStore.getRegistryExportData()
   }
@@ -488,6 +493,9 @@ async function importAIConfigDomain() {
   }
 
   await aiStore.importConfigData(data.aiConfig)
+  if (isRecord(data.sub2Api)) {
+    await sub2ApiStore.importData(data.sub2Api)
+  }
   await settingsStore.importAISettingsData(isRecord(data.aiSettings) ? data.aiSettings : null)
 
   if (isRecord(data.aiResources)) {

@@ -38,12 +38,14 @@ import { useSettingsStore } from '@/stores/settings'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAccountStore } from '@/stores/account'
 import { useAIStore } from '@/stores/ai'
+import { useSub2ApiStore } from '@/stores/sub2api'
 import { showToast } from '@/utils/toast'
 
 const settingsStore = useSettingsStore()
 const typeStore = useAccountTypeStore()
 const accountStore = useAccountStore()
 const aiStore = useAIStore()
+const sub2ApiStore = useSub2ApiStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -142,6 +144,7 @@ onMounted(async () => {
   const initTasks: Array<Promise<unknown>> = [
     settingsStore.init(),
     aiStore.init(),
+    sub2ApiStore.init(),
     typeStore.init(),
     accountStore.init()
   ]

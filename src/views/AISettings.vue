@@ -74,12 +74,13 @@
         <div class="sub2api-panel-head">
           <div class="sub2api-panel-copy">
             <span class="provider-card-tag">Sub2API</span>
-            <strong>网关快捷接入</strong>
-            <p>把网关根地址填一次，再一键切 Claude、OpenAI 或 Antigravity Claude 路由。适合把多上游账号池统一收口到当前桌面助手。</p>
+            <strong>内嵌 Sub2API</strong>
+            <p>Sub2API 现在已经作为 OpenAgent 的一级能力接入。这里仍可快速切路由，完整配置、模型目录和 Codex 模板统一放到独立 Sub2API 页面维护。</p>
           </div>
           <div class="sub2api-panel-status">
             <strong>{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '未启用模板' }}</strong>
             <small>{{ usingSub2ApiTemplate ? aiConnectionHint : '启用后会自动同步协议、Base URL 和推荐模型。' }}</small>
+            <button class="btn btn-secondary btn-sm" @click="openSub2ApiSettingsPage">进入 Sub2API 页面</button>
           </div>
         </div>
 
@@ -230,7 +231,7 @@
           <div class="ai-model-actions">
             <select class="setting-select" :value="aiConfig.model" @change="updateAIConfig('model', ($event.target as HTMLSelectElement).value)">
               <option value="">{{ aiModelSelectPlaceholder }}</option>
-              <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
+              <option v-for="model in displayedAiModels" :key="model.id" :value="model.name">
                 {{ model.label }}{{ model.description ? ` · ${model.description}` : '' }}
               </option>
             </select>
@@ -637,9 +638,16 @@ import type { AIGatewayTemplate, AIConfig, AIConversationScope, AIProviderModel,
 import AIManagedResourcesPanel from '@/components/AIManagedResourcesPanel.vue'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { useAIStore } from '@/stores/ai'
+import { useSub2ApiStore } from '@/stores/sub2api'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
+import {
+  buildSub2ApiAiPatch,
+  createSub2ApiCodexAuthJson,
+  createSub2ApiCodexConfigToml,
+  getSub2ApiPreferredModel
+} from '@/utils/sub2api'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -677,6 +685,7 @@ const router = useRouter()
 const settingsStore = useSettingsStore()
 const aiStore = useAIStore()
 const resourcesStore = useAIResourcesStore()
+const sub2ApiStore = useSub2ApiStore()
 
 const settings = computed(() => settingsStore.settings)
 const aiConfig = computed(() => aiStore.config)
@@ -954,28 +963,17 @@ const sub2ApiResolvedRoute = computed(() => {
   const mode = activeSub2ApiMode.value || 'claude'
   return buildSub2ApiBaseUrl(sub2ApiGatewayRoot.value, mode)
 })
-const sub2ApiCodexConfigToml = computed(() => `model_provider = "OpenAI"
-model = "gpt-5.4"
-review_model = "gpt-5.4"
-model_reasoning_effort = "xhigh"
-disable_response_storage = true
-network_access = "enabled"
-windows_wsl_setup_acknowledged = true
-model_context_window = 1000000
-model_auto_compact_token_limit = 900000
+const displayedAiModels = computed(() => {
+  if (!usingSub2ApiTemplate.value) {
+    return availableAiModels.value
+  }
 
-[model_providers.OpenAI]
-name = "OpenAI"
-base_url = "${sub2ApiOpenAIBaseUrl.value || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
-wire_api = "responses"
-supports_websockets = true
-requires_openai_auth = true
-
-[features]
-responses_websockets_v2 = true`)
-const sub2ApiCodexAuthJson = computed(() => JSON.stringify({
-  OPENAI_API_KEY: aiConfig.value.apiKey.trim() || 'sk-your-sub2api-key'
-}, null, 2))
+  const mode = activeSub2ApiMode.value || sub2ApiStore.config.activeMode
+  const cachedModels = sub2ApiStore.getModelsForMode(mode)
+  return cachedModels.length > 0 ? cachedModels : availableAiModels.value
+})
+const sub2ApiCodexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai')))
+const sub2ApiCodexAuthJson = computed(() => createSub2ApiCodexAuthJson(aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey.trim()))
 const sub2ApiCheckSummary = computed(() => {
   if (checkingSub2ApiCapabilities.value) {
     return '检查中，会发送极小请求验证模型列表、当前路由和 Codex / Responses 路径。'
@@ -1082,7 +1080,7 @@ const aiMemorySummary = computed(() => {
 const selectedAiModelLimits = computed(() => selectedAiModelMeta.value?.limits || inferModelLimits(aiConfig.value.model, aiConfig.value.protocol))
 const resolvedTokenLimits = computed(() => resolveConfigTokenLimits(aiConfig.value))
 const selectedAiModelMeta = computed(() => {
-  const matchedModel = availableAiModels.value.find(model => model.name === aiConfig.value.model)
+  const matchedModel = displayedAiModels.value.find(model => model.name === aiConfig.value.model)
   if (matchedModel) {
     return matchedModel
   }
@@ -1363,11 +1361,27 @@ const hasVisibleSection = computed(() => showOverviewSection.value || showRuntim
 
 watch(() => [aiConfig.value.connectionTemplate, aiConfig.value.baseUrl], () => {
   if (aiConfig.value.connectionTemplate === 'standard') {
+    if (sub2ApiStore.config.gatewayRoot.trim()) {
+      sub2ApiGatewayRoot.value = sub2ApiStore.config.gatewayRoot
+    }
     return
   }
 
   sub2ApiGatewayRoot.value = normalizeSub2ApiGatewayRoot(aiConfig.value.baseUrl)
 }, { immediate: true })
+
+watch(() => sub2ApiStore.config.gatewayRoot, (nextGatewayRoot) => {
+  if (aiConfig.value.connectionTemplate === 'standard' && nextGatewayRoot.trim()) {
+    sub2ApiGatewayRoot.value = nextGatewayRoot
+  }
+}, { immediate: true })
+
+watch(sub2ApiGatewayRoot, (nextGatewayRoot) => {
+  const normalizedRoot = normalizeSub2ApiGatewayRoot(nextGatewayRoot)
+  if (normalizedRoot !== sub2ApiStore.config.gatewayRoot) {
+    void sub2ApiStore.setGatewayRoot(normalizedRoot)
+  }
+})
 
 function updateAIProtocol(protocol: AIProtocol) {
   updateAIConfig('protocol', protocol)
@@ -1409,13 +1423,21 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
     if (key === 'baseUrl') {
       aiModelStatus.value = ''
       availableAiModels.value = []
+
+      if (aiConfig.value.connectionTemplate !== 'standard') {
+        void sub2ApiStore.setGatewayRoot(String(value || ''))
+      }
     }
+  }
+
+  if (key === 'apiKey' && aiConfig.value.connectionTemplate !== 'standard') {
+    void sub2ApiStore.setApiKey(String(value || ''))
   }
 
   void aiStore.updateConfig({ [key]: value } as Partial<AIConfig>)
 }
 
-function applySub2ApiMode(mode: Sub2ApiMode) {
+async function applySub2ApiMode(mode: Sub2ApiMode) {
   const normalizedRoot = normalizeSub2ApiGatewayRoot(sub2ApiGatewayRoot.value)
   if (!normalizedRoot) {
     showToast('error', '请先填写 Sub2API 网关根地址')
@@ -1424,6 +1446,13 @@ function applySub2ApiMode(mode: Sub2ApiMode) {
 
   const preset = SUB2API_MODE_PRESETS[mode]
   const currentPreset = AI_PROTOCOL_PRESETS[aiConfig.value.protocol]
+  const nextApiKey = aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey.trim()
+  const nextConfig = {
+    ...sub2ApiStore.config,
+    gatewayRoot: normalizedRoot,
+    apiKey: nextApiKey,
+    activeMode: mode
+  }
   const nextBaseUrl = buildSub2ApiBaseUrl(normalizedRoot, mode)
   const shouldReplaceModel = !aiConfig.value.model.trim()
     || aiConfig.value.connectionTemplate !== preset.connectionTemplate
@@ -1433,11 +1462,22 @@ function applySub2ApiMode(mode: Sub2ApiMode) {
   aiModelLoadError.value = ''
   aiModelStatus.value = `已切换到 ${preset.title}，可以直接读取当前路由模型。`
 
-  void aiStore.updateConfig({
+  await sub2ApiStore.updateConfig({
+    gatewayRoot: normalizedRoot,
+    apiKey: nextApiKey,
+    activeMode: mode,
+    preferredModels: {
+      ...sub2ApiStore.config.preferredModels,
+      [mode]: shouldReplaceModel ? (aiConfig.value.model.trim() || sub2ApiStore.config.preferredModels[mode] || preset.recommendedModel) : sub2ApiStore.config.preferredModels[mode]
+    }
+  })
+
+  await aiStore.updateConfig({
+    ...buildSub2ApiAiPatch(nextConfig, mode),
     protocol: preset.protocol,
     connectionTemplate: preset.connectionTemplate,
     baseUrl: nextBaseUrl,
-    ...(shouldReplaceModel ? { model: preset.recommendedModel } : {})
+    ...(shouldReplaceModel ? { model: getSub2ApiPreferredModel(nextConfig, mode) } : {})
   })
 }
 
@@ -1449,6 +1489,10 @@ async function copyText(text: string, label: string) {
     const message = error instanceof Error ? error.message : `${label} 复制失败`
     showToast('error', message)
   }
+}
+
+function openSub2ApiSettingsPage() {
+  void router.push('/sub2api')
 }
 
 function openSub2ApiAdmin() {
@@ -1478,145 +1522,20 @@ async function runSub2ApiCapabilityCheck() {
   }
 
   const currentMode = activeSub2ApiMode.value || (aiConfig.value.protocol === 'openai' ? 'openai' : 'claude')
-  const currentPreset = SUB2API_MODE_PRESETS[currentMode]
-  const currentBaseUrl = buildSub2ApiBaseUrl(gatewayRoot, currentMode)
-  const currentModel = aiConfig.value.model.trim() || currentPreset.recommendedModel
-  const currentHeaders = buildSub2ApiHeaders(aiConfig.value.apiKey, currentPreset.protocol)
-  const checks: Sub2ApiCheckItem[] = []
   checkingSub2ApiCapabilities.value = true
   sub2ApiCheckItems.value = []
 
   try {
-    const modelsUrl = `${currentBaseUrl}/models`
-    const modelsResponse = await fetch(modelsUrl, {
-      method: 'GET',
-      headers: currentHeaders
+    await sub2ApiStore.updateConfig({
+      gatewayRoot,
+      apiKey: aiConfig.value.apiKey.trim(),
+      activeMode: currentMode,
+      preferredModels: {
+        ...sub2ApiStore.config.preferredModels,
+        [currentMode]: aiConfig.value.model.trim() || sub2ApiStore.config.preferredModels[currentMode]
+      }
     })
-
-    if (!modelsResponse.ok) {
-      checks.push({
-        id: 'models',
-        label: '模型列表',
-        endpoint: modelsUrl,
-        state: 'error',
-        message: `请求失败 (${modelsResponse.status})：${await readSub2ApiErrorText(modelsResponse) || '未返回更多信息'}`
-      })
-    } else {
-      const payload = await modelsResponse.json().catch(() => null)
-      const modelCount = Array.isArray((payload as { data?: unknown[] } | null)?.data)
-        ? ((payload as { data: unknown[] }).data.length)
-        : Array.isArray((payload as { models?: unknown[] } | null)?.models)
-          ? ((payload as { models: unknown[] }).models.length)
-          : 0
-      checks.push({
-        id: 'models',
-        label: '模型列表',
-        endpoint: modelsUrl,
-        state: 'success',
-        message: modelCount > 0 ? `已返回 ${modelCount} 个模型。` : '接口可访问，但未返回模型列表。'
-      })
-    }
-
-    if (currentPreset.protocol === 'anthropic') {
-      const messagesUrl = `${currentBaseUrl}/messages`
-      const messagesResponse = await fetch(messagesUrl, {
-        method: 'POST',
-        headers: currentHeaders,
-        body: JSON.stringify({
-          model: currentModel,
-          max_tokens: 1,
-          stream: false,
-          messages: [{ role: 'user', content: 'ping' }]
-        })
-      })
-
-      if (!messagesResponse.ok) {
-        checks.push({
-          id: 'messages',
-          label: `${currentPreset.title} 请求`,
-          endpoint: messagesUrl,
-          state: 'error',
-          message: `请求失败 (${messagesResponse.status})：${await readSub2ApiErrorText(messagesResponse) || '未返回更多信息'}`
-        })
-      } else {
-        checks.push({
-          id: 'messages',
-          label: `${currentPreset.title} 请求`,
-          endpoint: messagesUrl,
-          state: 'success',
-          message: `模型 ${currentModel} 已可正常响应。`
-        })
-      }
-
-      checks.push({
-        id: 'codex-ready',
-        label: 'Codex / Responses 路径',
-        endpoint: `${buildSub2ApiBaseUrl(gatewayRoot, 'openai')}/responses`,
-        state: 'pending',
-        message: '当前不在 OpenAI 路由。要验证 Codex 额度，请切换到「OpenAI 路由」后重新检查。'
-      })
-    } else {
-      const chatUrl = `${currentBaseUrl}/chat/completions`
-      const chatResponse = await fetch(chatUrl, {
-        method: 'POST',
-        headers: currentHeaders,
-        body: JSON.stringify({
-          model: currentModel,
-          stream: false,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'ping' }]
-        })
-      })
-
-      if (!chatResponse.ok) {
-        checks.push({
-          id: 'chat-completions',
-          label: 'Chat Completions 路径',
-          endpoint: chatUrl,
-          state: 'error',
-          message: `请求失败 (${chatResponse.status})：${await readSub2ApiErrorText(chatResponse) || '未返回更多信息'}`
-        })
-      } else {
-        checks.push({
-          id: 'chat-completions',
-          label: 'Chat Completions 路径',
-          endpoint: chatUrl,
-          state: 'success',
-          message: `模型 ${currentModel} 已可通过 OpenAI 兼容路由访问。`
-        })
-      }
-
-      const responsesUrl = `${currentBaseUrl}/responses`
-      const responsesResponse = await fetch(responsesUrl, {
-        method: 'POST',
-        headers: currentHeaders,
-        body: JSON.stringify({
-          model: currentModel,
-          store: false,
-          max_output_tokens: 1,
-          input: 'ping'
-        })
-      })
-
-      if (!responsesResponse.ok) {
-        checks.push({
-          id: 'responses',
-          label: 'Codex / Responses 路径',
-          endpoint: responsesUrl,
-          state: 'error',
-          message: `请求失败 (${responsesResponse.status})：${await readSub2ApiErrorText(responsesResponse) || '未返回更多信息'}`
-        })
-      } else {
-        checks.push({
-          id: 'responses',
-          label: 'Codex / Responses 路径',
-          endpoint: responsesUrl,
-          state: 'success',
-          message: 'Responses API 已可用。若服务端分组绑定的是 OpenAI OAuth / Codex 登录账号，这条路径就能消耗 Codex 额度。'
-        })
-      }
-    }
-
+    const checks = await sub2ApiStore.runChecks(currentMode, aiConfig.value.model.trim())
     sub2ApiCheckItems.value = checks
     const hasError = checks.some(item => item.state === 'error')
     showToast(hasError ? 'error' : 'success', hasError ? 'Sub2API 核心能力检查已完成，存在失败项' : 'Sub2API 核心能力检查通过')
@@ -1694,8 +1613,21 @@ async function refreshAIModels() {
   aiModelStatus.value = ''
 
   try {
-    const models = await fetchAvailableModels(aiStore.config)
+    const models = usingSub2ApiTemplate.value
+      ? await sub2ApiStore.refreshModels(activeSub2ApiMode.value || sub2ApiStore.config.activeMode)
+      : await fetchAvailableModels(aiStore.config)
     availableAiModels.value = models
+    if (usingSub2ApiTemplate.value) {
+      await sub2ApiStore.updateConfig({
+        gatewayRoot: sub2ApiGatewayRoot.value,
+        apiKey: aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey,
+        activeMode: activeSub2ApiMode.value || sub2ApiStore.config.activeMode,
+        preferredModels: {
+          ...sub2ApiStore.config.preferredModels,
+          [(activeSub2ApiMode.value || sub2ApiStore.config.activeMode)]: aiConfig.value.model.trim() || sub2ApiStore.config.preferredModels[activeSub2ApiMode.value || sub2ApiStore.config.activeMode]
+        }
+      })
+    }
     aiModelStatus.value = models.length > 0 ? `已读取 ${models.length} 个模型，可直接选择。` : '当前接口没有返回模型列表，请手动输入模型名称。'
     if (!aiConfig.value.model.trim() && models[0]) {
       void aiStore.updateConfig({ model: models[0].name })
@@ -2310,6 +2242,10 @@ watch(() => [settings.value.ttsModelId, settings.value.ttsVoiceId], () => {
 onMounted(() => {
   if (!aiStore.loaded) {
     void aiStore.init()
+  }
+
+  if (!sub2ApiStore.loaded) {
+    void sub2ApiStore.init()
   }
 
   if (!resourcesStore.loaded) {

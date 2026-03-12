@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2.5.0
+
+- 新增 Sub2API 一级工作台页面，并接入左侧导航。现在可以在应用内集中维护网关根地址、API Key、路由模式、模型目录、能力检查和 Codex CLI 配置模板，不再把 Sub2API 能力散落在单个 AI 设置区块里。
+- AI 设置页已改为直接消费内嵌 Sub2API 状态：可从独立页面同步配置，也能在 AI 设置里继续一键切换 Claude、OpenAI 与 Antigravity 路由，并直接选择来自 Sub2API 的模型目录。
+- AI 配置导入导出现在已覆盖内嵌 Sub2API 配置与模型缓存元数据，迁移 OpenAgent 配置时可以把 Sub2API 工作台一并带走，避免新机器上重复配置。
+
 ## 2.4.0
 
 - Sub2API OpenAI 路由现已在桌面端原生走 /v1/responses，不再只停留在 /chat/completions 兼容层，工具调用、推理摘要与 Codex 反代链路直接对齐服务端能力。

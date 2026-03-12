@@ -88,6 +88,7 @@ const mainNav = [
 const sysNav = [
   { name: 'AI 助手', path: '/ai', icon: 'ai' },
   { name: 'AI 设置', path: '/ai-settings', icon: 'settings' },
+  { name: 'Sub2API', path: '/sub2api', icon: 'gateway' },
   { name: '设置', path: '/settings', icon: 'settings' },
   { name: '数据管理', path: '/data', icon: 'data' }
 ]
