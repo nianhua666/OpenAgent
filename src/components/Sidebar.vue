@@ -7,7 +7,7 @@
         </div>
         <div class="logo-copy" v-show="!collapsed">
           <span class="logo-text">{{ APP_NAME }}</span>
-          <span class="logo-subtext">账号与 AI 工作台</span>
+          <span class="logo-subtext">账号与 Agent 工作台</span>
         </div>
       </div>
       <button class="btn-toggle" @click="toggleSidebar">
@@ -44,6 +44,21 @@
           <span class="type-dot" :style="{ background: type.color }"></span>
           <span v-show="!collapsed">{{ type.name }}</span>
           <span class="nav-badge" v-show="!collapsed">{{ getTypeCount(type.id) }}</span>
+        </router-link>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-label" v-show="!collapsed">Agent 工作区</div>
+        <router-link
+          v-for="item in workspaceNav"
+          :key="item.path"
+          :to="item.path"
+          class="nav-item"
+          :class="{ active: isActive(item.path) }"
+          :title="item.name"
+        >
+          <svg width="20" height="20"><use :href="`#icon-${item.icon}`"/></svg>
+          <span v-show="!collapsed">{{ item.name }}</span>
         </router-link>
       </div>
 
@@ -85,8 +100,12 @@ const mainNav = [
   { name: '账号管理', path: '/accounts', icon: 'types' }
 ]
 
+const workspaceNav = [
+  { name: 'Agent', path: '/ai', icon: 'ai' },
+  { name: 'IDE', path: '/ide', icon: 'edit' }
+]
+
 const sysNav = [
-  { name: 'AI 助手', path: '/ai', icon: 'ai' },
   { name: 'AI 设置', path: '/ai-settings', icon: 'settings' },
   { name: 'Sub2API', path: '/sub2api', icon: 'gateway' },
   { name: '设置', path: '/settings', icon: 'settings' },
@@ -98,6 +117,10 @@ function toggleSidebar() {
 }
 
 function isActive(path: string) {
+  if (path === '/accounts' && route.path.startsWith('/accounts/list/')) {
+    return false
+  }
+
   return route.path === path || route.path.startsWith(path + '/')
 }
 

@@ -8,6 +8,12 @@ const routes = [
     meta: { title: 'Live2D 悬浮窗', overlay: true }
   },
   {
+    path: '/ai-overlay',
+    name: 'AIOverlay',
+    component: () => import('@/views/AIOverlay.vue'),
+    meta: { title: 'AI 对话悬浮窗', overlay: true }
+  },
+  {
     path: '/',
     redirect: '/accounts'
   },
@@ -84,8 +90,20 @@ const routes = [
   {
     path: '/ai',
     name: 'AIAssistant',
+    component: () => import('@/views/AgentView.vue'),
+    meta: { title: 'Agent', immersive: true }
+  },
+  {
+    path: '/ai/classic',
+    name: 'AIAssistantClassic',
     component: () => import('@/views/AIAssistant.vue'),
-    meta: { title: 'AI 助手' }
+    meta: { title: 'Agent 经典版' }
+  },
+  {
+    path: '/ide',
+    name: 'IDEView',
+    component: () => import('@/views/IDEView.vue'),
+    meta: { title: 'IDE', immersive: true, hideTopBar: true }
   },
   {
     path: '/data',

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, Live2DCursorPoint, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalRunRequest, IDETerminalRunResult, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -15,10 +15,16 @@ interface ElectronAPI {
   navigateMainWindow: (hashPath?: string) => void
   hideMainWindow: () => void
   toggleMainWindow: () => void
+  showAIOverlayWindow: () => void
+  hideAIOverlayWindow: () => void
+  closeAIOverlayWindow: () => void
+  toggleAIOverlayWindow: () => void
   showLive2DWindow: () => void
   hideLive2DWindow: () => void
   toggleLive2DWindow: () => void
   onLive2DCursorPoint: (callback: (point: Live2DCursorPoint) => void) => (() => void)
+  sendLive2DMouthState: (payload: Live2DMouthState) => void
+  onLive2DMouthState: (callback: (payload: Live2DMouthState) => void) => (() => void)
   isMaximized: () => Promise<boolean>
   onMaximized: (callback: (maximized: boolean) => void) => void
   onSettingsChanged: (callback: (settings: AppSettings) => void) => void
@@ -55,6 +61,16 @@ interface ElectronAPI {
   sub2ApiEnsureDesktopAccess: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>, currentApiKey?: string) => Promise<Sub2ApiDesktopAccessResult>
   sub2ApiChooseBinary: (defaultPath?: string) => Promise<string | null>
   openExternal: (url: string) => void
+  // IDE 文件系统
+  ideReadFile: (filePath: string, encoding?: string) => Promise<string | null>
+  ideWriteFile: (filePath: string, content: string, encoding?: string) => Promise<boolean>
+  ideCreateDirectory: (dirPath: string) => Promise<boolean>
+  ideListDirectory: (dirPath: string) => Promise<Array<{ name: string; isDirectory: boolean }> | null>
+  ideFileExists: (filePath: string) => Promise<boolean>
+  ideFileStat: (filePath: string) => Promise<{ size: number; isFile: boolean; isDirectory: boolean; modifiedAt: number } | null>
+  ideRunCommand: (payload: IDETerminalRunRequest) => Promise<IDETerminalRunResult>
+  ideCancelCommand: (sessionId: string) => Promise<boolean>
+  onIdeTerminalEvent: (callback: (payload: IDETerminalEvent) => void) => (() => void)
   // MCP 工具
   mcpExecuteCommand: (command: string) => Promise<MCPToolResult>
   mcpCaptureScreen: (payload: { region?: 'full' | 'active' | 'window'; windowId?: number; windowHandle?: string; windowTitle?: string; processName?: string }) => Promise<MCPToolResult>

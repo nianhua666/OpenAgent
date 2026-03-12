@@ -11,10 +11,11 @@ import type {
   AIContextMetrics
 } from '@/types'
 import { useSettingsStore } from '@/stores/settings'
+import { useAIStore } from '@/stores/ai'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { coerceToolArguments, stringifyToolArguments } from '@/utils/aiToolArgs'
 
-type SupportedProtocol = 'openai' | 'anthropic' | 'ollama-local' | 'ollama-cloud'
+type SupportedProtocol = 'openai' | 'anthropic' | 'gemini' | 'ollama-local' | 'ollama-cloud'
 
 interface OpenAIToolDefinition {
   type: 'function'
@@ -29,6 +30,7 @@ interface StreamCallbacks {
   onToken: (token: string) => void
   onReasoning?: (token: string) => void
   onToolCall: (toolCall: AIToolCall) => void
+  onProviderMetadata?: (metadata: Record<string, unknown>) => void
   onDone: () => void | Promise<void>
   onError: (error: string) => void
 }
@@ -98,6 +100,51 @@ type ResponsesApiResponse = {
   }
 }
 
+type GeminiInlineData = {
+  mimeType?: string
+  data?: string
+}
+
+type GeminiFunctionCall = {
+  name?: string
+  args?: Record<string, unknown>
+}
+
+type GeminiFunctionResponse = {
+  name?: string
+  response?: Record<string, unknown>
+}
+
+type GeminiPart = {
+  text?: string
+  inlineData?: GeminiInlineData
+  functionCall?: GeminiFunctionCall
+  functionResponse?: GeminiFunctionResponse
+  thought?: boolean
+  thoughtSignature?: string
+  thought_signature?: string
+}
+
+type GeminiContent = {
+  role?: string
+  parts?: GeminiPart[]
+}
+
+type GeminiCandidate = {
+  content?: GeminiContent
+  finishReason?: string
+}
+
+type GeminiGenerateContentResponse = {
+  candidates?: GeminiCandidate[]
+  promptFeedback?: {
+    blockReason?: string
+  }
+  error?: {
+    message?: string
+  }
+}
+
 type ResponsesStreamEvent = {
   type?: string
   response?: ResponsesApiResponse
@@ -114,6 +161,20 @@ type ResponsesStreamEvent = {
     message?: string
   }
   message?: string
+}
+
+class OpenAIRequestError extends Error {
+  status: number
+  responseText: string
+  endpointType: 'chat-completions' | 'responses'
+
+  constructor(endpointType: 'chat-completions' | 'responses', status: number, responseText: string, message: string) {
+    super(message)
+    this.name = 'OpenAIRequestError'
+    this.status = status
+    this.responseText = responseText
+    this.endpointType = endpointType
+  }
 }
 
 const DEFAULT_MODEL_CAPABILITIES: AIModelCapabilities = {
@@ -153,6 +214,12 @@ const ANTHROPIC_LIMIT_PRESETS: ModelLimitPreset[] = [
   { pattern: /claude-3/i, maxContextTokens: 200000, maxOutputTokens: 4096 }
 ]
 
+const GEMINI_LIMIT_PRESETS: ModelLimitPreset[] = [
+  { pattern: /gemini-2\.5|gemini-1\.5/i, maxContextTokens: 1048576, maxOutputTokens: 65536 },
+  { pattern: /gemini-2/i, maxContextTokens: 1048576, maxOutputTokens: 8192 },
+  { pattern: /gemini/i, maxContextTokens: 1048576, maxOutputTokens: 8192 }
+]
+
 const OLLAMA_LIMIT_PRESETS: ModelLimitPreset[] = [
   { pattern: /qwen3|qwq|deepseek-r1/i, maxContextTokens: 131072, maxOutputTokens: 16384 },
   { pattern: /qwen2\.5-vl|qwen2\.5|qwen/i, maxContextTokens: 65536, maxOutputTokens: 16384 },
@@ -163,16 +230,54 @@ function isOllamaProtocol(protocol: AIProtocol): protocol is 'ollama-local' | 'o
   return protocol === 'ollama-local' || protocol === 'ollama-cloud'
 }
 
-function resolveProtocol(protocol: AIProtocol): SupportedProtocol {
+function inferCustomProtocol(baseUrl: string, modelName: string): SupportedProtocol {
+  const normalizedBaseUrl = trimTrailingSlashes(baseUrl).toLowerCase()
+  const normalizedModelName = modelName.trim().toLowerCase()
+
+  if (
+    /generativelanguage\.googleapis\.com|\/v1beta(?:\/|$)|:(?:generatecontent|streamgeneratecontent|counttokens)\b/.test(normalizedBaseUrl)
+    || normalizedModelName.startsWith('gemini')
+  ) {
+    return 'gemini'
+  }
+
+  if (/anthropic|\/messages(?:\/|$)/.test(normalizedBaseUrl) || normalizedModelName.startsWith('claude')) {
+    return 'anthropic'
+  }
+
+  if (/localhost:11434|127\.0\.0\.1:11434/.test(normalizedBaseUrl)) {
+    return 'ollama-local'
+  }
+
+  if (/ollama\.com\/api/.test(normalizedBaseUrl)) {
+    return 'ollama-cloud'
+  }
+
+  return 'openai'
+}
+
+function resolveProtocol(protocol: AIProtocol, baseUrl = '', modelName = ''): SupportedProtocol {
   if (protocol === 'anthropic') {
     return 'anthropic'
+  }
+
+  if (protocol === 'gemini') {
+    return 'gemini'
   }
 
   if (isOllamaProtocol(protocol)) {
     return protocol
   }
 
+  if (protocol === 'custom') {
+    return inferCustomProtocol(baseUrl, modelName)
+  }
+
   return 'openai'
+}
+
+function resolveConfigProtocol(config: AIConfig): SupportedProtocol {
+  return resolveProtocol(config.protocol, config.baseUrl, config.model)
 }
 
 function trimTrailingSlashes(url: string) {
@@ -204,6 +309,23 @@ function ensureOpenAIBase(baseUrl: string) {
 
   return sanitized
     .replace(/\/chat\/completions$/i, '')
+    .replace(/\/responses$/i, '')
+    .replace(/\/models$/i, '')
+}
+
+function normalizeGeminiModelName(modelName: string) {
+  return modelName.trim().replace(/^models\//i, '')
+}
+
+function ensureGeminiBase(baseUrl: string) {
+  const sanitized = trimTrailingSlashes(baseUrl)
+  if (!sanitized) {
+    return 'https://generativelanguage.googleapis.com/v1beta'
+  }
+
+  return sanitized
+    .replace(/\/models\/[^/?#]+:(generateContent|streamGenerateContent|countTokens)(\?[^#]+)?$/i, '')
+    .replace(/\/models\/[^/?#]+$/i, '')
     .replace(/\/models$/i, '')
 }
 
@@ -228,6 +350,10 @@ function normalizeChatUrl(baseUrl: string, protocol: SupportedProtocol) {
     return `${ensureAnthropicBase(baseUrl)}/messages`
   }
 
+  if (protocol === 'gemini') {
+    return ensureGeminiBase(baseUrl)
+  }
+
   if (protocol === 'ollama-local' || protocol === 'ollama-cloud') {
     return `${ensureOllamaBase(baseUrl, protocol)}/chat`
   }
@@ -242,6 +368,10 @@ function normalizeResponsesUrl(baseUrl: string) {
 function normalizeModelsUrl(baseUrl: string, protocol: SupportedProtocol) {
   if (protocol === 'anthropic') {
     return ''
+  }
+
+  if (protocol === 'gemini') {
+    return `${ensureGeminiBase(baseUrl)}/models`
   }
 
   if (protocol === 'ollama-local' || protocol === 'ollama-cloud') {
@@ -271,6 +401,20 @@ function buildAnthropicHeaders(config: AIConfig): HeadersInit {
   }
 }
 
+function buildGeminiHeaders(config: AIConfig): HeadersInit {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+
+  const apiKey = config.apiKey.trim()
+  if (apiKey) {
+    headers['x-goog-api-key'] = apiKey
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+
+  return headers
+}
+
 function buildOllamaHeaders(config: AIConfig): HeadersInit {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
@@ -284,7 +428,60 @@ function buildOllamaHeaders(config: AIConfig): HeadersInit {
 }
 
 function shouldUseOpenAIResponsesApi(config: AIConfig) {
-  return resolveProtocol(config.protocol) === 'openai' && config.connectionTemplate === 'sub2api-openai'
+  return resolveConfigProtocol(config) === 'openai' && config.connectionTemplate === 'sub2api-openai'
+}
+
+function normalizeOpenAIErrorText(errorText: string) {
+  return errorText.toLowerCase()
+}
+
+function shouldFallbackToResponses(config: AIConfig, error: unknown) {
+  if (!(error instanceof OpenAIRequestError)) {
+    return false
+  }
+
+  if (resolveConfigProtocol(config) !== 'openai' || error.endpointType !== 'chat-completions') {
+    return false
+  }
+
+  const normalizedErrorText = normalizeOpenAIErrorText(error.responseText)
+  return error.status >= 400
+    && error.status < 500
+    && (
+      normalizedErrorText.includes('unsupported legacy protocol')
+      || normalizedErrorText.includes('please use /v1/responses')
+      || normalizedErrorText.includes('/v1/chat/completions is not supported')
+      || (normalizedErrorText.includes('legacy protocol') && normalizedErrorText.includes('/v1/responses'))
+    )
+}
+
+function shouldFallbackToChatCompletions(config: AIConfig, error: unknown) {
+  if (!(error instanceof OpenAIRequestError)) {
+    return false
+  }
+
+  if (resolveConfigProtocol(config) !== 'openai' || error.endpointType !== 'responses') {
+    return false
+  }
+
+  const normalizedErrorText = normalizeOpenAIErrorText(error.responseText)
+  return error.status === 404
+    || error.status === 405
+    || error.status === 501
+    || (
+      error.status >= 400
+      && error.status < 500
+      && (
+        normalizedErrorText.includes('please use /v1/chat/completions')
+        || normalizedErrorText.includes('/v1/responses is not supported')
+        || normalizedErrorText.includes('responses is not supported')
+        || (normalizedErrorText.includes('/responses') && normalizedErrorText.includes('not supported'))
+      )
+    )
+}
+
+function formatOpenAIRequestError(error: unknown) {
+  return error instanceof Error ? error.message : '未知错误'
 }
 
 function isWindowsMcpEnabled() {
@@ -332,14 +529,16 @@ export function inferModelLimits(modelName: string, protocol: AIProtocol, raw?: 
   const normalizedName = modelName.toLowerCase()
   const details = raw?.details && typeof raw.details === 'object' ? raw.details as Record<string, unknown> : undefined
   const metadata = raw && typeof raw === 'object' ? raw : undefined
-  const directContext = readNumericCandidate(metadata, ['context_length', 'context_window', 'max_context_tokens', 'num_ctx'])
-    || readNumericCandidate(details, ['context_length', 'context_window', 'num_ctx'])
-  const directOutput = readNumericCandidate(metadata, ['max_output_tokens', 'max_completion_tokens', 'output_token_limit'])
-    || readNumericCandidate(details, ['max_output_tokens', 'num_predict'])
+  const directContext = readNumericCandidate(metadata, ['context_length', 'context_window', 'max_context_tokens', 'num_ctx', 'inputTokenLimit', 'input_token_limit'])
+    || readNumericCandidate(details, ['context_length', 'context_window', 'num_ctx', 'inputTokenLimit', 'input_token_limit'])
+  const directOutput = readNumericCandidate(metadata, ['max_output_tokens', 'max_completion_tokens', 'output_token_limit', 'outputTokenLimit', 'output_token_limit'])
+    || readNumericCandidate(details, ['max_output_tokens', 'num_predict', 'outputTokenLimit', 'output_token_limit'])
 
   let preset = DEFAULT_MODEL_LIMITS
   if (protocol === 'anthropic') {
     preset = matchLimitPreset(normalizedName, ANTHROPIC_LIMIT_PRESETS) || { pattern: /.*/, maxContextTokens: 200000, maxOutputTokens: 8192 }
+  } else if (protocol === 'gemini') {
+    preset = matchLimitPreset(normalizedName, GEMINI_LIMIT_PRESETS) || { pattern: /.*/, maxContextTokens: 1048576, maxOutputTokens: 8192 }
   } else if (protocol === 'ollama-local' || protocol === 'ollama-cloud') {
     preset = matchLimitPreset(normalizedName, OLLAMA_LIMIT_PRESETS) || { pattern: /.*/, maxContextTokens: 32768, maxOutputTokens: 8192 }
   } else {
@@ -477,15 +676,22 @@ function supportsImageInput(message: AIChatMessage) {
   return Array.isArray(message.attachments) && message.attachments.some(attachment => attachment.type === 'image' && attachment.dataUrl)
 }
 
-function buildImageAttachmentPrompt(message: AIChatMessage) {
+function buildImageAttachmentSummary(message: AIChatMessage) {
   const imageAttachments = (message.attachments ?? []).filter(attachment => attachment.type === 'image' && attachment.dataUrl)
   if (imageAttachments.length === 0) {
     return ''
   }
 
-  const attachmentSummary = imageAttachments
+  return imageAttachments
     .map(attachment => `- ${attachment.name}${attachment.width && attachment.height ? ` (${attachment.width}x${attachment.height})` : ''}`)
     .join('\n')
+}
+
+function buildImageAttachmentPrompt(message: AIChatMessage) {
+  const attachmentSummary = buildImageAttachmentSummary(message)
+  if (!attachmentSummary) {
+    return ''
+  }
 
   const baseInstruction = message.content.trim()
     ? '请结合本轮已附带的图片或截图一起分析，并直接描述图像中的可见内容、文本、界面状态和关键变化。除非附件缺失、损坏或分辨率不足，不要笼统回答“无法解析图像”。'
@@ -510,16 +716,24 @@ function buildAttachmentTextContent(attachment: AIChatAttachment) {
 
 function buildMessageTextContent(message: AIChatMessage) {
   const imagePrompt = message.role === 'user' ? buildImageAttachmentPrompt(message) : ''
+  const assistantImageSummary = message.role === 'assistant'
+    ? buildImageAttachmentSummary(message)
+    : ''
   const fileSections = (message.attachments ?? [])
     .filter(attachment => attachment.type === 'file')
     .map(attachment => buildAttachmentTextContent(attachment))
     .filter(Boolean)
 
-  if (!imagePrompt && fileSections.length === 0) {
+  if (!imagePrompt && !assistantImageSummary && fileSections.length === 0) {
     return message.content
   }
 
-  return [message.content, imagePrompt, ...fileSections].filter(Boolean).join('\n\n')
+  return [
+    message.content,
+    imagePrompt,
+    assistantImageSummary ? `本轮助手还生成了以下图片附件：\n${assistantImageSummary}` : '',
+    ...fileSections
+  ].filter(Boolean).join('\n\n')
 }
 
 export function splitEmbeddedReasoningContent(content: string) {
@@ -960,6 +1174,345 @@ function buildAnthropicTools(tools: OpenAIToolDefinition[]) {
   }))
 }
 
+function appendGeminiMessage(messages: GeminiContent[], role: 'user' | 'model', parts: GeminiPart[]) {
+  if (parts.length === 0) {
+    return
+  }
+
+  messages.push({ role, parts: cloneGeminiParts(parts) })
+}
+
+function getGeminiThoughtSignature(part: GeminiPart) {
+  if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.trim()) {
+    return part.thoughtSignature
+  }
+
+  if (typeof part.thought_signature === 'string' && part.thought_signature.trim()) {
+    return part.thought_signature
+  }
+
+  return ''
+}
+
+function cloneGeminiPart(part: GeminiPart): GeminiPart {
+  const nextPart: GeminiPart = {}
+
+  if (typeof part.text === 'string') {
+    nextPart.text = part.text
+  }
+
+  if (part.inlineData && typeof part.inlineData === 'object') {
+    nextPart.inlineData = {
+      mimeType: typeof part.inlineData.mimeType === 'string' ? part.inlineData.mimeType : undefined,
+      data: typeof part.inlineData.data === 'string' ? part.inlineData.data : undefined
+    }
+  }
+
+  if (part.functionCall && typeof part.functionCall === 'object') {
+    nextPart.functionCall = {
+      name: typeof part.functionCall.name === 'string' ? part.functionCall.name : undefined,
+      args: part.functionCall.args && typeof part.functionCall.args === 'object' && !Array.isArray(part.functionCall.args)
+        ? part.functionCall.args
+        : {}
+    }
+  }
+
+  if (part.functionResponse && typeof part.functionResponse === 'object') {
+    nextPart.functionResponse = {
+      name: typeof part.functionResponse.name === 'string' ? part.functionResponse.name : undefined,
+      response: part.functionResponse.response && typeof part.functionResponse.response === 'object' && !Array.isArray(part.functionResponse.response)
+        ? part.functionResponse.response
+        : {}
+    }
+  }
+
+  if (typeof part.thought === 'boolean') {
+    nextPart.thought = part.thought
+  }
+
+  const thoughtSignature = getGeminiThoughtSignature(part)
+  if (thoughtSignature) {
+    nextPart.thoughtSignature = thoughtSignature
+  }
+
+  return nextPart
+}
+
+function cloneGeminiParts(parts: GeminiPart[] | undefined) {
+  return Array.isArray(parts) ? parts.map(part => cloneGeminiPart(part)) : []
+}
+
+function normalizeStoredGeminiParts(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as GeminiPart[]
+  }
+
+  return value
+    .filter((item): item is GeminiPart => Boolean(item) && typeof item === 'object')
+    .map(item => cloneGeminiPart(item))
+    .filter(part => Object.keys(part).length > 0)
+}
+
+function parseGeminiFunctionResponseValue(content: string) {
+  if (!content.trim()) {
+    return { content: '' }
+  }
+
+  try {
+    const parsed = JSON.parse(content)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+
+    return { result: parsed }
+  } catch {
+    return { content }
+  }
+}
+
+function buildGeminiSystemInstruction(messages: AIChatMessage[]) {
+  const systemText = messages
+    .filter(message => message.role === 'system')
+    .map(message => buildMessageTextContent(message).trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  if (!systemText) {
+    return undefined
+  }
+
+  return {
+    parts: [{ text: systemText }]
+  }
+}
+
+function buildGeminiContents(messages: AIChatMessage[]) {
+  const conversation: GeminiContent[] = []
+  const toolCallNames = new Map<string, string>()
+
+  for (const message of messages) {
+    if (message.role === 'system') {
+      continue
+    }
+
+    if (message.role === 'user') {
+      const parts: GeminiPart[] = []
+      const textContent = buildMessageTextContent(message)
+
+      if (textContent || !supportsImageInput(message)) {
+        parts.push({ text: textContent || '' })
+      }
+
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.type === 'image' && attachment.dataUrl) {
+          const [meta, base64 = ''] = attachment.dataUrl.split(',', 2)
+          const mimeType = meta.replace(/^data:/i, '').replace(/;base64$/i, '') || attachment.mimeType || 'image/png'
+          parts.push({
+            inlineData: {
+              mimeType,
+              data: base64
+            }
+          })
+        }
+      }
+
+      appendGeminiMessage(conversation, 'user', parts)
+      continue
+    }
+
+    if (message.role === 'assistant') {
+      const storedParts = normalizeStoredGeminiParts(message.providerMetadata?.geminiParts)
+      if (storedParts.length > 0) {
+        for (const toolCall of message.toolCalls ?? []) {
+          if (toolCall.name.trim()) {
+            toolCallNames.set(toolCall.id, toolCall.name)
+          }
+        }
+
+        appendGeminiMessage(conversation, 'model', storedParts)
+        continue
+      }
+
+      const parts: GeminiPart[] = []
+
+      if (message.content) {
+        parts.push({ text: message.content })
+      }
+
+      for (const toolCall of message.toolCalls ?? []) {
+        if (!toolCall.name.trim()) {
+          continue
+        }
+
+        toolCallNames.set(toolCall.id, toolCall.name)
+        const thoughtSignature = typeof toolCall.providerMetadata?.geminiThoughtSignature === 'string'
+          ? toolCall.providerMetadata.geminiThoughtSignature
+          : ''
+
+        parts.push({
+          functionCall: {
+            name: toolCall.name,
+            args: parseToolArguments(toolCall.name, toolCall.arguments)
+          },
+          ...(thoughtSignature ? { thoughtSignature } : {})
+        })
+      }
+
+      appendGeminiMessage(conversation, 'model', parts)
+      continue
+    }
+
+    if (message.role === 'tool') {
+      if (message.toolCallId) {
+        const toolName = message.toolName || toolCallNames.get(message.toolCallId) || 'tool_result'
+        appendGeminiMessage(conversation, 'user', [{
+          functionResponse: {
+            name: toolName,
+            response: parseGeminiFunctionResponseValue(message.content || '')
+          }
+        }])
+      } else if (message.content) {
+        appendGeminiMessage(conversation, 'user', [{ text: message.content }])
+      }
+    }
+  }
+
+  return conversation
+}
+
+function buildGeminiTools(config: AIConfig) {
+  const declarations = getAvailableTools(config.protocol)
+    .filter(tool => tool.function.name.trim())
+    .map(tool => ({
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters
+    }))
+
+  return declarations.length > 0
+    ? [{ functionDeclarations: declarations }]
+    : []
+}
+
+function buildGeminiGenerateContentUrl(baseUrl: string, model: string, stream = false) {
+  const normalizedModel = normalizeGeminiModelName(model)
+  const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
+  return `${ensureGeminiBase(baseUrl)}/models/${encodeURIComponent(normalizedModel)}:${action}`
+}
+
+function buildGeminiBody(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  includeTools = true
+) {
+  const limits = resolveConfigTokenLimits(config)
+  const body: Record<string, unknown> = {
+    contents: buildGeminiContents(messages),
+    generationConfig: {
+      temperature: config.temperature,
+      maxOutputTokens: limits.maxOutputTokens
+    }
+  }
+
+  const systemInstruction = buildGeminiSystemInstruction(messages)
+  if (systemInstruction) {
+    body.systemInstruction = systemInstruction
+  }
+
+  const tools = includeTools ? buildGeminiTools(config) : []
+  if (tools.length > 0) {
+    body.tools = tools
+    body.toolConfig = {
+      functionCallingConfig: {
+        mode: 'AUTO'
+      }
+    }
+  }
+
+  return body
+}
+
+function parseGeminiCandidate(candidate: GeminiCandidate | undefined) {
+  let content = ''
+  let reasoningContent = ''
+  const toolCalls: AIToolCall[] = []
+  const parts = cloneGeminiParts(candidate?.content?.parts)
+
+  for (const [index, part] of parts.entries()) {
+    if (typeof part.text === 'string' && part.text) {
+      if (part.thought) {
+        reasoningContent += part.text
+      } else {
+        content += part.text
+      }
+    }
+
+    if (part.functionCall?.name) {
+      const thoughtSignature = getGeminiThoughtSignature(part)
+      toolCalls.push({
+        id: `gemini_call_${index}`,
+        name: part.functionCall.name,
+        arguments: JSON.stringify(part.functionCall.args || {}),
+        ...(thoughtSignature ? { providerMetadata: { geminiThoughtSignature: thoughtSignature } } : {})
+      })
+    }
+  }
+
+  return { content, reasoningContent, toolCalls, parts }
+}
+
+function normalizeGeminiResponseChunks(payload: unknown) {
+  if (Array.isArray(payload)) {
+    return payload.filter((item): item is GeminiGenerateContentResponse => Boolean(item) && typeof item === 'object')
+  }
+
+  if (payload && typeof payload === 'object') {
+    return [payload as GeminiGenerateContentResponse]
+  }
+
+  return []
+}
+
+function extractGeminiErrorMessage(rawText: string) {
+  try {
+    const parsed = JSON.parse(rawText) as GeminiGenerateContentResponse
+    return parsed.error?.message || rawText
+  } catch {
+    return rawText
+  }
+}
+
+function mergeGeminiToolCalls(toolCallsMap: Map<number, AIToolCall>, candidate: GeminiCandidate | undefined, candidateIndex: number) {
+  for (const [partIndex, part] of cloneGeminiParts(candidate?.content?.parts).entries()) {
+    if (!part.functionCall?.name) {
+      continue
+    }
+
+    const toolIndex = candidateIndex * 100 + partIndex
+    const nextArguments = JSON.stringify(part.functionCall.args || {})
+    const thoughtSignature = getGeminiThoughtSignature(part)
+    if (!toolCallsMap.has(toolIndex)) {
+      toolCallsMap.set(toolIndex, {
+        id: `gemini_call_${candidateIndex}_${partIndex}`,
+        name: part.functionCall.name,
+        arguments: nextArguments,
+        ...(thoughtSignature ? { providerMetadata: { geminiThoughtSignature: thoughtSignature } } : {})
+      })
+      continue
+    }
+
+    const existing = toolCallsMap.get(toolIndex)!
+    existing.name = part.functionCall.name
+    existing.arguments = mergeStreamingArgumentText(existing.arguments, nextArguments)
+    if (thoughtSignature) {
+      existing.providerMetadata = {
+        ...(existing.providerMetadata ?? {}),
+        geminiThoughtSignature: thoughtSignature
+      }
+    }
+  }
+}
+
 function buildOpenAICompatibleBody(
   config: AIConfig,
   messages: AIChatMessage[],
@@ -1124,7 +1677,7 @@ function buildOllamaBody(
 }
 
 function shouldRetryWithoutTools(protocol: SupportedProtocol, status: number, errorText: string) {
-  return (protocol === 'openai' || protocol === 'ollama-local' || protocol === 'ollama-cloud')
+  return (protocol === 'openai' || protocol === 'gemini' || protocol === 'ollama-local' || protocol === 'ollama-cloud')
     && (status === 400 || status === 404 || status === 422)
     && /tool|tools|function|schema|unsupported/i.test(errorText)
 }
@@ -1142,7 +1695,7 @@ async function requestOpenAICompatible(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ) {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
   const url = normalizeChatUrl(config.baseUrl, protocol)
   const allowTools = options?.includeTools !== false
   const queue: Array<{ includeTools: boolean; includeThinking: boolean }> = [{ includeTools: allowTools, includeThinking: true }]
@@ -1181,7 +1734,12 @@ async function requestOpenAICompatible(
     }
   }
 
-  throw new Error(`API 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`)
+  throw new OpenAIRequestError(
+    'chat-completions',
+    lastStatus,
+    lastErrorText,
+    `API 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`
+  )
 }
 
 async function requestOpenAIResponses(
@@ -1230,7 +1788,412 @@ async function requestOpenAIResponses(
     }
   }
 
-  throw new Error(`Responses 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`)
+  throw new OpenAIRequestError(
+    'responses',
+    lastStatus,
+    lastErrorText,
+    `Responses 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`
+  )
+}
+
+async function streamOpenAIResponsesFlow(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  callbacks: StreamCallbacks,
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const { response } = await requestOpenAIResponses(config, true, messages, preferences, options, signal)
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    callbacks.onError('响应体为空')
+    return
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const toolCallsMap = new Map<number, AIToolCall>()
+  const toolIndexById = new Map<string, number>()
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine || !trimmedLine.startsWith('data:')) {
+        continue
+      }
+
+      const payload = trimmedLine.slice(5).trim()
+      if (payload === '[DONE]') {
+        emitToolCalls(toolCallsMap, callbacks)
+        await callbacks.onDone()
+        return
+      }
+
+      try {
+        const event = JSON.parse(payload) as ResponsesStreamEvent
+        const eventType = event.type || ''
+
+        if (eventType === 'response.output_text.delta') {
+          const textDelta = event.delta || event.text || ''
+          if (textDelta) {
+            callbacks.onToken(textDelta)
+          }
+          continue
+        }
+
+        if (eventType === 'response.reasoning_summary_text.delta') {
+          const reasoningDelta = event.delta || event.text || ''
+          if (reasoningDelta) {
+            callbacks.onReasoning?.(reasoningDelta)
+          }
+          continue
+        }
+
+        if (eventType === 'response.output_item.added' && event.item?.type === 'function_call') {
+          const outputIndex = Number(event.output_index ?? toolCallsMap.size)
+          mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, event.item)
+          continue
+        }
+
+        if (eventType === 'response.function_call_arguments.delta' || eventType === 'response.function_call_arguments.done') {
+          const outputIndex = typeof event.output_index === 'number'
+            ? event.output_index
+            : (event.call_id ? toolIndexById.get(event.call_id) : undefined) ?? (event.item_id ? toolIndexById.get(event.item_id) : undefined) ?? toolCallsMap.size
+          mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, undefined, event.call_id || event.item_id, event.delta || event.arguments || '')
+          continue
+        }
+
+        if (eventType === 'response.failed') {
+          callbacks.onError(extractResponsesErrorMessage(event))
+          return
+        }
+
+        if (eventType === 'response.completed' || eventType === 'response.incomplete') {
+          const parsedResponse = event.response
+          if (parsedResponse) {
+            for (const [index, item] of (parsedResponse.output ?? []).entries()) {
+              if (item.type === 'function_call') {
+                mergeResponsesFunctionCall(toolCallsMap, toolIndexById, index, item)
+              }
+            }
+          }
+
+          emitToolCalls(toolCallsMap, callbacks)
+          await callbacks.onDone()
+          return
+        }
+      } catch {
+        // 等待下一个 SSE 片段拼接完整。
+      }
+    }
+  }
+
+  emitToolCalls(toolCallsMap, callbacks)
+  await callbacks.onDone()
+}
+
+async function streamOpenAICompatibleFlow(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  callbacks: StreamCallbacks,
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const { response } = await requestOpenAICompatible(config, true, messages, preferences, options, signal)
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    callbacks.onError('响应体为空')
+    return
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const toolCallsMap = new Map<number, AIToolCall>()
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine || !trimmedLine.startsWith('data:')) {
+        continue
+      }
+
+      const payload = trimmedLine.slice(5).trim()
+      if (payload === '[DONE]') {
+        emitToolCalls(toolCallsMap, callbacks)
+        await callbacks.onDone()
+        return
+      }
+
+      try {
+        const parsed = JSON.parse(payload)
+        const choice = parsed.choices?.[0]
+        const delta = (choice?.delta ?? {}) as Record<string, unknown>
+
+        if (!delta) {
+          continue
+        }
+
+        const contentDelta = extractOpenAIContentDelta(delta)
+        const reasoningDelta = extractOpenAIReasoningDelta(delta)
+
+        if (contentDelta) {
+          callbacks.onToken(contentDelta)
+        }
+
+        if (reasoningDelta) {
+          callbacks.onReasoning?.(reasoningDelta)
+        }
+
+        if (Array.isArray(delta.tool_calls)) {
+          mergeToolCalls(toolCallsMap, delta.tool_calls)
+        }
+
+        if (choice?.finish_reason === 'tool_calls' || choice?.finish_reason === 'stop') {
+          emitToolCalls(toolCallsMap, callbacks)
+          await callbacks.onDone()
+          return
+        }
+      } catch {
+        // 等待下一个 SSE 片段拼接完整。
+      }
+    }
+  }
+
+  emitToolCalls(toolCallsMap, callbacks)
+  await callbacks.onDone()
+}
+
+async function chatCompletionOpenAIResponsesFlow(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const { response } = await requestOpenAIResponses(config, false, messages, preferences, options, signal)
+  const data = await response.json() as ResponsesApiResponse
+  if (data.status === 'failed') {
+    throw new Error(data.error?.message || 'Responses 请求失败')
+  }
+
+  return parseResponsesOutput(data)
+}
+
+async function chatCompletionOpenAICompatibleFlow(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const { response } = await requestOpenAICompatible(config, false, messages, preferences, options, signal)
+  const data = await response.json()
+  const choice = data.choices?.[0]?.message
+  const content = choice?.content ?? ''
+  const reasoningContent = extractOpenAIReasoningMessage(choice)
+  const toolCalls: AIToolCall[] = (choice?.tool_calls ?? []).map((toolCall: Record<string, unknown>, index: number) => ({
+    id: String(toolCall.id || `call_${index}`),
+    name: String((toolCall.function as { name?: string } | undefined)?.name || ''),
+    arguments: String((toolCall.function as { arguments?: string } | undefined)?.arguments || '')
+  }))
+
+  return { content, toolCalls, reasoningContent }
+}
+
+async function requestGemini(
+  config: AIConfig,
+  stream: boolean,
+  messages: AIChatMessage[],
+  _preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const url = buildGeminiGenerateContentUrl(config.baseUrl, config.model, stream)
+  const allowTools = options?.includeTools !== false
+  const queue: Array<{ includeTools: boolean }> = [{ includeTools: allowTools }]
+  const attempted = new Set<string>()
+  let lastErrorText = ''
+  let lastStatus = 500
+
+  while (queue.length > 0) {
+    const attempt = queue.shift()!
+    const attemptKey = String(attempt.includeTools)
+    if (attempted.has(attemptKey)) {
+      continue
+    }
+
+    attempted.add(attemptKey)
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: buildGeminiHeaders(config),
+      body: JSON.stringify(buildGeminiBody(config, messages, attempt.includeTools)),
+      signal
+    })
+
+    if (response.ok) {
+      return { response, includeTools: attempt.includeTools }
+    }
+
+    lastStatus = response.status
+    lastErrorText = extractGeminiErrorMessage(await response.text())
+
+    if (allowTools && attempt.includeTools && shouldRetryWithoutTools('gemini', response.status, lastErrorText)) {
+      queue.push({ includeTools: false })
+    }
+  }
+
+  throw new Error(`Gemini 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`)
+}
+
+async function streamGeminiChat(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  callbacks: StreamCallbacks,
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  try {
+    const { response } = await requestGemini(config, true, messages, preferences, options, signal)
+    const reader = response.body?.getReader()
+    if (!reader) {
+      callbacks.onError('响应体为空')
+      return
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const toolCallsMap = new Map<number, AIToolCall>()
+    const previousTextByCandidate = new Map<number, string>()
+    const previousReasoningByCandidate = new Map<number, string>()
+    const finalPartsByCandidate = new Map<number, GeminiPart[]>()
+
+    const emitGeminiProviderMetadata = () => {
+      const parts = finalPartsByCandidate.get(0)
+      if (parts?.length) {
+        callbacks.onProviderMetadata?.({ geminiParts: parts })
+      }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() || ''
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line || !line.startsWith('data:')) {
+          continue
+        }
+
+        const payload = line.slice(5).trim()
+        if (!payload) {
+          continue
+        }
+
+        if (payload === '[DONE]') {
+          emitToolCalls(toolCallsMap, callbacks)
+          emitGeminiProviderMetadata()
+          await callbacks.onDone()
+          return
+        }
+
+        try {
+          const chunks = normalizeGeminiResponseChunks(JSON.parse(payload))
+          for (const chunk of chunks) {
+            if (chunk.error?.message) {
+              callbacks.onError(chunk.error.message)
+              return
+            }
+
+            for (const [candidateIndex, candidate] of (chunk.candidates ?? []).entries()) {
+              const parsed = parseGeminiCandidate(candidate)
+              if (parsed.parts.length > 0) {
+                finalPartsByCandidate.set(candidateIndex, parsed.parts)
+              }
+              const previousText = previousTextByCandidate.get(candidateIndex) || ''
+              const previousReasoning = previousReasoningByCandidate.get(candidateIndex) || ''
+              const nextText = parsed.content
+              const nextReasoning = parsed.reasoningContent
+              const textDelta = nextText.startsWith(previousText) ? nextText.slice(previousText.length) : nextText
+              const reasoningDelta = nextReasoning.startsWith(previousReasoning) ? nextReasoning.slice(previousReasoning.length) : nextReasoning
+
+              if (textDelta) {
+                callbacks.onToken(textDelta)
+              }
+
+              if (reasoningDelta) {
+                callbacks.onReasoning?.(reasoningDelta)
+              }
+
+              previousTextByCandidate.set(candidateIndex, nextText)
+              previousReasoningByCandidate.set(candidateIndex, nextReasoning)
+              mergeGeminiToolCalls(toolCallsMap, candidate, candidateIndex)
+            }
+          }
+        } catch {
+          // 等待下一个 SSE 片段拼接完整。
+        }
+      }
+    }
+
+    emitToolCalls(toolCallsMap, callbacks)
+    emitGeminiProviderMetadata()
+    await callbacks.onDone()
+  } catch (error) {
+    if (signal?.aborted) {
+      return
+    }
+
+    callbacks.onError(`请求失败: ${(error as Error).message}`)
+  }
+}
+
+async function chatCompletionGemini(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const { response } = await requestGemini(config, false, messages, preferences, options, signal)
+  const data = await response.json() as GeminiGenerateContentResponse
+  if (data.error?.message) {
+    throw new Error(data.error.message)
+  }
+
+  if ((!data.candidates || data.candidates.length === 0) && data.promptFeedback?.blockReason) {
+    throw new Error(`Gemini 请求被拦截: ${data.promptFeedback.blockReason}`)
+  }
+
+  return parseGeminiCandidate(data.candidates?.[0])
 }
 
 async function requestOllama(
@@ -1241,7 +2204,7 @@ async function requestOllama(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ) {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
   if (protocol !== 'ollama-local' && protocol !== 'ollama-cloud') {
     throw new Error('当前配置不是 Ollama 协议')
   }
@@ -1344,6 +2307,43 @@ function parseAnthropicModels(data: unknown): AIProviderModel[] {
     }, [])
 }
 
+function parseGeminiModels(data: unknown): AIProviderModel[] {
+  const rawModels = Array.isArray((data as { models?: unknown[] } | null)?.models)
+    ? (data as { models: Array<Record<string, unknown>> }).models
+    : []
+
+  return rawModels.reduce<AIProviderModel[]>((result, model) => {
+      const rawName = String(model.name || model.id || '')
+      const name = normalizeGeminiModelName(rawName)
+      if (!name) {
+        return result
+      }
+
+      const displayName = typeof model.displayName === 'string'
+        ? model.displayName.trim()
+        : typeof model.display_name === 'string'
+          ? model.display_name.trim()
+          : ''
+      const capabilities = inferModelCapabilities(name, 'gemini', model)
+      const limits = inferModelLimits(name, 'gemini', model)
+      result.push({
+        id: name,
+        name,
+        label: displayName || name,
+        description: [
+          typeof model.description === 'string' ? model.description.trim() : '',
+          getModelCapabilityLabels(capabilities).join(' / '),
+          getModelLimitLabels(limits).join(' / ')
+        ].filter(Boolean).join(' · ') || undefined,
+        provider: 'Gemini 兼容',
+        capabilities,
+        limits
+      })
+
+      return result
+    }, [])
+}
+
 function parseOllamaModels(data: unknown): AIProviderModel[] {
   const rawModels = Array.isArray((data as { models?: unknown[] } | null)?.models)
     ? (data as { models: Array<Record<string, unknown>> }).models
@@ -1376,7 +2376,7 @@ function parseOllamaModels(data: unknown): AIProviderModel[] {
 }
 
 async function fetchOpenAICompatibleModels(config: AIConfig, signal?: AbortSignal) {
-  const response = await fetch(normalizeModelsUrl(config.baseUrl, resolveProtocol(config.protocol)), {
+  const response = await fetch(normalizeModelsUrl(config.baseUrl, resolveConfigProtocol(config)), {
     method: 'GET',
     headers: buildOpenAICompatibleHeaders(config),
     signal
@@ -1407,8 +2407,23 @@ async function fetchAnthropicModels(config: AIConfig, signal?: AbortSignal) {
   return parseAnthropicModels(await response.json())
 }
 
+async function fetchGeminiModels(config: AIConfig, signal?: AbortSignal) {
+  const response = await fetch(normalizeModelsUrl(config.baseUrl, 'gemini'), {
+    method: 'GET',
+    headers: buildGeminiHeaders(config),
+    signal
+  })
+
+  if (!response.ok) {
+    const errorText = extractGeminiErrorMessage(await response.text())
+    throw new Error(`Gemini 模型列表请求失败 (${response.status}): ${errorText.slice(0, 200)}`)
+  }
+
+  return parseGeminiModels(await response.json())
+}
+
 async function fetchOllamaModels(config: AIConfig, signal?: AbortSignal) {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
   if (protocol !== 'ollama-local' && protocol !== 'ollama-cloud') {
     return []
   }
@@ -1428,7 +2443,7 @@ async function fetchOllamaModels(config: AIConfig, signal?: AbortSignal) {
 }
 
 export async function fetchAvailableModels(config: AIConfig, signal?: AbortSignal): Promise<AIProviderModel[]> {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
 
   if (protocol === 'anthropic') {
     try {
@@ -1474,6 +2489,10 @@ export async function fetchAvailableModels(config: AIConfig, signal?: AbortSigna
         limits: inferModelLimits('claude-3-5-haiku-latest', 'anthropic')
       }
     ]
+  }
+
+  if (protocol === 'gemini') {
+    return fetchGeminiModels(config, signal)
   }
 
   if (protocol === 'ollama-local' || protocol === 'ollama-cloud') {
@@ -1603,7 +2622,7 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
       type: 'function',
       function: {
         name: 'navigate_app',
-        description: '打开主窗口并跳转到指定页面。适合把用户带到账号管理、设置、AI 助手、导入、导出等页面。',
+        description: '打开主窗口并跳转到指定页面。适合把用户带到账号管理、设置、Agent、导入、导出等页面。',
         parameters: {
           type: 'object',
           properties: {
@@ -1810,6 +2829,183 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
     },
   ]
 
+  // Agent 增强工具（模型路由 + 子代理）
+  const aiStore = useAIStore()
+  toolList.push(
+    {
+      type: 'function',
+      function: {
+        name: 'route_model',
+        description: '分析当前任务并自主选择最适合的模型。返回推荐的模型名、协议和选择理由。在遇到需要特殊能力（大上下文、视觉、深度推理）的任务时调用。',
+        parameters: {
+          type: 'object',
+          properties: {
+            task: { type: 'string', description: '当前任务描述' },
+            preferSpeed: { type: 'boolean', description: '是否优先速度（默认平衡质量与速度）' }
+          },
+          required: ['task']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'spawn_sub_agent',
+        description: '生成并运行一个独立子代理执行特定子任务。子代理拥有独立的 Prompt 和可选的独立模型，适合并行处理分析、编码、测试等子任务。',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '子代理名称，如"前端开发者"' },
+            role: { type: 'string', description: '角色标识: code-analyst, frontend-dev, backend-dev, tester, reviewer, architect, devops' },
+            task: { type: 'string', description: '分配给子代理的任务描述' },
+            contextFromParent: { type: 'string', description: '从当前对话注入给子代理的关键上下文' },
+            model: { type: 'string', description: '可选：指定子代理使用的模型' }
+          },
+          required: ['name', 'role', 'task']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_sub_agent_status',
+        description: '获取当前会话下子代理的执行状态与结果。可选传入 agentId 只查看某一个子代理。',
+        parameters: {
+          type: 'object',
+          properties: {
+            agentId: { type: 'string', description: '可选：子代理 ID' }
+          }
+        }
+      }
+    },
+  )
+
+  // IDE 模式工具（仅 IDE 模式下启用）
+  if (aiStore.agentMode === 'ide') {
+    toolList.push(
+      {
+        type: 'function',
+        function: {
+          name: 'ide_read_file',
+          description: '读取工作区中的文件内容。路径相对于工作区根目录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对文件路径' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_write_file',
+          description: '在工作区中创建或覆盖文件。自动创建中间目录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对文件路径' },
+              content: { type: 'string', description: '文件内容' }
+            },
+            required: ['path', 'content']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_list_directory',
+          description: '列出工作区目录内容。返回文件和子目录的名称及类型。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对目录路径，留空表示根目录' }
+            }
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_search_files',
+          description: '在工作区中按文件名模式搜索文件。支持 glob 模式（如 **/*.ts）或子串匹配。',
+          parameters: {
+            type: 'object',
+            properties: {
+              pattern: { type: 'string', description: '搜索模式' }
+            },
+            required: ['pattern']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_create_plan',
+          description: '为当前工作区创建项目开发计划。将生成 PLAN.md 到 .openagent/ 目录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', description: '项目目标' },
+              overview: { type: 'string', description: '项目概述' },
+              techStack: { type: 'array', items: { type: 'string' }, description: '技术栈列表' }
+            },
+            required: ['goal', 'overview', 'techStack']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_advance_task',
+          description: '更新项目计划中某个任务的状态。自动同步阶段进度和开发日志。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' },
+              taskId: { type: 'string', description: '任务 ID' },
+              status: { type: 'string', enum: ['pending', 'in-progress', 'completed', 'failed', 'skipped'], description: '目标状态' },
+              output: { type: 'string', description: '任务输出或说明' }
+            },
+            required: ['planId', 'taskId', 'status']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_get_plan',
+          description: '获取当前项目计划的完整状态，包括所有阶段、任务和进度。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' }
+            },
+            required: ['planId']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_log',
+          description: '向开发日志添加一条记录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' },
+              type: { type: 'string', enum: ['plan', 'decision', 'milestone', 'error'], description: '日志类型' },
+              title: { type: 'string', description: '标题' },
+              content: { type: 'string', description: '内容' }
+            },
+            required: ['planId', 'type', 'title', 'content']
+          }
+        }
+      },
+    )
+  }
+
   if (isWindowsMcpEnabled()) {
     toolList.push(
       {
@@ -1934,193 +3130,56 @@ async function streamOpenAIChat(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ) {
-  if (shouldUseOpenAIResponsesApi(config)) {
+  const preferResponses = shouldUseOpenAIResponsesApi(config)
+
+  if (preferResponses) {
     try {
-      const { response } = await requestOpenAIResponses(config, true, messages, preferences, options, signal)
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        callbacks.onError('响应体为空')
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-      const toolCallsMap = new Map<number, AIToolCall>()
-      const toolIndexById = new Map<string, number>()
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-          break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmedLine = line.trim()
-          if (!trimmedLine || !trimmedLine.startsWith('data:')) {
-            continue
-          }
-
-          const payload = trimmedLine.slice(5).trim()
-          if (payload === '[DONE]') {
-            emitToolCalls(toolCallsMap, callbacks)
-            await callbacks.onDone()
-            return
-          }
-
-          try {
-            const event = JSON.parse(payload) as ResponsesStreamEvent
-            const eventType = event.type || ''
-
-            if (eventType === 'response.output_text.delta') {
-              const textDelta = event.delta || event.text || ''
-              if (textDelta) {
-                callbacks.onToken(textDelta)
-              }
-              continue
-            }
-
-            if (eventType === 'response.reasoning_summary_text.delta') {
-              const reasoningDelta = event.delta || event.text || ''
-              if (reasoningDelta) {
-                callbacks.onReasoning?.(reasoningDelta)
-              }
-              continue
-            }
-
-            if (eventType === 'response.output_item.added' && event.item?.type === 'function_call') {
-              const outputIndex = Number(event.output_index ?? toolCallsMap.size)
-              mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, event.item)
-              continue
-            }
-
-            if (eventType === 'response.function_call_arguments.delta' || eventType === 'response.function_call_arguments.done') {
-              const outputIndex = typeof event.output_index === 'number'
-                ? event.output_index
-                : (event.call_id ? toolIndexById.get(event.call_id) : undefined) ?? (event.item_id ? toolIndexById.get(event.item_id) : undefined) ?? toolCallsMap.size
-              mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, undefined, event.call_id || event.item_id, event.delta || event.arguments || '')
-              continue
-            }
-
-            if (eventType === 'response.failed') {
-              callbacks.onError(extractResponsesErrorMessage(event))
-              return
-            }
-
-            if (eventType === 'response.completed' || eventType === 'response.incomplete') {
-              const parsedResponse = event.response
-              if (parsedResponse) {
-                for (const [index, item] of (parsedResponse.output ?? []).entries()) {
-                  if (item.type === 'function_call') {
-                    mergeResponsesFunctionCall(toolCallsMap, toolIndexById, index, item)
-                  }
-                }
-              }
-
-              emitToolCalls(toolCallsMap, callbacks)
-              await callbacks.onDone()
-              return
-            }
-          } catch {
-            // 等待下一个 SSE 片段拼接完整。
-          }
-        }
-      }
-
-      emitToolCalls(toolCallsMap, callbacks)
-      await callbacks.onDone()
+      await streamOpenAIResponsesFlow(config, messages, callbacks, preferences, options, signal)
     } catch (error) {
       if (signal?.aborted) {
         return
       }
-      callbacks.onError(`请求失败: ${(error as Error).message}`)
+
+      if (!shouldFallbackToChatCompletions(config, error)) {
+        callbacks.onError(`请求失败: ${formatOpenAIRequestError(error)}`)
+        return
+      }
+
+      try {
+        await streamOpenAICompatibleFlow(config, messages, callbacks, preferences, options, signal)
+      } catch (fallbackError) {
+        if (signal?.aborted) {
+          return
+        }
+
+        callbacks.onError(`请求失败: ${formatOpenAIRequestError(fallbackError)}`)
+      }
     }
 
     return
   }
 
   try {
-    const { response } = await requestOpenAICompatible(config, true, messages, preferences, options, signal)
-
-    const reader = response.body?.getReader()
-    if (!reader) {
-      callbacks.onError('响应体为空')
-      return
-    }
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const toolCallsMap = new Map<number, AIToolCall>()
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        const trimmedLine = line.trim()
-        if (!trimmedLine || !trimmedLine.startsWith('data:')) {
-          continue
-        }
-
-        const payload = trimmedLine.slice(5).trim()
-        if (payload === '[DONE]') {
-          emitToolCalls(toolCallsMap, callbacks)
-          await callbacks.onDone()
-          return
-        }
-
-        try {
-          const parsed = JSON.parse(payload)
-          const choice = parsed.choices?.[0]
-          const delta = (choice?.delta ?? {}) as Record<string, unknown>
-
-          if (!delta) {
-            continue
-          }
-
-          const contentDelta = extractOpenAIContentDelta(delta)
-          const reasoningDelta = extractOpenAIReasoningDelta(delta)
-
-          if (contentDelta) {
-            callbacks.onToken(contentDelta)
-          }
-
-          if (reasoningDelta) {
-            callbacks.onReasoning?.(reasoningDelta)
-          }
-
-          if (Array.isArray(delta.tool_calls)) {
-            mergeToolCalls(toolCallsMap, delta.tool_calls)
-          }
-
-          if (choice?.finish_reason === 'tool_calls' || choice?.finish_reason === 'stop') {
-            emitToolCalls(toolCallsMap, callbacks)
-            await callbacks.onDone()
-            return
-          }
-        } catch {
-          // 等待下一个 SSE 片段拼接完整。
-        }
-      }
-    }
-
-    emitToolCalls(toolCallsMap, callbacks)
-    await callbacks.onDone()
+    await streamOpenAICompatibleFlow(config, messages, callbacks, preferences, options, signal)
   } catch (error) {
     if (signal?.aborted) {
       return
     }
-    callbacks.onError(`请求失败: ${(error as Error).message}`)
+
+    if (!shouldFallbackToResponses(config, error)) {
+      callbacks.onError(`请求失败: ${formatOpenAIRequestError(error)}`)
+      return
+    }
+
+    try {
+      await streamOpenAIResponsesFlow(config, messages, callbacks, preferences, options, signal)
+    } catch (fallbackError) {
+      if (signal?.aborted) {
+        return
+      }
+
+      callbacks.onError(`请求失败: ${formatOpenAIRequestError(fallbackError)}`)
+    }
   }
 }
 
@@ -2401,10 +3460,15 @@ export async function streamChat(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ) {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
 
   if (protocol === 'anthropic') {
     await streamAnthropicChat(config, messages, callbacks, preferences, options, signal)
+    return
+  }
+
+  if (protocol === 'gemini') {
+    await streamGeminiChat(config, messages, callbacks, preferences, options, signal)
     return
   }
 
@@ -2418,27 +3482,26 @@ export async function streamChat(
 
 async function chatCompletionOpenAI(config: AIConfig, messages: AIChatMessage[], preferences?: Partial<AIChatPreferences>, options?: { includeTools?: boolean }, signal?: AbortSignal) {
   if (shouldUseOpenAIResponsesApi(config)) {
-    const { response } = await requestOpenAIResponses(config, false, messages, preferences, options, signal)
-    const data = await response.json() as ResponsesApiResponse
-    if (data.status === 'failed') {
-      throw new Error(data.error?.message || 'Responses 请求失败')
-    }
+    try {
+      return await chatCompletionOpenAIResponsesFlow(config, messages, preferences, options, signal)
+    } catch (error) {
+      if (!shouldFallbackToChatCompletions(config, error)) {
+        throw error
+      }
 
-    return parseResponsesOutput(data)
+      return chatCompletionOpenAICompatibleFlow(config, messages, preferences, options, signal)
+    }
   }
 
-  const { response } = await requestOpenAICompatible(config, false, messages, preferences, options, signal)
-  const data = await response.json()
-  const choice = data.choices?.[0]?.message
-  const content = choice?.content ?? ''
-  const reasoningContent = extractOpenAIReasoningMessage(choice)
-  const toolCalls: AIToolCall[] = (choice?.tool_calls ?? []).map((toolCall: Record<string, unknown>, index: number) => ({
-    id: String(toolCall.id || `call_${index}`),
-    name: String((toolCall.function as { name?: string } | undefined)?.name || ''),
-    arguments: String((toolCall.function as { arguments?: string } | undefined)?.arguments || '')
-  }))
+  try {
+    return await chatCompletionOpenAICompatibleFlow(config, messages, preferences, options, signal)
+  } catch (error) {
+    if (!shouldFallbackToResponses(config, error)) {
+      throw error
+    }
 
-  return { content, toolCalls, reasoningContent }
+    return chatCompletionOpenAIResponsesFlow(config, messages, preferences, options, signal)
+  }
 }
 
 async function chatCompletionAnthropic(config: AIConfig, messages: AIChatMessage[], preferences?: Partial<AIChatPreferences>, options?: { includeTools?: boolean }, signal?: AbortSignal) {
@@ -2543,10 +3606,14 @@ export async function chatCompletion(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ): Promise<{ content: string; toolCalls: AIToolCall[]; reasoningContent?: string }> {
-  const protocol = resolveProtocol(config.protocol)
+  const protocol = resolveConfigProtocol(config)
 
   if (protocol === 'anthropic') {
     return chatCompletionAnthropic(config, messages, preferences, options, signal)
+  }
+
+  if (protocol === 'gemini') {
+    return chatCompletionGemini(config, messages, preferences, options, signal)
   }
 
   if (protocol === 'ollama-local' || protocol === 'ollama-cloud') {

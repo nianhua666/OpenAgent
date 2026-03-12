@@ -2,7 +2,7 @@
  * AI 工具执行器
  * 接收AI返回的工具调用，路由到对应的实际操作
  */
-import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, MCPScreenCaptureInfo, MCPWindowInfo } from '@/types'
+import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, ProjectTaskStatus } from '@/types'
 import { useAccountStore } from '@/stores/account'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAIStore } from '@/stores/ai'
@@ -13,6 +13,11 @@ import { genId } from '@/utils/helpers'
 import { isManagedMcpToolInvocationName } from '@/utils/aiManagedResources'
 import { listLocalLive2DModels } from '@/utils/live2d'
 import { coerceToolArguments } from '@/utils/aiToolArgs'
+import { routeModel, recommendSubAgentModel } from '@/utils/aiModelRouter'
+import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
+import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
+import { advanceTask, renderPlanToMarkdown, flushPlanToWorkspace } from '@/utils/aiPlanEngine'
+import * as devLogger from '@/utils/aiDevLogger'
 
 interface ToolExecutionResult {
   output: string
@@ -217,6 +222,30 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
       return doListWindows()
     case 'focus_window':
       return doFocusWindow(args)
+    // Agent 增强工具
+    case 'route_model':
+      return routeModelTool(args)
+    case 'spawn_sub_agent':
+      return spawnSubAgentTool(args, context)
+    case 'get_sub_agent_status':
+      return getSubAgentStatusTool(args, context)
+    // IDE 模式工具
+    case 'ide_read_file':
+      return ideReadFileTool(args)
+    case 'ide_write_file':
+      return ideWriteFileTool(args)
+    case 'ide_list_directory':
+      return ideListDirectoryTool(args)
+    case 'ide_search_files':
+      return ideSearchFilesTool(args)
+    case 'ide_create_plan':
+      return ideCreatePlanTool(args)
+    case 'ide_advance_task':
+      return ideAdvanceTaskTool(args)
+    case 'ide_get_plan':
+      return ideGetPlanTool(args)
+    case 'ide_log':
+      return ideLogTool(args)
     default:
       if (isManagedMcpToolInvocationName(toolCall.name)) {
         return callManagedMcpTool(toolCall.name, args)
@@ -970,6 +999,360 @@ async function callManagedMcpTool(toolName: string, args: Record<string, unknown
     originalToolName: match.tool.originalName,
     output: result.output || '',
     data: result.data || null
+  })
+}
+
+// ==================== Agent 增强工具 ====================
+
+async function routeModelTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const task = normalizeTextValue(args.task)
+
+  if (!task) {
+    return errorResult('缺少任务描述')
+  }
+
+  // 当前阶段优先基于现有配置做路由建议，避免额外引入模型列表获取链路。
+  const currentModel = aiStore.config.model?.trim()
+  if (!currentModel) {
+    return errorResult('当前未配置 AI 模型，无法执行模型路由')
+  }
+
+  const availableModels = [{ id: currentModel, name: currentModel, label: currentModel }]
+
+  const decision = routeModel(
+    task,
+    availableModels,
+    aiStore.config.protocol,
+    {
+      preferSpeed: args.preferSpeed === true,
+    },
+  )
+
+  if (!decision) {
+    return errorResult('模型路由失败，未找到可用模型')
+  }
+
+  return successResult('模型路由完成', {
+    decision,
+  })
+}
+
+async function spawnSubAgentTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const parentSessionId = context.sessionId || aiStore.activeSessionId
+  const name = normalizeTextValue(args.name)
+  const role = normalizeTextValue(args.role)
+  const task = normalizeTextValue(args.task)
+
+  if (!parentSessionId) {
+    return errorResult('当前没有活动会话，无法生成子代理')
+  }
+
+  if (!name || !role || !task) {
+    return errorResult('生成子代理需要 name、role、task')
+  }
+
+  const currentModel = aiStore.config.model?.trim()
+  const availableModels = currentModel
+    ? [{ id: currentModel, name: currentModel, label: currentModel }]
+    : []
+
+  const recommended = recommendSubAgentModel(
+    role,
+    task,
+    availableModels,
+    aiStore.config.protocol,
+  )
+
+  const result = await spawnAndRunSubAgent(parentSessionId, {
+    name,
+    role,
+    task,
+    contextFromParent: normalizeTextValue(args.contextFromParent),
+    model: normalizeTextValue(args.model) || recommended?.model || aiStore.config.model,
+    protocol: recommended?.protocol || aiStore.config.protocol,
+  })
+
+  if (!result.success) {
+    return errorResult('子代理执行失败', {
+      result,
+    })
+  }
+
+  return successResult('子代理执行完成', {
+    result,
+  })
+}
+
+async function getSubAgentStatusTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const parentSessionId = context.sessionId || aiStore.activeSessionId
+  const agentId = normalizeTextValue(args.agentId)
+
+  if (!parentSessionId) {
+    return errorResult('当前没有活动会话，无法读取子代理状态')
+  }
+
+  const agents = aiStore.getSubAgentsForSession(parentSessionId)
+  if (!agentId) {
+    return successResult(`已返回当前会话的 ${agents.length} 个子代理`, {
+      sessionId: parentSessionId,
+      agents,
+    })
+  }
+
+  const agent = agents.find(item => item.id === agentId)
+  if (!agent) {
+    return errorResult('未找到指定子代理', {
+      sessionId: parentSessionId,
+      agentId,
+    })
+  }
+
+  return successResult(`已返回子代理 ${agent.name} 的状态`, {
+    sessionId: parentSessionId,
+    agent,
+  })
+}
+
+// ==================== IDE 模式工具 ====================
+
+const ALLOWED_DEVLOG_TYPES: DevLogEntry['type'][] = [
+  'plan',
+  'task-start',
+  'task-complete',
+  'error',
+  'decision',
+  'milestone',
+  'context-compress',
+]
+
+const ALLOWED_PROJECT_TASK_STATUSES: ProjectTaskStatus[] = [
+  'pending',
+  'in-progress',
+  'completed',
+  'failed',
+  'skipped',
+]
+
+function getActiveWorkspace() {
+  const aiStore = useAIStore()
+  if (aiStore.agentMode !== 'ide') {
+    return null
+  }
+
+  return aiStore.ideWorkspace
+}
+
+function getPlanInActiveWorkspace(planId: string) {
+  const aiStore = useAIStore()
+  const workspace = getActiveWorkspace()
+  if (!workspace) {
+    return { workspace: null, plan: null }
+  }
+
+  const plan = aiStore.getProjectPlan(planId)
+  if (!plan || plan.workspaceId !== workspace.id) {
+    return { workspace, plan: null }
+  }
+
+  return { workspace, plan }
+}
+
+async function ideReadFileTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const workspace = getActiveWorkspace()
+  const path = normalizeTextValue(args.path)
+  if (!workspace || !path) {
+    return errorResult('读取工作区文件需要已打开工作区且提供 path')
+  }
+
+  const content = await readWorkspaceFile(workspace, path)
+  if (content === null) {
+    return errorResult('读取文件失败', { path })
+  }
+
+  return successResult(`已读取文件 ${path}`, {
+    path,
+    content,
+  })
+}
+
+async function ideWriteFileTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const workspace = getActiveWorkspace()
+  const path = normalizeTextValue(args.path)
+  const content = typeof args.content === 'string' ? args.content : ''
+  if (!workspace || !path) {
+    return errorResult('写入工作区文件需要已打开工作区且提供 path')
+  }
+
+  const ok = await writeWorkspaceFile(workspace, path, content)
+  if (!ok) {
+    return errorResult('写入文件失败', { path })
+  }
+
+  return successResult(`已写入文件 ${path}`, {
+    path,
+    bytes: content.length,
+  })
+}
+
+async function ideListDirectoryTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const workspace = getActiveWorkspace()
+  if (!workspace) {
+    return errorResult('当前未打开工作区')
+  }
+
+  const relativePath = normalizeTextValue(args.path) || ''
+  const api = window.electronAPI
+  if (!api?.ideListDirectory) {
+    return errorResult('当前环境不支持 IDE 文件系统能力')
+  }
+
+  const root = workspace.rootPath.replace(/\\/g, '/').replace(/\/$/, '')
+  const target = relativePath ? `${root}/${relativePath.replace(/^\//, '')}` : root
+  const entries = await api.ideListDirectory(target)
+  if (!entries) {
+    return errorResult('读取目录失败', { path: relativePath || '.' })
+  }
+
+  return successResult(`已列出目录 ${relativePath || '.'}`, {
+    path: relativePath || '.',
+    entries,
+  })
+}
+
+async function ideSearchFilesTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const workspace = getActiveWorkspace()
+  const pattern = normalizeTextValue(args.pattern)
+  if (!workspace || !pattern) {
+    return errorResult('搜索文件需要已打开工作区且提供 pattern')
+  }
+
+  const results = searchFiles(workspace, pattern)
+  return successResult(`找到 ${results.length} 个匹配文件`, {
+    pattern,
+    files: results,
+  })
+}
+
+async function ideCreatePlanTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const workspace = getActiveWorkspace()
+  const goal = normalizeTextValue(args.goal)
+  const overview = normalizeTextValue(args.overview)
+  const techStack = normalizeStringArray(args.techStack)
+
+  if (!workspace || !goal || !overview || techStack.length === 0) {
+    return errorResult('创建计划需要已打开工作区，并提供 goal、overview、techStack')
+  }
+
+  const plan = aiStore.createProjectPlan(workspace.id, goal, overview, techStack)
+  aiStore.addDevLog(plan.id, {
+    type: 'plan',
+    title: '初始化项目计划',
+    content: `为工作区 ${workspace.name} 创建项目计划`,
+    metadata: { workspaceId: workspace.id },
+  })
+
+  await flushPlanToWorkspace(workspace, plan)
+
+  return successResult('项目计划已创建', {
+    plan,
+    markdown: renderPlanToMarkdown(plan),
+  })
+}
+
+async function ideAdvanceTaskTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const planId = normalizeTextValue(args.planId)
+  const taskId = normalizeTextValue(args.taskId)
+  const statusValue = normalizeTextValue(args.status)
+  const output = normalizeTextValue(args.output)
+  const { workspace, plan } = planId ? getPlanInActiveWorkspace(planId) : { workspace: null, plan: null }
+
+  if (!workspace || !planId || !taskId || !statusValue) {
+    return errorResult('推进任务需要 planId、taskId、status，并且已打开工作区')
+  }
+
+  if (!ALLOWED_PROJECT_TASK_STATUSES.includes(statusValue as ProjectTaskStatus)) {
+    return errorResult(`无效任务状态: ${statusValue}`)
+  }
+
+  if (!plan) {
+    return errorResult('未找到当前工作区下的项目计划', { planId })
+  }
+
+  const status = statusValue as ProjectTaskStatus
+
+  advanceTask(planId, taskId, status, output)
+  const updatedPlan = useAIStore().getProjectPlan(planId)
+  if (!updatedPlan || updatedPlan.workspaceId !== workspace.id) {
+    return errorResult('更新后未找到当前工作区下的项目计划', { planId })
+  }
+
+  await flushPlanToWorkspace(workspace, updatedPlan)
+
+  return successResult('任务状态已更新', {
+    planId,
+    taskId,
+    status,
+    progress: updatedPlan.progress,
+  })
+}
+
+async function ideGetPlanTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const planId = normalizeTextValue(args.planId)
+  if (!planId) {
+    return errorResult('缺少 planId')
+  }
+
+  const { plan } = getPlanInActiveWorkspace(planId)
+  if (!plan) {
+    return errorResult('未找到当前工作区下的项目计划', { planId })
+  }
+
+  return successResult('已获取项目计划', {
+    plan,
+    markdown: renderPlanToMarkdown(plan),
+  })
+}
+
+async function ideLogTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const planId = normalizeTextValue(args.planId)
+  const typeValue = normalizeTextValue(args.type)
+  const title = normalizeTextValue(args.title)
+  const content = normalizeTextValue(args.content)
+  const { workspace, plan } = planId ? getPlanInActiveWorkspace(planId) : { workspace: null, plan: null }
+
+  if (!workspace || !planId || !typeValue || !title || !content) {
+    return errorResult('写入开发日志需要 planId、type、title、content，并且已打开工作区')
+  }
+
+  if (!ALLOWED_DEVLOG_TYPES.includes(typeValue as DevLogEntry['type'])) {
+    return errorResult(`无效日志类型: ${typeValue}`)
+  }
+
+  if (!plan) {
+    return errorResult('未找到当前工作区下的项目计划', { planId })
+  }
+
+  const type = typeValue as DevLogEntry['type']
+
+  const entry = devLogger.log(planId, type, title, content)
+  if (!entry) {
+    return errorResult('写入开发日志失败')
+  }
+
+  await devLogger.flushPlanLog(planId, workspace)
+
+  return successResult('开发日志已写入', {
+    entry,
   })
 }
 

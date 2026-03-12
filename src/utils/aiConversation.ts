@@ -3,6 +3,7 @@ import { useAIStore } from '@/stores/ai'
 import { chatCompletion, splitEmbeddedReasoningContent, streamChat } from '@/utils/ai'
 import { executeToolCall } from '@/utils/aiTools'
 import { genId } from '@/utils/helpers'
+import { shouldCreateSnapshot, createLocalContextSnapshot } from '@/utils/aiContextEngine'
 
 export interface AIConversationHooks {
   onStream: (content: string) => void
@@ -67,6 +68,163 @@ function loadImageDimensions(dataUrl: string) {
     image.onerror = () => resolve(null)
     image.src = dataUrl
   })
+}
+
+const ASSISTANT_MARKDOWN_IMAGE_PATTERN = /(?:!\[([^\]]*)\]|\[([^\]]*)\])\s*\(\s*(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\s*\)/gi
+const ASSISTANT_RAW_DATA_URL_PATTERN = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi
+
+function normalizeImageDataUrl(dataUrl: string) {
+  const [meta, base64 = ''] = String(dataUrl || '').split(',', 2)
+  return `${meta},${base64.replace(/\s+/g, '')}`
+}
+
+function getImageExtensionFromMimeType(mimeType: string) {
+  const normalized = mimeType.trim().toLowerCase()
+  if (normalized === 'image/jpeg') {
+    return 'jpg'
+  }
+
+  if (normalized === 'image/svg+xml') {
+    return 'svg'
+  }
+
+  return normalized.replace(/^image\//, '').replace(/[^a-z0-9.+-]+/g, '') || 'png'
+}
+
+function buildAssistantAttachmentName(mimeType: string, label: string, index: number) {
+  const normalizedLabel = label
+    .trim()
+    .replace(/^!+/, '')
+    .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return `${normalizedLabel || `agent-image-${index + 1}`}.${getImageExtensionFromMimeType(mimeType)}`
+}
+
+async function createAssistantImageAttachment(dataUrl: string, label: string, index: number): Promise<AIChatAttachment> {
+  const normalizedDataUrl = normalizeImageDataUrl(dataUrl)
+  const mimeMatch = normalizedDataUrl.match(/^data:([^;]+);base64,/i)
+  const mimeType = mimeMatch?.[1] || 'image/png'
+  const base64Payload = normalizedDataUrl.split(',', 2)[1] || ''
+  const dimensions = await loadImageDimensions(normalizedDataUrl)
+
+  return {
+    id: genId(),
+    type: 'image',
+    name: buildAssistantAttachmentName(mimeType, label, index),
+    mimeType,
+    dataUrl: normalizedDataUrl,
+    source: 'assistant',
+    width: dimensions?.width,
+    height: dimensions?.height,
+    size: Math.floor((base64Payload.length * 3) / 4)
+  }
+}
+
+function extractGeminiInlineImageDataUrls(providerMetadata: Record<string, unknown> | undefined) {
+  const parts = Array.isArray(providerMetadata?.geminiParts)
+    ? providerMetadata.geminiParts
+    : []
+
+  return parts
+    .filter((part): part is { inlineData?: { mimeType?: string; data?: string } } => Boolean(part) && typeof part === 'object')
+    .map(part => {
+      const mimeType = typeof part.inlineData?.mimeType === 'string' ? part.inlineData.mimeType.trim() : ''
+      const data = typeof part.inlineData?.data === 'string' ? part.inlineData.data.replace(/\s+/g, '') : ''
+      if (!mimeType || !data || !/^image\//i.test(mimeType)) {
+        return ''
+      }
+
+      return `data:${mimeType};base64,${data}`
+    })
+    .filter(Boolean)
+}
+
+function sanitizeAssistantProviderMetadata(providerMetadata: Record<string, unknown> | undefined) {
+  if (!providerMetadata || typeof providerMetadata !== 'object') {
+    return undefined
+  }
+
+  const sanitizedGeminiParts = Array.isArray(providerMetadata.geminiParts)
+    ? providerMetadata.geminiParts
+        .filter((part): part is Record<string, unknown> => Boolean(part) && typeof part === 'object')
+        .map(part => {
+          const nextPart = { ...part }
+          delete nextPart.inlineData
+          return nextPart
+        })
+        .filter(part => Object.keys(part).length > 0)
+    : []
+
+  if (sanitizedGeminiParts.length === 0) {
+    return undefined
+  }
+
+  return {
+    ...providerMetadata,
+    geminiParts: sanitizedGeminiParts
+  }
+}
+
+async function normalizeAssistantMessageOutput(content: string, providerMetadata?: Record<string, unknown>) {
+  const attachments: AIChatAttachment[] = []
+  const seenDataUrls = new Set<string>()
+  let cleanedContent = content
+
+  const pushAttachment = async (dataUrl: string, label: string) => {
+    const normalizedDataUrl = normalizeImageDataUrl(dataUrl)
+    if (seenDataUrls.has(normalizedDataUrl)) {
+      return
+    }
+
+    seenDataUrls.add(normalizedDataUrl)
+    attachments.push(await createAssistantImageAttachment(normalizedDataUrl, label, attachments.length))
+  }
+
+  for (const dataUrl of extractGeminiInlineImageDataUrls(providerMetadata)) {
+    await pushAttachment(dataUrl, 'Gemini 图片')
+  }
+
+  const markdownMatches: Array<{ raw: string; dataUrl: string; label: string }> = []
+  ASSISTANT_MARKDOWN_IMAGE_PATTERN.lastIndex = 0
+  let markdownMatch = ASSISTANT_MARKDOWN_IMAGE_PATTERN.exec(content)
+  while (markdownMatch) {
+    markdownMatches.push({
+      raw: markdownMatch[0],
+      label: String(markdownMatch[1] || markdownMatch[2] || 'AI 图片').trim(),
+      dataUrl: markdownMatch[3]
+    })
+    markdownMatch = ASSISTANT_MARKDOWN_IMAGE_PATTERN.exec(content)
+  }
+
+  for (const match of markdownMatches) {
+    await pushAttachment(match.dataUrl, match.label)
+    cleanedContent = cleanedContent.replace(match.raw, '')
+  }
+
+  const rawMatches: Array<{ raw: string }> = []
+  ASSISTANT_RAW_DATA_URL_PATTERN.lastIndex = 0
+  let rawMatch = ASSISTANT_RAW_DATA_URL_PATTERN.exec(cleanedContent)
+  while (rawMatch) {
+    rawMatches.push({ raw: rawMatch[0] })
+    rawMatch = ASSISTANT_RAW_DATA_URL_PATTERN.exec(cleanedContent)
+  }
+
+  for (const match of rawMatches) {
+    await pushAttachment(match.raw, 'AI 图片')
+    cleanedContent = cleanedContent.replace(match.raw, '')
+  }
+
+  cleanedContent = cleanedContent
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim()
+
+  return {
+    content: cleanedContent,
+    attachments,
+    providerMetadata: sanitizeAssistantProviderMetadata(providerMetadata)
+  }
 }
 
 function toAttachmentName(file: File) {
@@ -217,6 +375,110 @@ function truncateReviewText(value: string | undefined, limit = 1200) {
   return `${normalized.slice(0, limit)}...`
 }
 
+function isToolCallFailure(toolCall: AIToolCall) {
+  const result = String(toolCall.result || '').trim()
+  if (!result) {
+    return false
+  }
+
+  if (/^工具执行异常:/i.test(result) || /^抱歉，发生了错误:/i.test(result) || /"success"\s*:\s*false/i.test(result)) {
+    return true
+  }
+
+  const parsedResult = tryParseJsonValue(result)
+  if (parsedResult && typeof parsedResult === 'object' && !Array.isArray(parsedResult)) {
+    const record = parsedResult as Record<string, unknown>
+    if (record.success === false) {
+      return true
+    }
+  }
+
+  return /^(error|failed|failure|exception)[:\s]/i.test(result)
+    || /\b(access denied|permission denied|timed out|timeout|not found|not supported)\b/i.test(result)
+}
+
+function isReadOnlyDiscoveryTool(toolCall: AIToolCall) {
+  const normalizedName = toolCall.name.trim().toLowerCase()
+  if (!normalizedName) {
+    return false
+  }
+
+  if (/(delete|remove|kill|stop|apply|patch|write|create|insert|rename|move|click|type|press|drag|upload|execute|run|build|launch|start)/i.test(normalizedName)) {
+    return false
+  }
+
+  return /(read|search|grep|list|fetch|get|inspect|check|view|summary|usage|error|models|memory|resolve|analy[sz]e|review|scan)/i.test(normalizedName)
+}
+
+function isSearchLikeDiscoveryTool(toolCall: AIToolCall) {
+  return /(search|grep|find|usage|semantic|file_search|search_subagent|resolve)/i.test(toolCall.name.trim().toLowerCase())
+}
+
+function isToolCallEmptySearchResult(toolCall: AIToolCall) {
+  const result = String(toolCall.result || '').trim()
+  if (!result || !isSearchLikeDiscoveryTool(toolCall)) {
+    return !result
+  }
+
+  const parsedResult = tryParseJsonValue(result)
+  if (Array.isArray(parsedResult)) {
+    return parsedResult.length === 0
+  }
+
+  if (parsedResult && typeof parsedResult === 'object') {
+    const record = parsedResult as Record<string, unknown>
+    const collectionKeys = ['results', 'items', 'matches', 'files', 'usages', 'references']
+    if (collectionKeys.some(key => Array.isArray(record[key]) && (record[key] as unknown[]).length > 0)) {
+      return false
+    }
+
+    if (collectionKeys.some(key => Array.isArray(record[key]) && (record[key] as unknown[]).length === 0)) {
+      return true
+    }
+
+    if (typeof record.total === 'number') {
+      return record.total === 0
+    }
+
+    if (typeof record.count === 'number') {
+      return record.count === 0
+    }
+  }
+
+  return /(no results?|no matches?|0 matches?|未找到(?:任何)?结果|未找到匹配|没有找到匹配|无匹配结果|结果为空)/i.test(result)
+}
+
+function hasSubstantiveToolOutput(toolCall: AIToolCall) {
+  const result = String(toolCall.result || '').trim()
+  return Boolean(result) && !isToolCallEmptySearchResult(toolCall)
+}
+
+function isResearchOrCodeTask(goalText: string) {
+  return /(代码|编程|开发|项目|仓库|工作区|workspace|repo|bug|报错|错误|调试|修复|重构|prompt|skill|agent|ide|文件|日志|构建|打包|测试|review|分析|定位|文档|配置|模型|接口|code|debug|fix|refactor|build|test|error|prompt|skill|agent|workspace|file|log)/i.test(goalText)
+}
+
+function maybePromoteToolRoundReview(review: ToolRoundReview, goalText: string, toolCalls: AIToolCall[]): ToolRoundReview {
+  if (review.progressed || review.decision === 'pause' || review.decision === 'complete') {
+    return review
+  }
+
+  const hasFailure = toolCalls.some(toolCall => isToolCallFailure(toolCall))
+  const hasUsableOutput = toolCalls.some(toolCall => hasSubstantiveToolOutput(toolCall))
+  const allReadOnly = toolCalls.length > 0 && toolCalls.every(toolCall => isReadOnlyDiscoveryTool(toolCall))
+
+  if (hasFailure || !hasUsableOutput || (!allReadOnly && !isResearchOrCodeTask(goalText))) {
+    return review
+  }
+
+  return {
+    progressed: true,
+    decision: 'continue',
+    summary: '本轮已获得新的检索、读取或诊断结果，任务可以继续推进。',
+    reason: '当前回合属于信息收集、代码分析或调试定位，只要拿到新的可用结果，就应视为有效推进，而不是阻断为 replan。',
+    nextAction: '基于最新结果继续定位根因、修改代码或验证修复，避免重复读取完全相同的信息。'
+  }
+}
+
 function getLatestMeaningfulUserMessage(sessionId: string) {
   const aiStore = useAIStore()
   const session = aiStore.getSessionById(sessionId)
@@ -255,8 +517,8 @@ function buildToolRoundReviewSystemMessage(review: ToolRoundReview) {
 }
 
 function createFallbackToolRoundReview(toolCalls: AIToolCall[]): ToolRoundReview {
-  const hasFailure = toolCalls.some(toolCall => /"success"\s*:\s*false|失败|异常|error/i.test(toolCall.result || ''))
-  const hasUsableOutput = toolCalls.some(toolCall => Boolean((toolCall.result || '').trim()))
+  const hasFailure = toolCalls.some(toolCall => isToolCallFailure(toolCall))
+  const hasUsableOutput = toolCalls.some(toolCall => hasSubstantiveToolOutput(toolCall))
 
   if (hasFailure) {
     return {
@@ -301,6 +563,7 @@ async function reviewToolRound(
 
   const task = aiStore.getLatestTaskForSession(sessionId)
   const currentStep = task?.steps.find(step => step.status === 'in_progress')
+  const goalContext = [task?.goal, task?.summary, currentStep?.title, assistantContent].filter(Boolean).join(' ')
   const reviewSystemPrompt = [
     '你是 AI 工具执行回合的轻量自检器。',
     '目标：判断“刚刚这一轮工具结果是否真正推进了任务”，并决定下一轮是继续、改计划、暂停还是准备收尾。',
@@ -309,6 +572,8 @@ async function reviewToolRound(
     '{"progressed":true,"decision":"continue|replan|pause|complete","summary":"...","reason":"...","nextAction":"..."}',
     '判定规则：',
     '- 只有在工具带来了新的可验证信息、状态变化或明显更接近目标时，progressed 才能为 true。',
+    '- 对代码开发、错误定位、日志分析、文件检索、文档整理、方案规划等任务，只要本轮拿到了新的文件内容、搜索结果、错误信息、测试输出、构建日志或依赖信息，就应视为推进。',
+    '- 对探索性回合，定位到根因、缩小范围、确认影响面、拿到下一步决策依据，也属于有效推进，不能机械判成 replan。',
     '- 对账号管理任务，若没有完成字段校验、类型确认、真实账号 ID 核验或导入导出结果验证，不能算推进。',
     '- 对桌面操作任务，若只是点击/输入/打开窗口，但没有新的 read_screen 或等价验证证据，通常不能算推进。',
     '- 如果结果显示当前方案无效，应返回 replan；如果需要等待用户、权限、验证码或外部条件，应返回 pause；只有目标已被明确验证完成时才返回 complete。',
@@ -341,15 +606,15 @@ async function reviewToolRound(
     const reason = String(parsed.reason || '').trim()
     const nextAction = String(parsed.nextAction || '').trim()
 
-    return {
+    return maybePromoteToolRoundReview({
       progressed: Boolean(parsed.progressed),
       decision: normalizeToolRoundDecision(parsed.decision),
       summary: summary || '本轮自检未返回摘要。',
       reason: reason || '本轮自检未返回具体原因。',
       nextAction: nextAction || '下一轮先重新确认结果，再决定是否继续调用工具。'
-    }
+    }, goalContext, toolCalls)
   } catch {
-    return createFallbackToolRoundReview(toolCalls)
+    return maybePromoteToolRoundReview(createFallbackToolRoundReview(toolCalls), goalContext, toolCalls)
   }
 }
 
@@ -645,6 +910,23 @@ function buildToolBatchFingerprint(toolCalls: AIToolCall[], includeResult = fals
     .join('|')
 }
 
+/**
+ * 增量上下文快照：满足条件时自动创建本地快照
+ */
+function tryIncrementalSnapshot(sessionId: string) {
+  try {
+    const aiStore = useAIStore()
+    const session = aiStore.getSessionById(sessionId)
+    if (!session || session.messages.length === 0) return
+
+    if (shouldCreateSnapshot(sessionId, session.messages.length)) {
+      createLocalContextSnapshot(sessionId, session.messages)
+    }
+  } catch {
+    // 快照失败不影响主流程
+  }
+}
+
 export async function runAIResponseLoop(
   sessionId: string,
   hooks: AIConversationHooks,
@@ -663,10 +945,11 @@ export async function runAIResponseLoop(
       aiStore.setRuntimePhase(sessionId, 'streaming')
       aiStore.updateRuntimeContext(sessionId, aiStore.getContextMetrics(sessionId))
 
-      const turnResult = await new Promise<{ content: string; reasoningContent: string; toolCalls: AIToolCall[]; error?: string }>((resolve) => {
+      const turnResult = await new Promise<{ content: string; reasoningContent: string; toolCalls: AIToolCall[]; providerMetadata?: Record<string, unknown>; error?: string }>((resolve) => {
         let streamedContent = ''
         let streamedReasoning = ''
         const collectedToolCalls: AIToolCall[] = []
+        let providerMetadata: Record<string, unknown> | undefined
 
         void streamChat(
           aiStore.config,
@@ -684,11 +967,14 @@ export async function runAIResponseLoop(
             onToolCall(toolCall) {
               collectedToolCalls.push(toolCall)
             },
+            onProviderMetadata(metadata) {
+              providerMetadata = metadata
+            },
             async onDone() {
-              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls })
+              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata })
             },
             onError(error) {
-              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, error })
+              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata, error })
             }
           },
           aiStore.preferences,
@@ -707,13 +993,16 @@ export async function runAIResponseLoop(
         .filter(Boolean)
         .join('\n\n')
         .trim()
+      const normalizedAssistantOutput = await normalizeAssistantMessageOutput(nextAssistantContent, turnResult.providerMetadata)
 
-      if (nextAssistantContent || mergedReasoningContent || turnResult.toolCalls.length > 0) {
+      if (normalizedAssistantOutput.content || mergedReasoningContent || turnResult.toolCalls.length > 0 || normalizedAssistantOutput.attachments.length > 0) {
         aiStore.addMessage(sessionId, {
           role: 'assistant',
-          content: nextAssistantContent,
+          content: normalizedAssistantOutput.content,
           reasoningContent: mergedReasoningContent || undefined,
-          toolCalls: turnResult.toolCalls.length > 0 ? turnResult.toolCalls : undefined
+          toolCalls: turnResult.toolCalls.length > 0 ? turnResult.toolCalls : undefined,
+          attachments: normalizedAssistantOutput.attachments.length > 0 ? normalizedAssistantOutput.attachments : undefined,
+          providerMetadata: normalizedAssistantOutput.providerMetadata
         })
       }
 
@@ -743,6 +1032,9 @@ export async function runAIResponseLoop(
         content: buildToolRoundReviewSystemMessage(toolRoundReview)
       })
       await notifyUpdate(hooks)
+
+      // 增量上下文快照：每 N 轮自动创建本地快照
+      tryIncrementalSnapshot(sessionId)
 
       if (toolRoundReview.decision === 'pause') {
         aiStore.blockTask(sessionId, toolRoundReview.summary || '工具回合自检判断当前任务需要暂停。')

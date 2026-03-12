@@ -1,5 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, net, screen, shell } from 'electron'
 import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
+import { spawn, type ChildProcess } from 'child_process'
+import { randomUUID } from 'crypto'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { registerAzureTTSHandlers } from './azureSpeech'
@@ -10,7 +12,7 @@ import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSyst
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import { createSub2ApiDesktopManager } from './sub2apiDesktop'
-import type { Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, TTSEngine, WindowShapeRect } from '../src/types'
+import type { AppSettings, IDETerminalEvent, IDETerminalRunRequest, IDETerminalRunResult, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -36,48 +38,8 @@ import {
   normalizeTTSModelId
 } from '../src/utils/ttsCatalog'
 
-type Live2DModelSource = 'preset' | 'bundled' | 'imported' | 'custom'
 type RuntimeDataStorageMode = 'auto' | 'custom'
 type WindowDragPoint = { x: number; y: number }
-type Live2DCursorPoint = {
-  screenX: number
-  screenY: number
-  localX: number
-  localY: number
-  insideWindow: boolean
-}
-
-interface AppSettings {
-  theme: 'sakura' | 'ocean' | 'twilight' | 'jade' | 'dark'
-  sidebarCollapsed: boolean
-  live2dEnabled: boolean
-  live2dModel: string
-  live2dModelName: string
-  live2dModelSource: Live2DModelSource
-  live2dStoragePath: string
-  live2dPosition: { x: number; y: number }
-  live2dScale: number
-  closeToTray: boolean
-  launchAtLogin: boolean
-  language: string
-  defaultPageSize: number
-  autoSaveInterval: number
-  currencySymbol: string
-  windowsMcpEnabled: boolean
-  ttsEnabled: boolean
-  ttsEngine: TTSEngine
-  ttsAutoPlayLive2D: boolean
-  ttsShowMainReplyButton: boolean
-  ttsModelId: string
-  ttsVoiceId: string
-  ttsVoiceName: string
-  ttsAzureKey: string
-  ttsAzureRegion: string
-  ttsEmotionStyle: import('../src/types').TTSEmotionStyle
-  ttsEmotionIntensity: number
-  ttsSpeed: number
-  ttsVolume: number
-}
 
 interface RuntimeDataStoragePreference {
   mode: RuntimeDataStorageMode
@@ -426,14 +388,23 @@ const MAIN_WINDOW_WIDTH = 1400
 const MAIN_WINDOW_HEIGHT = 900
 const MAIN_WINDOW_MIN_WIDTH = 1100
 const MAIN_WINDOW_MIN_HEIGHT = 700
-const LIVE2D_WINDOW_MIN_WIDTH = 360
-const LIVE2D_WINDOW_MIN_HEIGHT = 420
+const AI_OVERLAY_WINDOW_WIDTH = 460
+const AI_OVERLAY_WINDOW_HEIGHT = 640
+const AI_OVERLAY_WINDOW_MIN_WIDTH = 400
+const AI_OVERLAY_WINDOW_MIN_HEIGHT = 520
+const LIVE2D_WINDOW_MIN_WIDTH = 320
+const LIVE2D_WINDOW_MIN_HEIGHT = 400
 const LIVE2D_CURSOR_BROADCAST_INTERVAL = 16
 const LIVE2D_BUNDLED_MODEL = 'live2d://bundle/shizuku/shizuku.model.json'
 const LIVE2D_DIAGNOSTIC_ARG = '--live2d-diagnose'
 const TTS_DIAGNOSTIC_ARG = '--tts-diagnose'
 const IS_LIVE2D_DIAGNOSTIC_MODE = process.argv.includes(LIVE2D_DIAGNOSTIC_ARG)
 const IS_TTS_DIAGNOSTIC_MODE = process.argv.includes(TTS_DIAGNOSTIC_ARG)
+const LIVE2D_IDLE_MOUTH_STATE: Live2DMouthState = {
+  level: 0,
+  speaking: false,
+  timestamp: 0
+}
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'sakura',
   sidebarCollapsed: false,
@@ -444,6 +415,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   live2dStoragePath: '',
   live2dPosition: { x: -1, y: -1 },
   live2dScale: 0.12,
+  aiOverlayBounds: null,
   closeToTray: true,
   launchAtLogin: false,
   language: 'zh-CN',
@@ -464,6 +436,29 @@ const DEFAULT_SETTINGS: AppSettings = {
   ttsEmotionIntensity: DEFAULT_TTS_EMOTION_INTENSITY,
   ttsSpeed: 1,
   ttsVolume: 0.92
+}
+
+function normalizeWindowBounds(bounds: unknown): WindowBounds | null {
+  if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds)) {
+    return null
+  }
+
+  const candidate = bounds as Partial<WindowBounds>
+  if (
+    !Number.isFinite(candidate.x)
+    || !Number.isFinite(candidate.y)
+    || !Number.isFinite(candidate.width)
+    || !Number.isFinite(candidate.height)
+  ) {
+    return null
+  }
+
+  return {
+    x: Math.round(Number(candidate.x)),
+    y: Math.round(Number(candidate.y)),
+    width: Math.max(Math.round(Number(candidate.width)), AI_OVERLAY_WINDOW_MIN_WIDTH),
+    height: Math.max(Math.round(Number(candidate.height)), AI_OVERLAY_WINDOW_MIN_HEIGHT)
+  }
 }
 
 function appendLive2DDebugLog(scope: string, message: string) {
@@ -505,15 +500,30 @@ function attachWindowDiagnostics(win: BrowserWindow, scope: string) {
 }
 
 let mainWindow: BrowserWindow | null = null
+let aiOverlayWindow: BrowserWindow | null = null
 let live2dWindow: BrowserWindow | null = null
+let lastAIOverlayBounds: WindowBounds | null = null
+let lastLive2DMouthState: Live2DMouthState = { ...LIVE2D_IDLE_MOUTH_STATE }
 let tray: Tray | null = null
 let isQuittingApp = false
 let trayHintShown = false
 let live2dMoveTimer: ReturnType<typeof setTimeout> | null = null
 let live2dCursorTimer: ReturnType<typeof setInterval> | null = null
+let aiOverlayBoundsPersistTimer: ReturnType<typeof setTimeout> | null = null
 let lastLive2DCursorKey = ''
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 const activeWindowDrags = new Map<number, { startCursor: WindowDragPoint; startPosition: [number, number] }>()
+const ideTerminalTrackedOwners = new Set<number>()
+const ideTerminalOwnerSessions = new Map<number, string>()
+const ideTerminalProcesses = new Map<string, {
+  sessionId: string
+  owner: Electron.WebContents
+  command: string
+  cwd: string
+  startedAt: number
+  child: ChildProcess
+  cancelRequested: boolean
+}>()
 
 if (!IS_LIVE2D_DIAGNOSTIC_MODE && !app.requestSingleInstanceLock()) {
   app.quit()
@@ -529,6 +539,105 @@ function getWindowIconPath() {
 
 function getSafeKey(key: string) {
   return key.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+function buildIdeShellCommand(command: string) {
+  if (process.platform === 'win32') {
+    return {
+      file: process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', command]
+    }
+  }
+
+  return {
+    file: process.env.SHELL || '/bin/sh',
+    args: ['-lc', command]
+  }
+}
+
+function ensureIdeTerminalOwnerCleanup(owner: Electron.WebContents) {
+  if (ideTerminalTrackedOwners.has(owner.id)) {
+    return
+  }
+
+  ideTerminalTrackedOwners.add(owner.id)
+  owner.once('destroyed', () => {
+    stopIdeTerminalSessionByOwner(owner.id)
+    ideTerminalTrackedOwners.delete(owner.id)
+  })
+}
+
+function emitIdeTerminalEvent(entry: {
+  owner: Electron.WebContents
+  sessionId: string
+  command: string
+  cwd: string
+}, payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) {
+  if (entry.owner.isDestroyed()) {
+    return
+  }
+
+  const nextPayload: IDETerminalEvent = {
+    sessionId: entry.sessionId,
+    command: entry.command,
+    cwd: entry.cwd,
+    ...payload
+  }
+
+  entry.owner.send('ide:terminal:event', nextPayload)
+}
+
+function cleanupIdeTerminalSession(sessionId: string) {
+  const entry = ideTerminalProcesses.get(sessionId)
+  if (!entry) {
+    return
+  }
+
+  ideTerminalProcesses.delete(sessionId)
+  if (ideTerminalOwnerSessions.get(entry.owner.id) === sessionId) {
+    ideTerminalOwnerSessions.delete(entry.owner.id)
+  }
+}
+
+function stopIdeTerminalSession(sessionId: string) {
+  const entry = ideTerminalProcesses.get(sessionId)
+  if (!entry) {
+    return false
+  }
+
+  entry.cancelRequested = true
+
+  if (entry.child.exitCode !== null || entry.child.killed) {
+    return true
+  }
+
+  if (process.platform === 'win32') {
+    const pid = entry.child.pid
+    if (typeof pid === 'number' && pid > 0) {
+      const killer = spawn('taskkill', ['/pid', String(pid), '/t', '/f'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      })
+      killer.unref()
+      return true
+    }
+  }
+
+  try {
+    entry.child.kill('SIGTERM')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function stopIdeTerminalSessionByOwner(ownerId: number) {
+  const sessionId = ideTerminalOwnerSessions.get(ownerId)
+  if (!sessionId) {
+    return false
+  }
+
+  return stopIdeTerminalSession(sessionId)
 }
 
 function getDataFilePath(key: string) {
@@ -596,6 +705,7 @@ function normalizeSettings(saved: Partial<AppSettings> | null | undefined): AppS
   merged.ttsSpeed = Number.isFinite(merged.ttsSpeed) ? Math.min(Math.max(Number(merged.ttsSpeed), 0.7), 1.35) : DEFAULT_SETTINGS.ttsSpeed
   merged.ttsVolume = Number.isFinite(merged.ttsVolume) ? Math.min(Math.max(Number(merged.ttsVolume), 0), 1) : DEFAULT_SETTINGS.ttsVolume
   merged.live2dScale = Number.isFinite(merged.live2dScale) ? Math.min(Math.max(Number(merged.live2dScale), 0.05), 0.45) : DEFAULT_SETTINGS.live2dScale
+  merged.aiOverlayBounds = normalizeWindowBounds(merged.aiOverlayBounds)
 
   if (isLegacyDesktopSettings && merged.live2dPosition.x === 0 && merged.live2dPosition.y === 0) {
     merged.live2dPosition = { x: -1, y: -1 }
@@ -768,8 +878,8 @@ function sanitizeDragPoint(payload: unknown): WindowDragPoint | null {
 function getLive2DWindowSize(scale: number) {
   const normalizedScale = clamp(scale || DEFAULT_SETTINGS.live2dScale, 0.08, 0.45)
   return {
-    width: Math.round(clamp(320 + normalizedScale * 1700, LIVE2D_WINDOW_MIN_WIDTH, 860)),
-    height: Math.round(clamp(380 + normalizedScale * 2100, LIVE2D_WINDOW_MIN_HEIGHT, 980))
+    width: Math.round(clamp(240 + normalizedScale * 1200, LIVE2D_WINDOW_MIN_WIDTH, 720)),
+    height: Math.round(clamp(320 + normalizedScale * 1500, LIVE2D_WINDOW_MIN_HEIGHT, 860))
   }
 }
 
@@ -792,7 +902,7 @@ function resolveLive2DWindowBounds() {
 }
 
 function broadcastSettingsChanged() {
-  for (const win of [mainWindow, live2dWindow]) {
+  for (const win of [mainWindow, aiOverlayWindow, live2dWindow]) {
     if (win && !win.isDestroyed()) {
       win.webContents.send('settings:changed', currentSettings)
     }
@@ -800,11 +910,21 @@ function broadcastSettingsChanged() {
 }
 
 function broadcastStoreChanged(key: string, data: unknown) {
-  for (const win of [mainWindow, live2dWindow]) {
+  for (const win of [mainWindow, aiOverlayWindow, live2dWindow]) {
     if (win && !win.isDestroyed()) {
       win.webContents.send('store:changed', key, data)
     }
   }
+}
+
+function broadcastLive2DMouthState(payload: Live2DMouthState) {
+  lastLive2DMouthState = payload
+
+  if (!live2dWindow || live2dWindow.isDestroyed() || live2dWindow.webContents.isDestroyed()) {
+    return
+  }
+
+  live2dWindow.webContents.send('live2d:mouthState', payload)
 }
 
 function applyLaunchAtLoginSetting() {
@@ -822,6 +942,8 @@ function refreshTrayMenu() {
   if (!tray) {
     return
   }
+
+  const aiOverlayVisible = !!aiOverlayWindow && !aiOverlayWindow.isDestroyed() && aiOverlayWindow.isVisible()
 
   const models = listLive2DLibraryItems()
   const modelItems: MenuItemConstructorOptions[] = models.length > 0
@@ -858,6 +980,10 @@ function refreshTrayMenu() {
     {
       label: currentSettings.live2dEnabled ? '隐藏 Live2D 悬浮窗' : '显示 Live2D 悬浮窗',
       click: () => updateSettings({ live2dEnabled: !currentSettings.live2dEnabled })
+    },
+    {
+      label: aiOverlayVisible ? '隐藏 AI 对话悬浮窗' : '显示 AI 对话悬浮窗',
+      click: () => toggleAIOverlayWindow()
     },
     { type: 'separator' },
     {
@@ -973,6 +1099,11 @@ function createLive2DWindow() {
     icon: getWindowIconPath()
   })
   attachWindowDiagnostics(win, 'overlay')
+  win.webContents.on('did-finish-load', () => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('live2d:mouthState', lastLive2DMouthState)
+    }
+  })
 
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -980,11 +1111,13 @@ function createLive2DWindow() {
   win.once('ready-to-show', () => {
     if (currentSettings.live2dEnabled) {
       win.showInactive()
+      broadcastLive2DMouthState(lastLive2DMouthState)
       syncLive2DCursorBroadcast()
     }
   })
   win.on('show', () => {
     refreshTrayMenu()
+    broadcastLive2DMouthState(lastLive2DMouthState)
     syncLive2DCursorBroadcast()
   })
   win.on('hide', () => {
@@ -1028,6 +1161,159 @@ function createLive2DWindow() {
   return win
 }
 
+function resolveAIOverlayWindowBounds() {
+  const preferredBounds = lastAIOverlayBounds ?? currentSettings.aiOverlayBounds
+  const targetDisplay = preferredBounds
+    ? screen.getDisplayMatching(preferredBounds)
+    : live2dWindow && !live2dWindow.isDestroyed()
+      ? screen.getDisplayMatching(live2dWindow.getBounds())
+      : mainWindow && !mainWindow.isDestroyed()
+        ? screen.getDisplayMatching(mainWindow.getBounds())
+        : screen.getPrimaryDisplay()
+  const { workArea } = targetDisplay
+
+  if (preferredBounds) {
+    const width = clamp(preferredBounds.width, AI_OVERLAY_WINDOW_MIN_WIDTH, Math.max(AI_OVERLAY_WINDOW_MIN_WIDTH, workArea.width - 20))
+    const height = clamp(preferredBounds.height, AI_OVERLAY_WINDOW_MIN_HEIGHT, Math.max(AI_OVERLAY_WINDOW_MIN_HEIGHT, workArea.height - 20))
+
+    return {
+      x: clamp(preferredBounds.x, workArea.x + 12, workArea.x + workArea.width - width - 12),
+      y: clamp(preferredBounds.y, workArea.y + 12, workArea.y + workArea.height - height - 12),
+      width,
+      height
+    }
+  }
+
+  const width = Math.min(AI_OVERLAY_WINDOW_WIDTH, Math.max(workArea.width - 48, AI_OVERLAY_WINDOW_MIN_WIDTH))
+  const height = Math.min(AI_OVERLAY_WINDOW_HEIGHT, Math.max(workArea.height - 48, AI_OVERLAY_WINDOW_MIN_HEIGHT))
+
+  if (live2dWindow && !live2dWindow.isDestroyed()) {
+    const liveBounds = live2dWindow.getBounds()
+    const nextX = clamp(liveBounds.x - width - 24, workArea.x + 24, workArea.x + workArea.width - width - 24)
+    const nextY = clamp(liveBounds.y + 28, workArea.y + 24, workArea.y + workArea.height - height - 24)
+    return {
+      x: nextX,
+      y: nextY,
+      width,
+      height
+    }
+  }
+
+  return {
+    x: clamp(workArea.x + workArea.width - width - 36, workArea.x + 24, workArea.x + workArea.width - width - 24),
+    y: clamp(workArea.y + Math.round((workArea.height - height) / 2), workArea.y + 24, workArea.y + workArea.height - height - 24),
+    width,
+    height
+  }
+}
+
+function persistAIOverlayBounds(bounds: WindowBounds | null) {
+  const normalizedBounds = normalizeWindowBounds(bounds)
+  lastAIOverlayBounds = normalizedBounds
+
+  const currentBounds = currentSettings.aiOverlayBounds
+  if (
+    normalizedBounds?.x === currentBounds?.x
+    && normalizedBounds?.y === currentBounds?.y
+    && normalizedBounds?.width === currentBounds?.width
+    && normalizedBounds?.height === currentBounds?.height
+  ) {
+    return
+  }
+
+  updateSettings({ aiOverlayBounds: normalizedBounds })
+}
+
+function schedulePersistAIOverlayBounds(bounds: WindowBounds | null) {
+  lastAIOverlayBounds = normalizeWindowBounds(bounds)
+
+  if (aiOverlayBoundsPersistTimer) {
+    clearTimeout(aiOverlayBoundsPersistTimer)
+  }
+
+  aiOverlayBoundsPersistTimer = setTimeout(() => {
+    aiOverlayBoundsPersistTimer = null
+    persistAIOverlayBounds(lastAIOverlayBounds)
+  }, 180)
+}
+
+function flushPersistAIOverlayBounds(bounds: WindowBounds | null) {
+  if (aiOverlayBoundsPersistTimer) {
+    clearTimeout(aiOverlayBoundsPersistTimer)
+    aiOverlayBoundsPersistTimer = null
+  }
+
+  persistAIOverlayBounds(bounds)
+}
+
+function createAIOverlayWindow() {
+  const bounds = resolveAIOverlayWindowBounds()
+  lastAIOverlayBounds = bounds
+  const win = new BrowserWindow({
+    ...bounds,
+    minWidth: AI_OVERLAY_WINDOW_MIN_WIDTH,
+    minHeight: AI_OVERLAY_WINDOW_MIN_HEIGHT,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#fff7fa',
+    roundedCorners: true,
+    hasShadow: true,
+    resizable: true,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false
+    },
+    icon: getWindowIconPath()
+  })
+  attachWindowDiagnostics(win, 'ai-overlay')
+
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  const syncAIOverlayBounds = () => {
+    if (!win.isDestroyed()) {
+      lastAIOverlayBounds = normalizeWindowBounds(win.getBounds())
+    }
+  }
+  win.once('ready-to-show', () => {
+    syncAIOverlayBounds()
+    flushPersistAIOverlayBounds(lastAIOverlayBounds)
+    win.show()
+    win.focus()
+  })
+  win.on('move', () => {
+    syncAIOverlayBounds()
+    schedulePersistAIOverlayBounds(lastAIOverlayBounds)
+  })
+  win.on('resize', () => {
+    syncAIOverlayBounds()
+    schedulePersistAIOverlayBounds(lastAIOverlayBounds)
+  })
+  win.on('show', refreshTrayMenu)
+  win.on('hide', () => {
+    flushPersistAIOverlayBounds(lastAIOverlayBounds)
+    refreshTrayMenu()
+  })
+  win.on('close', () => {
+    syncAIOverlayBounds()
+    flushPersistAIOverlayBounds(lastAIOverlayBounds)
+  })
+  win.on('closed', () => {
+    aiOverlayWindow = null
+    refreshTrayMenu()
+  })
+
+  void loadRendererRoute(win, '/ai-overlay')
+  return win
+}
+
 function ensureMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createMainWindow()
@@ -1042,6 +1328,14 @@ function ensureLive2DWindow() {
   }
 
   return live2dWindow
+}
+
+function ensureAIOverlayWindow() {
+  if (!aiOverlayWindow || aiOverlayWindow.isDestroyed()) {
+    aiOverlayWindow = createAIOverlayWindow()
+  }
+
+  return aiOverlayWindow
 }
 
 function showMainWindow() {
@@ -1086,6 +1380,56 @@ function toggleMainWindow() {
   }
 
   showMainWindow()
+}
+
+function showAIOverlayWindow() {
+  const shouldCreateWindow = !aiOverlayWindow || aiOverlayWindow.isDestroyed()
+  const win = ensureAIOverlayWindow()
+  if (shouldCreateWindow) {
+    lastAIOverlayBounds = win.getBounds()
+  }
+  if (win.isMinimized()) {
+    win.restore()
+  }
+  if (!win.isVisible()) {
+    if (win.webContents.isLoading()) {
+      win.once('ready-to-show', () => {
+        win.show()
+        win.focus()
+      })
+    } else {
+      win.show()
+      win.focus()
+    }
+  } else {
+    win.focus()
+  }
+  refreshTrayMenu()
+}
+
+function hideAIOverlayWindow() {
+  if (aiOverlayWindow && !aiOverlayWindow.isDestroyed()) {
+    aiOverlayWindow.hide()
+  }
+
+  refreshTrayMenu()
+}
+
+function closeAIOverlayWindow() {
+  if (aiOverlayWindow && !aiOverlayWindow.isDestroyed()) {
+    aiOverlayWindow.close()
+  }
+
+  refreshTrayMenu()
+}
+
+function toggleAIOverlayWindow() {
+  if (aiOverlayWindow && !aiOverlayWindow.isDestroyed() && aiOverlayWindow.isVisible()) {
+    hideAIOverlayWindow()
+    return
+  }
+
+  showAIOverlayWindow()
 }
 
 function syncLive2DWindowVisibility() {
@@ -1146,6 +1490,23 @@ function updateSettings(partial: Partial<AppSettings>) {
   syncLive2DWindowVisibility()
   broadcastSettingsChanged()
   refreshTrayMenu()
+}
+
+function sanitizeLive2DMouthState(payload: unknown): Live2DMouthState | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null
+  }
+
+  const candidate = payload as Partial<Live2DMouthState>
+  if (!Number.isFinite(candidate.level)) {
+    return null
+  }
+
+  return {
+    level: clamp(Number(candidate.level), 0, 1),
+    speaking: typeof candidate.speaking === 'boolean' ? candidate.speaking : Number(candidate.level) > 0.01,
+    timestamp: Number.isFinite(candidate.timestamp) ? Math.round(Number(candidate.timestamp)) : Date.now()
+  }
 }
 
 function startWindowDrag(senderWindow: BrowserWindow | null, point: WindowDragPoint | null) {
@@ -1674,6 +2035,9 @@ app.on('second-instance', () => {
 app.on('before-quit', () => {
   isQuittingApp = true
   stopLive2DCursorBroadcast()
+  for (const sessionId of [...ideTerminalProcesses.keys()]) {
+    stopIdeTerminalSession(sessionId)
+  }
   void sub2ApiRuntimeManager.shutdown()
 })
 
@@ -1759,9 +2123,21 @@ app.whenReady().then(() => {
   })
   ipcMain.on('app:hideMainWindow', hideMainWindow)
   ipcMain.on('app:toggleMainWindow', toggleMainWindow)
+  ipcMain.on('app:showAIOverlayWindow', showAIOverlayWindow)
+  ipcMain.on('app:hideAIOverlayWindow', hideAIOverlayWindow)
+  ipcMain.on('app:closeAIOverlayWindow', closeAIOverlayWindow)
+  ipcMain.on('app:toggleAIOverlayWindow', toggleAIOverlayWindow)
   ipcMain.on('app:showLive2DWindow', showLive2DWindow)
   ipcMain.on('app:hideLive2DWindow', hideLive2DWindow)
   ipcMain.on('app:toggleLive2DWindow', toggleLive2DWindow)
+  ipcMain.on('live2d:mouthState', (_event, payload: unknown) => {
+    const nextState = sanitizeLive2DMouthState(payload)
+    if (!nextState) {
+      return
+    }
+
+    broadcastLive2DMouthState(nextState)
+  })
 
   ipcMain.handle('store:get', (_event, key: string) => {
     const filePath = getDataFilePath(key)
@@ -1886,6 +2262,222 @@ app.whenReady().then(() => {
     if (/^(https?:\/\/|mailto:)/i.test(url)) {
       void shell.openExternal(url)
     }
+  })
+
+  // IDE 文件系统操作（路径遍历防护：规范化后拒绝 '..' 段）
+  function sanitizeIdePath(raw: unknown): string | null {
+    if (typeof raw !== 'string' || !raw.trim()) return null
+    const p = normalize(raw.trim())
+    if (p.includes('..')) return null
+    return p
+  }
+
+  ipcMain.handle('ide:readFile', (_event, filePath: unknown, encoding: unknown) => {
+    const p = sanitizeIdePath(filePath)
+    if (!p || !existsSync(p)) return null
+    try {
+      const fileStat = statSync(p)
+      if (!fileStat.isFile() || fileStat.size > 10 * 1024 * 1024) return null
+      return readFileSync(p, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('ide:writeFile', (_event, filePath: unknown, content: unknown, encoding: unknown) => {
+    const p = sanitizeIdePath(filePath)
+    if (!p || typeof content !== 'string') return false
+    // 写入大小限制 50MB
+    if (content.length > 50 * 1024 * 1024) return false
+    try {
+      ensureDirectoryExists(dirname(p))
+      writeFileSync(p, content, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('ide:createDirectory', (_event, dirPath: unknown) => {
+    const p = sanitizeIdePath(dirPath)
+    if (!p) return false
+    try {
+      ensureDirectoryExists(p)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('ide:listDirectory', (_event, dirPath: unknown) => {
+    const p = sanitizeIdePath(dirPath)
+    if (!p || !existsSync(p)) return null
+    try {
+      const entries = readdirSync(p, { withFileTypes: true })
+      return entries.map(entry => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('ide:fileExists', (_event, filePath: unknown) => {
+    const p = sanitizeIdePath(filePath)
+    if (!p) return false
+    return existsSync(p)
+  })
+
+  ipcMain.handle('ide:fileStat', (_event, filePath: unknown) => {
+    const p = sanitizeIdePath(filePath)
+    if (!p || !existsSync(p)) return null
+    try {
+      const stat = statSync(p)
+      return { size: stat.size, isFile: stat.isFile(), isDirectory: stat.isDirectory(), modifiedAt: stat.mtimeMs }
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('ide:runCommand', (event, payload?: Partial<IDETerminalRunRequest>) => {
+    ensureIdeTerminalOwnerCleanup(event.sender)
+
+    const existingSessionId = ideTerminalOwnerSessions.get(event.sender.id)
+    if (existingSessionId && ideTerminalProcesses.has(existingSessionId)) {
+      throw new Error('当前已有正在运行的 IDE 终端命令，请先停止后再启动新的命令')
+    }
+
+    const command = typeof payload?.command === 'string' ? payload.command.trim() : ''
+    const cwd = sanitizeIdePath(payload?.cwd)
+
+    if (!command || Buffer.byteLength(command, 'utf-8') > 4096) {
+      throw new Error('终端命令不能为空，且长度不能超过 4096 字节')
+    }
+
+    if (!cwd || !existsSync(cwd)) {
+      throw new Error('终端工作目录无效或不存在')
+    }
+
+    const cwdStat = statSync(cwd)
+    if (!cwdStat.isDirectory()) {
+      throw new Error('终端工作目录不是有效文件夹')
+    }
+
+    const launch = buildIdeShellCommand(command)
+    const child = spawn(launch.file, launch.args, {
+      cwd,
+      env: {
+        ...process.env,
+        FORCE_COLOR: '0',
+        npm_config_color: 'false'
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+
+    if (!child.stdout || !child.stderr) {
+      throw new Error('终端命令输出管道初始化失败')
+    }
+
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+
+    const startedAt = Date.now()
+    const sessionId = randomUUID()
+    const entry = {
+      sessionId,
+      owner: event.sender,
+      command,
+      cwd,
+      startedAt,
+      child,
+      cancelRequested: false
+    }
+
+    ideTerminalProcesses.set(sessionId, entry)
+    ideTerminalOwnerSessions.set(event.sender.id, sessionId)
+
+    let finalized = false
+    const finalize = (payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) => {
+      if (finalized) {
+        return
+      }
+
+      finalized = true
+      emitIdeTerminalEvent(entry, payload)
+      cleanupIdeTerminalSession(sessionId)
+    }
+
+    emitIdeTerminalEvent(entry, {
+      type: 'start',
+      timestamp: startedAt,
+      status: 'running'
+    })
+
+    child.stdout.on('data', (chunk: string) => {
+      if (!chunk) {
+        return
+      }
+
+      emitIdeTerminalEvent(entry, {
+        type: 'data',
+        timestamp: Date.now(),
+        stream: 'stdout',
+        chunk
+      })
+    })
+
+    child.stderr.on('data', (chunk: string) => {
+      if (!chunk) {
+        return
+      }
+
+      emitIdeTerminalEvent(entry, {
+        type: 'data',
+        timestamp: Date.now(),
+        stream: 'stderr',
+        chunk
+      })
+    })
+
+    child.on('error', error => {
+      finalize({
+        type: 'error',
+        timestamp: Date.now(),
+        status: entry.cancelRequested ? 'cancelled' : 'failed',
+        error: error.message
+      })
+    })
+
+    child.on('close', (exitCode, signal) => {
+      finalize({
+        type: 'exit',
+        timestamp: Date.now(),
+        status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+        exitCode,
+        signal: signal ?? null
+      })
+    })
+
+    const result: IDETerminalRunResult = {
+      sessionId,
+      command,
+      cwd,
+      startedAt
+    }
+
+    return result
+  })
+
+  ipcMain.handle('ide:cancelCommand', (event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return false
+    }
+
+    const entry = ideTerminalProcesses.get(sessionId)
+    if (!entry || entry.owner.id !== event.sender.id) {
+      return false
+    }
+
+    return stopIdeTerminalSession(sessionId)
   })
 
   ipcMain.handle('app:getDataPath', () => getDataDir())

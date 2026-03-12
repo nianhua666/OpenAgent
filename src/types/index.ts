@@ -76,6 +76,7 @@ export interface AppSettings {
   live2dStoragePath: string
   live2dPosition: { x: number; y: number }
   live2dScale: number
+  aiOverlayBounds: WindowBounds | null
   closeToTray: boolean
   launchAtLogin: boolean
   language: string
@@ -145,6 +146,13 @@ export interface Live2DModelBounds {
   height: number
 }
 
+export interface WindowBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface WindowShapeRect {
   x: number
   y: number
@@ -158,6 +166,12 @@ export interface Live2DCursorPoint {
   localX: number
   localY: number
   insideWindow: boolean
+}
+
+export interface Live2DMouthState {
+  level: number
+  speaking: boolean
+  timestamp: number
 }
 
 export type RuntimeDataStorageMode = 'auto' | 'custom'
@@ -180,9 +194,9 @@ export interface RuntimeDataStorageInfo {
 
 // ==================== AI 对话系统 ====================
 
-export type AIProtocol = 'openai' | 'anthropic' | 'ollama-local' | 'ollama-cloud' | 'custom'
+export type AIProtocol = 'openai' | 'anthropic' | 'gemini' | 'ollama-local' | 'ollama-cloud' | 'custom'
 
-export type AIGatewayTemplate = 'standard' | 'sub2api-openai' | 'sub2api-claude' | 'sub2api-antigravity'
+export type AIGatewayTemplate = 'standard' | 'sub2api-openai' | 'sub2api-claude' | 'sub2api-gemini' | 'sub2api-antigravity'
 
 export type Sub2ApiGatewayMode = 'external' | 'desktop'
 
@@ -355,7 +369,7 @@ export interface AIChatAttachment {
   name: string
   mimeType: string
   dataUrl?: string
-  source: 'user' | 'tool'
+  source: 'user' | 'tool' | 'assistant'
   filePath?: string
   width?: number
   height?: number
@@ -411,6 +425,7 @@ export interface AIChatMessage {
   toolCalls?: AIToolCall[]
   toolCallId?: string
   toolName?: string
+  providerMetadata?: Record<string, unknown>
 }
 
 /** AI 工具调用 */
@@ -419,6 +434,7 @@ export interface AIToolCall {
   name: string
   arguments: string
   result?: string
+  providerMetadata?: Record<string, unknown>
 }
 
 /** AI 对话会话 */
@@ -431,6 +447,191 @@ export interface AIChatSession {
   summaryUpdatedAt?: number
   createdAt: number
   updatedAt: number
+}
+
+// ==================== Agent 模式 ====================
+
+export type AgentMode = 'agent' | 'ide'
+
+// ==================== 子代理系统 ====================
+
+export type SubAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface SubAgentResult {
+  success: boolean
+  output: string
+  artifacts: string[]
+  tokenUsage: { input: number; output: number }
+}
+
+export interface SubAgent {
+  id: string
+  parentSessionId: string
+  name: string
+  role: string
+  task: string
+  systemPrompt: string
+  model: string
+  protocol: AIProtocol
+  baseUrl: string
+  apiKey: string
+  status: SubAgentStatus
+  messages: AIChatMessage[]
+  contextBudget: number
+  result?: SubAgentResult
+  createdAt: number
+  completedAt?: number
+}
+
+export interface SubAgentSpawnRequest {
+  name: string
+  role: string
+  task: string
+  systemPrompt?: string
+  model?: string
+  protocol?: AIProtocol
+  baseUrl?: string
+  apiKey?: string
+  contextFromParent?: string
+  maxIterations?: number
+}
+
+/** 模型路由决策 */
+export interface ModelRouterDecision {
+  model: string
+  protocol: AIProtocol
+  baseUrl: string
+  apiKey: string
+  reason: string
+  capabilities: string[]
+}
+
+// ==================== IDE 工作区 ====================
+
+export interface IDEWorkspace {
+  id: string
+  rootPath: string
+  name: string
+  language?: string
+  framework?: string
+  structure?: ProjectStructure
+  createdAt: number
+}
+
+export interface ProjectStructure {
+  files: ProjectFile[]
+  totalFiles: number
+  totalLines: number
+  languages: Record<string, number>
+  updatedAt: number
+}
+
+export interface ProjectFile {
+  path: string
+  type: 'file' | 'directory'
+  language?: string
+  lines?: number
+  size?: number
+}
+
+export type IDETerminalStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type IDETerminalStream = 'stdout' | 'stderr' | 'system'
+
+export interface IDETerminalRunRequest {
+  command: string
+  cwd: string
+}
+
+export interface IDETerminalRunResult {
+  sessionId: string
+  command: string
+  cwd: string
+  startedAt: number
+}
+
+export interface IDETerminalEvent {
+  sessionId: string
+  type: 'start' | 'data' | 'exit' | 'error'
+  command: string
+  cwd: string
+  timestamp: number
+  stream?: IDETerminalStream
+  chunk?: string
+  status?: IDETerminalStatus
+  exitCode?: number | null
+  signal?: string | null
+  error?: string
+}
+
+// ==================== 项目规划 ====================
+
+export type PlanStatus = 'drafting' | 'approved' | 'in-progress' | 'completed' | 'paused'
+export type PhaseStatus = 'pending' | 'in-progress' | 'completed' | 'blocked'
+export type ProjectTaskType = 'create' | 'modify' | 'refactor' | 'test' | 'config' | 'docs'
+export type ProjectTaskStatus = 'pending' | 'in-progress' | 'completed' | 'failed' | 'skipped'
+
+export interface ProjectPlan {
+  id: string
+  workspaceId: string
+  goal: string
+  overview: string
+  techStack: string[]
+  phases: ProjectPhase[]
+  status: PlanStatus
+  progress: number
+  devLog: DevLogEntry[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProjectPhase {
+  id: string
+  name: string
+  description: string
+  tasks: ProjectTask[]
+  status: PhaseStatus
+  order: number
+}
+
+export interface ProjectTask {
+  id: string
+  phaseId: string
+  title: string
+  description: string
+  type: ProjectTaskType
+  files: string[]
+  dependencies: string[]
+  status: ProjectTaskStatus
+  assignedAgent?: string
+  output?: string
+  order: number
+}
+
+export interface DevLogEntry {
+  id: string
+  timestamp: number
+  type: 'plan' | 'task-start' | 'task-complete' | 'error' | 'decision' | 'milestone' | 'context-compress'
+  title: string
+  content: string
+  metadata?: Record<string, unknown>
+}
+
+// ==================== 上下文引擎 ====================
+
+export interface ContextSnapshot {
+  id: string
+  sessionId: string
+  summary: string
+  keyFacts: string[]
+  activeGoals: string[]
+  tokenCount: number
+  createdAt: number
+}
+
+export interface ContextPriority {
+  messageId: string
+  score: number
+  reason: string
 }
 
 export type AITaskStatus = 'planning' | 'running' | 'completed' | 'blocked'
