@@ -33,6 +33,89 @@ interface StreamCallbacks {
   onError: (error: string) => void
 }
 
+type AnthropicModelsError = Error & { fallbackToStatic?: boolean }
+
+type ResponsesContentPart = {
+  type: 'input_text' | 'output_text' | 'input_image'
+  text?: string
+  image_url?: string
+}
+
+type ResponsesInputItem = {
+  type?: 'function_call' | 'function_call_output'
+  role?: 'system' | 'user' | 'assistant'
+  content?: string | ResponsesContentPart[]
+  call_id?: string
+  name?: string
+  arguments?: string
+  id?: string
+  output?: string
+}
+
+type ResponsesToolDefinition = {
+  type: 'function'
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+type ResponsesOutputSummary = {
+  type?: string
+  text?: string
+}
+
+type ResponsesOutputItem = {
+  type?: string
+  id?: string
+  role?: string
+  content?: Array<{ type?: string; text?: string }>
+  status?: string
+  summary?: ResponsesOutputSummary[]
+  call_id?: string
+  name?: string
+  arguments?: string
+}
+
+type ResponsesUsage = {
+  input_tokens?: number
+  output_tokens?: number
+  input_tokens_details?: {
+    cached_tokens?: number
+  }
+}
+
+type ResponsesApiResponse = {
+  id?: string
+  model?: string
+  status?: string
+  output?: ResponsesOutputItem[]
+  usage?: ResponsesUsage
+  error?: {
+    message?: string
+  }
+  incomplete_details?: {
+    reason?: string
+  }
+}
+
+type ResponsesStreamEvent = {
+  type?: string
+  response?: ResponsesApiResponse
+  item?: ResponsesOutputItem
+  output_index?: number
+  content_index?: number
+  item_id?: string
+  call_id?: string
+  name?: string
+  arguments?: string
+  delta?: string
+  text?: string
+  error?: {
+    message?: string
+  }
+  message?: string
+}
+
 const DEFAULT_MODEL_CAPABILITIES: AIModelCapabilities = {
   vision: false,
   thinking: false,
@@ -152,6 +235,10 @@ function normalizeChatUrl(baseUrl: string, protocol: SupportedProtocol) {
   return `${ensureOpenAIBase(baseUrl)}/chat/completions`
 }
 
+function normalizeResponsesUrl(baseUrl: string) {
+  return `${ensureOpenAIBase(baseUrl)}/responses`
+}
+
 function normalizeModelsUrl(baseUrl: string, protocol: SupportedProtocol) {
   if (protocol === 'anthropic') {
     return ''
@@ -194,6 +281,10 @@ function buildOllamaHeaders(config: AIConfig): HeadersInit {
   }
 
   return headers
+}
+
+function shouldUseOpenAIResponsesApi(config: AIConfig) {
+  return resolveProtocol(config.protocol) === 'openai' && config.connectionTemplate === 'sub2api-openai'
 }
 
 function isWindowsMcpEnabled() {
@@ -601,6 +692,78 @@ function extractOllamaReasoningMessage(message: Record<string, unknown> | undefi
   return extractTextFromUnknown(message.thinking ?? message.reasoning)
 }
 
+function mergeResponsesFunctionCall(
+  toolCallsMap: Map<number, AIToolCall>,
+  toolIndexById: Map<string, number>,
+  outputIndex: number,
+  item?: ResponsesOutputItem,
+  callId?: string,
+  argumentsText?: string
+) {
+  const resolvedCallId = callId || item?.call_id || item?.id || `call_${outputIndex}`
+  if (!toolCallsMap.has(outputIndex)) {
+    toolCallsMap.set(outputIndex, {
+      id: resolvedCallId,
+      name: item?.name || '',
+      arguments: ''
+    })
+  }
+
+  const toolCall = toolCallsMap.get(outputIndex)!
+  toolCall.id = resolvedCallId
+  if (item?.name) {
+    toolCall.name = item.name
+  }
+
+  if (argumentsText) {
+    toolCall.arguments = mergeStreamingArgumentText(toolCall.arguments, argumentsText)
+  } else if (item?.arguments) {
+    toolCall.arguments = mergeStreamingArgumentText(toolCall.arguments, item.arguments)
+  }
+
+  toolIndexById.set(toolCall.id, outputIndex)
+}
+
+function extractResponsesErrorMessage(event: ResponsesStreamEvent) {
+  return event.response?.error?.message || event.error?.message || event.message || 'Responses 响应异常'
+}
+
+function parseResponsesOutput(response: ResponsesApiResponse) {
+  let content = ''
+  let reasoningContent = ''
+  const toolCalls: AIToolCall[] = []
+
+  for (const item of response.output ?? []) {
+    if (item.type === 'message') {
+      for (const part of item.content ?? []) {
+        if (part.type === 'output_text' && part.text) {
+          content += part.text
+        }
+      }
+      continue
+    }
+
+    if (item.type === 'function_call') {
+      toolCalls.push({
+        id: item.call_id || item.id || `call_${toolCalls.length}`,
+        name: item.name || '',
+        arguments: item.arguments || ''
+      })
+      continue
+    }
+
+    if (item.type === 'reasoning') {
+      const summaryText = (item.summary ?? [])
+        .map(summary => summary.type === 'summary_text' ? summary.text || '' : '')
+        .filter(Boolean)
+        .join('')
+      reasoningContent += summaryText
+    }
+  }
+
+  return { content, toolCalls, reasoningContent }
+}
+
 function appendAnthropicMessage(
   messages: Array<{ role: 'user' | 'assistant'; content: Array<Record<string, unknown>> }>,
   role: 'user' | 'assistant',
@@ -825,6 +988,109 @@ function buildOpenAICompatibleBody(
   return body
 }
 
+function buildResponsesInputItems(messages: AIChatMessage[]): ResponsesInputItem[] {
+  return messages.flatMap(message => {
+    if (message.role === 'system') {
+      const content = buildMessageTextContent(message).trim()
+      return content ? [{ role: 'system', content }] : []
+    }
+
+    if (message.role === 'user') {
+      const textContent = buildMessageTextContent(message)
+      if (!supportsImageInput(message)) {
+        return [{ role: 'user', content: textContent }]
+      }
+
+      const contentParts: ResponsesContentPart[] = []
+      if (textContent) {
+        contentParts.push({ type: 'input_text', text: textContent })
+      }
+
+      for (const attachment of message.attachments ?? []) {
+        if (attachment.type === 'image' && attachment.dataUrl) {
+          contentParts.push({
+            type: 'input_image',
+            image_url: attachment.dataUrl
+          })
+        }
+      }
+
+      return [{ role: 'user', content: contentParts }]
+    }
+
+    if (message.role === 'assistant') {
+      const items: ResponsesInputItem[] = []
+      const textContent = buildMessageTextContent(message)
+      if (textContent) {
+        items.push({
+          role: 'assistant',
+          content: [{ type: 'output_text', text: textContent }]
+        })
+      }
+
+      for (const toolCall of message.toolCalls ?? []) {
+        items.push({
+          type: 'function_call',
+          call_id: toolCall.id,
+          name: toolCall.name,
+          arguments: toolCall.arguments || '{}',
+          id: toolCall.id
+        })
+      }
+
+      return items
+    }
+
+    const output = buildMessageTextContent(message) || '(empty)'
+    return [{
+      type: 'function_call_output',
+      call_id: message.toolCallId || '',
+      output
+    }]
+  })
+}
+
+function buildResponsesToolDefinitions(config: AIConfig): ResponsesToolDefinition[] {
+  return getAvailableTools(config.protocol).map(tool => ({
+    type: 'function',
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters
+  }))
+}
+
+function buildOpenAIResponsesBody(
+  config: AIConfig,
+  messages: AIChatMessage[],
+  stream: boolean,
+  includeTools = true,
+  preferences?: Partial<AIChatPreferences>,
+  includeThinking = true
+) {
+  const limits = resolveConfigTokenLimits(config)
+  const body: Record<string, unknown> = {
+    model: config.model,
+    input: buildResponsesInputItems(messages),
+    stream,
+    store: false,
+    max_output_tokens: limits.maxOutputTokens,
+    temperature: config.temperature
+  }
+
+  if (includeTools) {
+    body.tools = buildResponsesToolDefinitions(config)
+  }
+
+  if (includeThinking && supportsThinkingMode(config, preferences)) {
+    body.reasoning = {
+      effort: getThinkingLevel(preferences),
+      summary: 'auto'
+    }
+  }
+
+  return body
+}
+
 function buildOllamaBody(
   config: AIConfig,
   messages: AIChatMessage[],
@@ -918,6 +1184,55 @@ async function requestOpenAICompatible(
   throw new Error(`API 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`)
 }
 
+async function requestOpenAIResponses(
+  config: AIConfig,
+  stream: boolean,
+  messages: AIChatMessage[],
+  preferences?: Partial<AIChatPreferences>,
+  options?: { includeTools?: boolean },
+  signal?: AbortSignal
+) {
+  const url = normalizeResponsesUrl(config.baseUrl)
+  const allowTools = options?.includeTools !== false
+  const queue: Array<{ includeTools: boolean; includeThinking: boolean }> = [{ includeTools: allowTools, includeThinking: true }]
+  const attempted = new Set<string>()
+  let lastErrorText = ''
+  let lastStatus = 500
+
+  while (queue.length > 0) {
+    const attempt = queue.shift()!
+    const attemptKey = `${attempt.includeTools}-${attempt.includeThinking}`
+    if (attempted.has(attemptKey)) {
+      continue
+    }
+
+    attempted.add(attemptKey)
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: buildOpenAICompatibleHeaders(config),
+      body: JSON.stringify(buildOpenAIResponsesBody(config, messages, stream, attempt.includeTools, preferences, attempt.includeThinking)),
+      signal
+    })
+
+    if (response.ok) {
+      return { response, includeTools: attempt.includeTools, includeThinking: attempt.includeThinking }
+    }
+
+    lastStatus = response.status
+    lastErrorText = await response.text()
+
+    if (allowTools && attempt.includeTools && shouldRetryWithoutTools('openai', response.status, lastErrorText)) {
+      queue.push({ includeTools: false, includeThinking: attempt.includeThinking })
+    }
+
+    if (attempt.includeThinking && shouldRetryWithoutThinking(response.status, lastErrorText)) {
+      queue.push({ includeTools: attempt.includeTools, includeThinking: false })
+    }
+  }
+
+  throw new Error(`Responses 请求失败 (${lastStatus}): ${lastErrorText.slice(0, 200)}`)
+}
+
 async function requestOllama(
   config: AIConfig,
   stream: boolean,
@@ -997,6 +1312,38 @@ function parseOpenAIModels(data: unknown): AIProviderModel[] {
     }, [])
 }
 
+function parseAnthropicModels(data: unknown): AIProviderModel[] {
+  const rawModels = Array.isArray((data as { data?: unknown[] } | null)?.data)
+    ? (data as { data: Array<Record<string, unknown>> }).data
+    : []
+
+  return rawModels.reduce<AIProviderModel[]>((result, model) => {
+      const id = String(model.id || '')
+      if (!id) {
+        return result
+      }
+
+      const displayName = typeof model.display_name === 'string' ? model.display_name.trim() : ''
+      const capabilities = inferModelCapabilities(id, 'anthropic', model)
+      const limits = inferModelLimits(id, 'anthropic', model)
+      result.push({
+        id,
+        name: id,
+        label: displayName || id,
+        description: [
+          displayName && displayName !== id ? id : '',
+          getModelCapabilityLabels(capabilities).join(' / '),
+          getModelLimitLabels(limits).join(' / ')
+        ].filter(Boolean).join(' · ') || undefined,
+        provider: 'Anthropic 兼容',
+        capabilities,
+        limits
+      })
+
+      return result
+    }, [])
+}
+
 function parseOllamaModels(data: unknown): AIProviderModel[] {
   const rawModels = Array.isArray((data as { models?: unknown[] } | null)?.models)
     ? (data as { models: Array<Record<string, unknown>> }).models
@@ -1043,6 +1390,23 @@ async function fetchOpenAICompatibleModels(config: AIConfig, signal?: AbortSigna
   return parseOpenAIModels(await response.json())
 }
 
+async function fetchAnthropicModels(config: AIConfig, signal?: AbortSignal) {
+  const response = await fetch(`${ensureAnthropicBase(config.baseUrl)}/models`, {
+    method: 'GET',
+    headers: buildAnthropicHeaders(config),
+    signal
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    const error = new Error(`Anthropic 模型列表请求失败 (${response.status}): ${errorText.slice(0, 200)}`) as AnthropicModelsError
+    error.fallbackToStatic = response.status === 404 || response.status === 405 || response.status === 501
+    throw error
+  }
+
+  return parseAnthropicModels(await response.json())
+}
+
 async function fetchOllamaModels(config: AIConfig, signal?: AbortSignal) {
   const protocol = resolveProtocol(config.protocol)
   if (protocol !== 'ollama-local' && protocol !== 'ollama-cloud') {
@@ -1067,6 +1431,20 @@ export async function fetchAvailableModels(config: AIConfig, signal?: AbortSigna
   const protocol = resolveProtocol(config.protocol)
 
   if (protocol === 'anthropic') {
+    try {
+      const remoteModels = await fetchAnthropicModels(config, signal)
+      if (remoteModels.length > 0) {
+        return remoteModels
+      }
+    } catch (error) {
+      const fallbackError = error as AnthropicModelsError
+      if (!fallbackError.fallbackToStatic) {
+        throw error
+      }
+
+      // 远端不支持 /models 时，回退到内置常用模型列表。
+    }
+
     return [
       {
         id: 'claude-3-7-sonnet-latest',
@@ -1556,6 +1934,115 @@ async function streamOpenAIChat(
   options?: { includeTools?: boolean },
   signal?: AbortSignal
 ) {
+  if (shouldUseOpenAIResponsesApi(config)) {
+    try {
+      const { response } = await requestOpenAIResponses(config, true, messages, preferences, options, signal)
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        callbacks.onError('响应体为空')
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const toolCallsMap = new Map<number, AIToolCall>()
+      const toolIndexById = new Map<string, number>()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmedLine = line.trim()
+          if (!trimmedLine || !trimmedLine.startsWith('data:')) {
+            continue
+          }
+
+          const payload = trimmedLine.slice(5).trim()
+          if (payload === '[DONE]') {
+            emitToolCalls(toolCallsMap, callbacks)
+            await callbacks.onDone()
+            return
+          }
+
+          try {
+            const event = JSON.parse(payload) as ResponsesStreamEvent
+            const eventType = event.type || ''
+
+            if (eventType === 'response.output_text.delta') {
+              const textDelta = event.delta || event.text || ''
+              if (textDelta) {
+                callbacks.onToken(textDelta)
+              }
+              continue
+            }
+
+            if (eventType === 'response.reasoning_summary_text.delta') {
+              const reasoningDelta = event.delta || event.text || ''
+              if (reasoningDelta) {
+                callbacks.onReasoning?.(reasoningDelta)
+              }
+              continue
+            }
+
+            if (eventType === 'response.output_item.added' && event.item?.type === 'function_call') {
+              const outputIndex = Number(event.output_index ?? toolCallsMap.size)
+              mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, event.item)
+              continue
+            }
+
+            if (eventType === 'response.function_call_arguments.delta' || eventType === 'response.function_call_arguments.done') {
+              const outputIndex = typeof event.output_index === 'number'
+                ? event.output_index
+                : (event.call_id ? toolIndexById.get(event.call_id) : undefined) ?? (event.item_id ? toolIndexById.get(event.item_id) : undefined) ?? toolCallsMap.size
+              mergeResponsesFunctionCall(toolCallsMap, toolIndexById, outputIndex, undefined, event.call_id || event.item_id, event.delta || event.arguments || '')
+              continue
+            }
+
+            if (eventType === 'response.failed') {
+              callbacks.onError(extractResponsesErrorMessage(event))
+              return
+            }
+
+            if (eventType === 'response.completed' || eventType === 'response.incomplete') {
+              const parsedResponse = event.response
+              if (parsedResponse) {
+                for (const [index, item] of (parsedResponse.output ?? []).entries()) {
+                  if (item.type === 'function_call') {
+                    mergeResponsesFunctionCall(toolCallsMap, toolIndexById, index, item)
+                  }
+                }
+              }
+
+              emitToolCalls(toolCallsMap, callbacks)
+              await callbacks.onDone()
+              return
+            }
+          } catch {
+            // 等待下一个 SSE 片段拼接完整。
+          }
+        }
+      }
+
+      emitToolCalls(toolCallsMap, callbacks)
+      await callbacks.onDone()
+    } catch (error) {
+      if (signal?.aborted) {
+        return
+      }
+      callbacks.onError(`请求失败: ${(error as Error).message}`)
+    }
+
+    return
+  }
+
   try {
     const { response } = await requestOpenAICompatible(config, true, messages, preferences, options, signal)
 
@@ -1930,6 +2417,16 @@ export async function streamChat(
 }
 
 async function chatCompletionOpenAI(config: AIConfig, messages: AIChatMessage[], preferences?: Partial<AIChatPreferences>, options?: { includeTools?: boolean }, signal?: AbortSignal) {
+  if (shouldUseOpenAIResponsesApi(config)) {
+    const { response } = await requestOpenAIResponses(config, false, messages, preferences, options, signal)
+    const data = await response.json() as ResponsesApiResponse
+    if (data.status === 'failed') {
+      throw new Error(data.error?.message || 'Responses 请求失败')
+    }
+
+    return parseResponsesOutput(data)
+  }
+
   const { response } = await requestOpenAICompatible(config, false, messages, preferences, options, signal)
   const data = await response.json()
   const choice = data.choices?.[0]?.message

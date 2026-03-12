@@ -70,6 +70,108 @@
         </div>
       </div>
 
+      <div class="sub2api-panel">
+        <div class="sub2api-panel-head">
+          <div class="sub2api-panel-copy">
+            <span class="provider-card-tag">Sub2API</span>
+            <strong>网关快捷接入</strong>
+            <p>把网关根地址填一次，再一键切 Claude、OpenAI 或 Antigravity Claude 路由。适合把多上游账号池统一收口到当前桌面助手。</p>
+          </div>
+          <div class="sub2api-panel-status">
+            <strong>{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '未启用模板' }}</strong>
+            <small>{{ usingSub2ApiTemplate ? aiConnectionHint : '启用后会自动同步协议、Base URL 和推荐模型。' }}</small>
+          </div>
+        </div>
+
+        <div class="sub2api-root-row">
+          <div class="setting-label">
+            <div class="label-main">网关根地址</div>
+            <div class="label-desc">填写 Sub2API 服务器根地址，不要带 /v1、/messages、/chat/completions 或 /antigravity/v1。</div>
+          </div>
+          <div class="ai-input-stack">
+            <input
+              class="setting-input"
+              :value="sub2ApiGatewayRoot"
+              :placeholder="SUB2API_GATEWAY_PLACEHOLDER"
+              @input="sub2ApiGatewayRoot = normalizeSub2ApiGatewayRoot(($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-tip">{{ activeSub2ApiPreset ? activeSub2ApiPreset.routeHint.replace('{gateway}', sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) : '选择下方任一路由后，会自动生成可用的 Base URL。' }}</span>
+          </div>
+        </div>
+
+        <div class="sub2api-mode-grid">
+          <button
+            v-for="mode in sub2ApiModeOptions"
+            :key="mode.value"
+            class="sub2api-mode-card"
+            :class="{ active: activeSub2ApiMode === mode.value }"
+            @click="applySub2ApiMode(mode.value)"
+          >
+            <span class="provider-card-tag">{{ mode.tag }}</span>
+            <strong>{{ mode.title }}</strong>
+            <small>{{ mode.description }}</small>
+            <span class="sub2api-mode-route">{{ (sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) + mode.routeSuffix }}</span>
+          </button>
+        </div>
+
+        <div class="sub2api-route-strip">
+          <span class="sub2api-route-chip">当前模板：{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '标准直连/自定义' }}</span>
+          <span class="sub2api-route-chip">实际 Base URL：{{ aiConfig.baseUrl || '未设置' }}</span>
+          <span v-if="sub2ApiResolvedRoute" class="sub2api-route-chip is-accent">当前推导路由：{{ sub2ApiResolvedRoute }}</span>
+        </div>
+
+        <div class="sub2api-tools-grid">
+          <div class="sub2api-tool-card">
+            <div class="sub2api-tool-head">
+              <div>
+                <strong>核心能力检查</strong>
+                <p>{{ sub2ApiCheckSummary }}</p>
+              </div>
+              <div class="hero-actions">
+                <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiGatewayAdminUrl" @click="openSub2ApiAdmin">打开后台</button>
+                <button class="btn btn-primary btn-sm" :disabled="checkingSub2ApiCapabilities" @click="runSub2ApiCapabilityCheck">
+                  {{ checkingSub2ApiCapabilities ? '检查中...' : '检查 Sub2API 核心能力' }}
+                </button>
+              </div>
+            </div>
+            <span class="field-tip">检查会发送极小请求，用于验证当前 API Key、模型与网关路由是否真的可用。OpenAI 路由会额外验证 Responses，专门检查 Codex 额度路径。</span>
+            <div v-if="sub2ApiCheckItems.length" class="sub2api-check-list">
+              <div v-for="item in sub2ApiCheckItems" :key="item.id" class="sub2api-check-item" :class="`is-${item.state}`">
+                <div class="sub2api-check-copy">
+                  <strong>{{ item.label }}</strong>
+                  <small>{{ item.endpoint }}</small>
+                </div>
+                <span>{{ item.message }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="sub2api-tool-card">
+            <div class="sub2api-tool-head">
+              <div>
+                <strong>Codex CLI 配置模板</strong>
+                <p>当 Sub2API 服务器已经接入 OpenAI OAuth / Codex 登录账号时，这组配置可以让 Codex 客户端走 Sub2API，从而使用服务端的 Codex 额度。</p>
+              </div>
+              <div class="hero-actions">
+                <button class="btn btn-secondary btn-sm" @click="copyText(sub2ApiCodexConfigToml, 'config.toml')">复制 config.toml</button>
+                <button class="btn btn-secondary btn-sm" @click="copyText(sub2ApiCodexAuthJson, 'auth.json')">复制 auth.json</button>
+              </div>
+            </div>
+            <div class="sub2api-config-grid">
+              <div class="sub2api-config-block">
+                <span class="sub2api-config-label">%userprofile%/.codex/config.toml</span>
+                <textarea class="setting-textarea setting-textarea-sm sub2api-config-textarea" :value="sub2ApiCodexConfigToml" rows="12" readonly />
+              </div>
+              <div class="sub2api-config-block">
+                <span class="sub2api-config-label">%userprofile%/.codex/auth.json</span>
+                <textarea class="setting-textarea setting-textarea-sm sub2api-config-textarea" :value="sub2ApiCodexAuthJson" rows="4" readonly />
+              </div>
+            </div>
+            <span class="field-tip">当前桌面助手在 Sub2API OpenAI 路由下会优先直连 /responses；如果服务端分组绑定的是 OpenAI OAuth / Codex 登录账号，当前程序与 Codex CLI 都会直接共享同一条 Responses / Codex 额度链路。</span>
+          </div>
+        </div>
+      </div>
+
       <div class="setting-row">
         <div class="setting-label">
           <div class="label-main">Windows MCP 系统控制</div>
@@ -531,7 +633,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSEmotionStyle, TTSVoiceLibraryItem } from '@/types'
+import type { AIGatewayTemplate, AIConfig, AIConversationScope, AIProviderModel, AIProtocol, AppSettings, TTSEmotionStyle, TTSVoiceLibraryItem } from '@/types'
 import AIManagedResourcesPanel from '@/components/AIManagedResourcesPanel.vue'
 import { useAIResourcesStore } from '@/stores/aiResources'
 import { useAIStore } from '@/stores/ai'
@@ -580,6 +682,9 @@ const settings = computed(() => settingsStore.settings)
 const aiConfig = computed(() => aiStore.config)
 const normalizedSearchQuery = computed(() => normalizeSearchQuery(props.searchQuery))
 const showApiKey = ref(false)
+const sub2ApiGatewayRoot = ref('')
+const checkingSub2ApiCapabilities = ref(false)
+const sub2ApiCheckItems = ref<Sub2ApiCheckItem[]>([])
 const showAzureTTSKey = ref(false)
 const availableAiModels = ref<AIProviderModel[]>([])
 const loadingAiModels = ref(false)
@@ -621,6 +726,141 @@ type AIProtocolPreset = {
   baseUrlPlaceholder: string
   modelPlaceholder: string
   supportsModelFetch: boolean
+}
+
+type Sub2ApiMode = 'claude' | 'openai' | 'antigravity'
+
+type Sub2ApiModePreset = {
+  value: Sub2ApiMode
+  title: string
+  tag: string
+  description: string
+  protocol: AIProtocol
+  connectionTemplate: AIGatewayTemplate
+  routeSuffix: string
+  recommendedModel: string
+  connectionHint: string
+  routeHint: string
+}
+
+type Sub2ApiCheckState = 'success' | 'error' | 'pending'
+
+type Sub2ApiCheckItem = {
+  id: string
+  label: string
+  endpoint: string
+  state: Sub2ApiCheckState
+  message: string
+}
+
+const SUB2API_GATEWAY_PLACEHOLDER = 'https://your-sub2api.example.com'
+
+const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
+  claude: {
+    value: 'claude',
+    title: 'Claude 路由',
+    tag: 'Messages',
+    description: '走标准 /v1/messages，适合 Claude 系列模型与桌面工具调用。',
+    protocol: 'anthropic',
+    connectionTemplate: 'sub2api-claude',
+    routeSuffix: '/v1',
+    recommendedModel: 'claude-3-7-sonnet-latest',
+    connectionHint: '通过 Sub2API 的 Claude 兼容路由接入，适合 Claude 官方与兼容账号池。',
+    routeHint: '会自动映射到 {gateway}/v1/messages 与 {gateway}/v1/models。'
+  },
+  openai: {
+    value: 'openai',
+    title: 'OpenAI 路由',
+    tag: 'Chat / Responses',
+    description: '走 /v1/chat/completions 与 /v1/responses，适合 GPT、o 系列和兼容上游。',
+    protocol: 'openai',
+    connectionTemplate: 'sub2api-openai',
+    routeSuffix: '/v1',
+    recommendedModel: 'gpt-5.4',
+    connectionHint: '通过 Sub2API 的 OpenAI 路由接入，桌面端会优先走原生 Responses，适合 GPT、o 系列和 Codex 风格客户端。',
+    routeHint: '会自动映射到 {gateway}/v1/chat/completions、{gateway}/v1/responses 与 {gateway}/v1/models。'
+  },
+  antigravity: {
+    value: 'antigravity',
+    title: 'Antigravity Claude 专线',
+    tag: '专线',
+    description: '走 /antigravity/v1/messages，只使用 Antigravity 账号池，不混入普通 Claude 调度。',
+    protocol: 'anthropic',
+    connectionTemplate: 'sub2api-antigravity',
+    routeSuffix: '/antigravity/v1',
+    recommendedModel: 'claude-3-7-sonnet-latest',
+    connectionHint: '通过 Sub2API 的 Antigravity 专线访问 Claude 路由，适合需要隔离账号池的场景。',
+    routeHint: '会自动映射到 {gateway}/antigravity/v1/messages 与 {gateway}/antigravity/v1/models。'
+  }
+}
+
+function trimTrailingSlashes(value: string) {
+  return value.trim().replace(/\/+$/, '')
+}
+
+function normalizeSub2ApiGatewayRoot(value: string) {
+  return trimTrailingSlashes(value)
+    .replace(/\/antigravity\/v1beta$/i, '')
+    .replace(/\/antigravity\/v1$/i, '')
+    .replace(/\/v1beta$/i, '')
+    .replace(/\/v1$/i, '')
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/responses$/i, '')
+    .replace(/\/messages$/i, '')
+    .replace(/\/models$/i, '')
+}
+
+function buildSub2ApiBaseUrl(root: string, mode: Sub2ApiMode) {
+  const normalizedRoot = normalizeSub2ApiGatewayRoot(root)
+  if (!normalizedRoot) {
+    return ''
+  }
+
+  return `${normalizedRoot}${SUB2API_MODE_PRESETS[mode].routeSuffix}`
+}
+
+function buildSub2ApiHeaders(apiKey: string, protocol: AIProtocol) {
+  if (protocol === 'anthropic') {
+    return {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey.trim(),
+      'anthropic-version': '2023-06-01'
+    }
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  }
+
+  if (apiKey.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`
+  }
+
+  return headers
+}
+
+async function readSub2ApiErrorText(response: Response) {
+  try {
+    return (await response.text()).slice(0, 240)
+  } catch {
+    return ''
+  }
+}
+
+function resolveSub2ApiMode(template: AIGatewayTemplate): Sub2ApiMode | null {
+  if (template === 'sub2api-claude') {
+    return 'claude'
+  }
+
+  if (template === 'sub2api-openai') {
+    return 'openai'
+  }
+
+  if (template === 'sub2api-antigravity') {
+    return 'antigravity'
+  }
+
+  return null
 }
 
 const AI_PROTOCOL_PRESETS: Record<AIProtocol, AIProtocolPreset> = {
@@ -704,15 +944,100 @@ const aiProtocolOptions = (Object.entries(AI_PROTOCOL_PRESETS) as Array<[AIProto
 }))
 
 const aiProtocolPreset = computed(() => AI_PROTOCOL_PRESETS[aiConfig.value.protocol])
-const aiProviderTitle = computed(() => aiProtocolPreset.value.label)
-const aiProtocolDescription = computed(() => aiProtocolPreset.value.protocolDescription)
-const aiApiKeyDescription = computed(() => aiProtocolPreset.value.apiKeyDescription)
-const aiBaseUrlDescription = computed(() => aiProtocolPreset.value.baseUrlDescription)
-const aiModelDescription = computed(() => aiProtocolPreset.value.modelDescription)
-const aiBaseUrlPlaceholder = computed(() => aiProtocolPreset.value.baseUrlPlaceholder)
-const aiModelPlaceholder = computed(() => aiProtocolPreset.value.modelPlaceholder)
+const activeSub2ApiMode = computed(() => resolveSub2ApiMode(aiConfig.value.connectionTemplate))
+const activeSub2ApiPreset = computed(() => activeSub2ApiMode.value ? SUB2API_MODE_PRESETS[activeSub2ApiMode.value] : null)
+const usingSub2ApiTemplate = computed(() => activeSub2ApiPreset.value !== null)
+const sub2ApiModeOptions = Object.values(SUB2API_MODE_PRESETS)
+const sub2ApiGatewayAdminUrl = computed(() => normalizeSub2ApiGatewayRoot(sub2ApiGatewayRoot.value))
+const sub2ApiOpenAIBaseUrl = computed(() => buildSub2ApiBaseUrl(sub2ApiGatewayAdminUrl.value, 'openai'))
+const sub2ApiResolvedRoute = computed(() => {
+  const mode = activeSub2ApiMode.value || 'claude'
+  return buildSub2ApiBaseUrl(sub2ApiGatewayRoot.value, mode)
+})
+const sub2ApiCodexConfigToml = computed(() => `model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+model_reasoning_effort = "xhigh"
+disable_response_storage = true
+network_access = "enabled"
+windows_wsl_setup_acknowledged = true
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "${sub2ApiOpenAIBaseUrl.value || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
+wire_api = "responses"
+supports_websockets = true
+requires_openai_auth = true
+
+[features]
+responses_websockets_v2 = true`)
+const sub2ApiCodexAuthJson = computed(() => JSON.stringify({
+  OPENAI_API_KEY: aiConfig.value.apiKey.trim() || 'sk-your-sub2api-key'
+}, null, 2))
+const sub2ApiCheckSummary = computed(() => {
+  if (checkingSub2ApiCapabilities.value) {
+    return '检查中，会发送极小请求验证模型列表、当前路由和 Codex / Responses 路径。'
+  }
+
+  if (sub2ApiCheckItems.value.length === 0) {
+    return '尚未检查。建议在切换完 API Key、网关地址和模型后主动跑一次。'
+  }
+
+  const successCount = sub2ApiCheckItems.value.filter(item => item.state === 'success').length
+  const failureCount = sub2ApiCheckItems.value.filter(item => item.state === 'error').length
+  return `已完成 ${sub2ApiCheckItems.value.length} 项检查：成功 ${successCount} 项，失败 ${failureCount} 项。`
+})
+const aiProviderTitle = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return `${aiProtocolPreset.value.label} · ${activeSub2ApiPreset.value.title}`
+  }
+
+  return aiProtocolPreset.value.label
+})
+const aiProtocolDescription = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return `Sub2API 快捷接入已启用。${activeSub2ApiPreset.value.description}`
+  }
+
+  return aiProtocolPreset.value.protocolDescription
+})
+const aiApiKeyDescription = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return '填写 Sub2API 平台签发的 API Key；桌面端会按当前路由自动请求对应端点。'
+  }
+
+  return aiProtocolPreset.value.apiKeyDescription
+})
+const aiBaseUrlDescription = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return '这里展示当前 Sub2API 路由的实际请求地址。更推荐在上方快捷接入面板里填写网关根地址并切换路由。'
+  }
+
+  return aiProtocolPreset.value.baseUrlDescription
+})
+const aiModelDescription = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return `推荐先读取当前路由可用模型；若网关未返回列表，可先用 ${activeSub2ApiPreset.value.recommendedModel} 作为起点。`
+  }
+
+  return aiProtocolPreset.value.modelDescription
+})
+const aiBaseUrlPlaceholder = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return `${SUB2API_GATEWAY_PLACEHOLDER}${activeSub2ApiPreset.value.routeSuffix}`
+  }
+
+  return aiProtocolPreset.value.baseUrlPlaceholder
+})
+const aiModelPlaceholder = computed(() => activeSub2ApiPreset.value?.recommendedModel || aiProtocolPreset.value.modelPlaceholder)
 const canFetchAIModels = computed(() => aiProtocolPreset.value.supportsModelFetch && !!aiConfig.value.baseUrl.trim())
 const aiBaseUrlHint = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return `推荐只在 Sub2API 面板填写网关根地址，例如 ${SUB2API_GATEWAY_PLACEHOLDER}；系统会自动拼接当前路由。`
+  }
+
   if (aiConfig.value.protocol === 'ollama-local') {
     return '本地模式使用官方 /api；旧的 /v1 地址会在请求时自动兼容迁移。'
   }
@@ -724,6 +1049,10 @@ const aiBaseUrlHint = computed(() => {
   return '建议填写基础地址，不要把路径锁死到单个接口。'
 })
 const aiConnectionHint = computed(() => {
+  if (activeSub2ApiPreset.value) {
+    return activeSub2ApiPreset.value.connectionHint
+  }
+
   if (aiConfig.value.protocol === 'ollama-local') {
     return '本地运行，无需额外网关；模型列表直接读取本机 Ollama。'
   }
@@ -996,6 +1325,10 @@ const showRuntimeSection = computed(() => !normalizedSearchQuery.value || matche
   'AI',
   '协议',
   '模型',
+  'Sub2API',
+  'Antigravity',
+  'Claude',
+  'OpenAI',
   'API Key',
   'Base URL',
   'Temperature',
@@ -1028,6 +1361,14 @@ const showManagedResourcesSection = computed(() => !normalizedSearchQuery.value 
 ))
 const hasVisibleSection = computed(() => showOverviewSection.value || showRuntimeSection.value || showTTSSection.value || showManagedResourcesSection.value)
 
+watch(() => [aiConfig.value.connectionTemplate, aiConfig.value.baseUrl], () => {
+  if (aiConfig.value.connectionTemplate === 'standard') {
+    return
+  }
+
+  sub2ApiGatewayRoot.value = normalizeSub2ApiGatewayRoot(aiConfig.value.baseUrl)
+}, { immediate: true })
+
 function updateAIProtocol(protocol: AIProtocol) {
   updateAIConfig('protocol', protocol)
 }
@@ -1042,7 +1383,10 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
     const currentProtocol = aiConfig.value.protocol
     const currentPreset = AI_PROTOCOL_PRESETS[currentProtocol]
     const nextPreset = AI_PROTOCOL_PRESETS[nextProtocol]
-    const partial: Partial<AIConfig> = { protocol: nextProtocol }
+    const partial: Partial<AIConfig> = {
+      protocol: nextProtocol,
+      connectionTemplate: 'standard'
+    }
 
     availableAiModels.value = []
     aiModelLoadError.value = ''
@@ -1069,6 +1413,226 @@ function updateAIConfig(key: keyof AIConfig, value: AIConfig[keyof AIConfig]) {
   }
 
   void aiStore.updateConfig({ [key]: value } as Partial<AIConfig>)
+}
+
+function applySub2ApiMode(mode: Sub2ApiMode) {
+  const normalizedRoot = normalizeSub2ApiGatewayRoot(sub2ApiGatewayRoot.value)
+  if (!normalizedRoot) {
+    showToast('error', '请先填写 Sub2API 网关根地址')
+    return
+  }
+
+  const preset = SUB2API_MODE_PRESETS[mode]
+  const currentPreset = AI_PROTOCOL_PRESETS[aiConfig.value.protocol]
+  const nextBaseUrl = buildSub2ApiBaseUrl(normalizedRoot, mode)
+  const shouldReplaceModel = !aiConfig.value.model.trim()
+    || aiConfig.value.connectionTemplate !== preset.connectionTemplate
+    || aiConfig.value.model === currentPreset.model
+
+  availableAiModels.value = []
+  aiModelLoadError.value = ''
+  aiModelStatus.value = `已切换到 ${preset.title}，可以直接读取当前路由模型。`
+
+  void aiStore.updateConfig({
+    protocol: preset.protocol,
+    connectionTemplate: preset.connectionTemplate,
+    baseUrl: nextBaseUrl,
+    ...(shouldReplaceModel ? { model: preset.recommendedModel } : {})
+  })
+}
+
+async function copyText(text: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('success', `${label} 已复制`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `${label} 复制失败`
+    showToast('error', message)
+  }
+}
+
+function openSub2ApiAdmin() {
+  if (!sub2ApiGatewayAdminUrl.value) {
+    showToast('error', '请先填写 Sub2API 网关根地址')
+    return
+  }
+
+  if (window.electronAPI?.openExternal) {
+    window.electronAPI.openExternal(sub2ApiGatewayAdminUrl.value)
+    return
+  }
+
+  window.open(sub2ApiGatewayAdminUrl.value, '_blank', 'noopener,noreferrer')
+}
+
+async function runSub2ApiCapabilityCheck() {
+  const gatewayRoot = sub2ApiGatewayAdminUrl.value
+  if (!gatewayRoot) {
+    showToast('error', '请先填写 Sub2API 网关根地址')
+    return
+  }
+
+  if (!aiConfig.value.apiKey.trim()) {
+    showToast('error', '请先填写 Sub2API API Key')
+    return
+  }
+
+  const currentMode = activeSub2ApiMode.value || (aiConfig.value.protocol === 'openai' ? 'openai' : 'claude')
+  const currentPreset = SUB2API_MODE_PRESETS[currentMode]
+  const currentBaseUrl = buildSub2ApiBaseUrl(gatewayRoot, currentMode)
+  const currentModel = aiConfig.value.model.trim() || currentPreset.recommendedModel
+  const currentHeaders = buildSub2ApiHeaders(aiConfig.value.apiKey, currentPreset.protocol)
+  const checks: Sub2ApiCheckItem[] = []
+  checkingSub2ApiCapabilities.value = true
+  sub2ApiCheckItems.value = []
+
+  try {
+    const modelsUrl = `${currentBaseUrl}/models`
+    const modelsResponse = await fetch(modelsUrl, {
+      method: 'GET',
+      headers: currentHeaders
+    })
+
+    if (!modelsResponse.ok) {
+      checks.push({
+        id: 'models',
+        label: '模型列表',
+        endpoint: modelsUrl,
+        state: 'error',
+        message: `请求失败 (${modelsResponse.status})：${await readSub2ApiErrorText(modelsResponse) || '未返回更多信息'}`
+      })
+    } else {
+      const payload = await modelsResponse.json().catch(() => null)
+      const modelCount = Array.isArray((payload as { data?: unknown[] } | null)?.data)
+        ? ((payload as { data: unknown[] }).data.length)
+        : Array.isArray((payload as { models?: unknown[] } | null)?.models)
+          ? ((payload as { models: unknown[] }).models.length)
+          : 0
+      checks.push({
+        id: 'models',
+        label: '模型列表',
+        endpoint: modelsUrl,
+        state: 'success',
+        message: modelCount > 0 ? `已返回 ${modelCount} 个模型。` : '接口可访问，但未返回模型列表。'
+      })
+    }
+
+    if (currentPreset.protocol === 'anthropic') {
+      const messagesUrl = `${currentBaseUrl}/messages`
+      const messagesResponse = await fetch(messagesUrl, {
+        method: 'POST',
+        headers: currentHeaders,
+        body: JSON.stringify({
+          model: currentModel,
+          max_tokens: 1,
+          stream: false,
+          messages: [{ role: 'user', content: 'ping' }]
+        })
+      })
+
+      if (!messagesResponse.ok) {
+        checks.push({
+          id: 'messages',
+          label: `${currentPreset.title} 请求`,
+          endpoint: messagesUrl,
+          state: 'error',
+          message: `请求失败 (${messagesResponse.status})：${await readSub2ApiErrorText(messagesResponse) || '未返回更多信息'}`
+        })
+      } else {
+        checks.push({
+          id: 'messages',
+          label: `${currentPreset.title} 请求`,
+          endpoint: messagesUrl,
+          state: 'success',
+          message: `模型 ${currentModel} 已可正常响应。`
+        })
+      }
+
+      checks.push({
+        id: 'codex-ready',
+        label: 'Codex / Responses 路径',
+        endpoint: `${buildSub2ApiBaseUrl(gatewayRoot, 'openai')}/responses`,
+        state: 'pending',
+        message: '当前不在 OpenAI 路由。要验证 Codex 额度，请切换到「OpenAI 路由」后重新检查。'
+      })
+    } else {
+      const chatUrl = `${currentBaseUrl}/chat/completions`
+      const chatResponse = await fetch(chatUrl, {
+        method: 'POST',
+        headers: currentHeaders,
+        body: JSON.stringify({
+          model: currentModel,
+          stream: false,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }]
+        })
+      })
+
+      if (!chatResponse.ok) {
+        checks.push({
+          id: 'chat-completions',
+          label: 'Chat Completions 路径',
+          endpoint: chatUrl,
+          state: 'error',
+          message: `请求失败 (${chatResponse.status})：${await readSub2ApiErrorText(chatResponse) || '未返回更多信息'}`
+        })
+      } else {
+        checks.push({
+          id: 'chat-completions',
+          label: 'Chat Completions 路径',
+          endpoint: chatUrl,
+          state: 'success',
+          message: `模型 ${currentModel} 已可通过 OpenAI 兼容路由访问。`
+        })
+      }
+
+      const responsesUrl = `${currentBaseUrl}/responses`
+      const responsesResponse = await fetch(responsesUrl, {
+        method: 'POST',
+        headers: currentHeaders,
+        body: JSON.stringify({
+          model: currentModel,
+          store: false,
+          max_output_tokens: 1,
+          input: 'ping'
+        })
+      })
+
+      if (!responsesResponse.ok) {
+        checks.push({
+          id: 'responses',
+          label: 'Codex / Responses 路径',
+          endpoint: responsesUrl,
+          state: 'error',
+          message: `请求失败 (${responsesResponse.status})：${await readSub2ApiErrorText(responsesResponse) || '未返回更多信息'}`
+        })
+      } else {
+        checks.push({
+          id: 'responses',
+          label: 'Codex / Responses 路径',
+          endpoint: responsesUrl,
+          state: 'success',
+          message: 'Responses API 已可用。若服务端分组绑定的是 OpenAI OAuth / Codex 登录账号，这条路径就能消耗 Codex 额度。'
+        })
+      }
+    }
+
+    sub2ApiCheckItems.value = checks
+    const hasError = checks.some(item => item.state === 'error')
+    showToast(hasError ? 'error' : 'success', hasError ? 'Sub2API 核心能力检查已完成，存在失败项' : 'Sub2API 核心能力检查通过')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Sub2API 核心能力检查失败'
+    sub2ApiCheckItems.value = [{
+      id: 'fatal',
+      label: '检查任务',
+      endpoint: gatewayRoot,
+      state: 'error',
+      message
+    }]
+    showToast('error', message)
+  } finally {
+    checkingSub2ApiCapabilities.value = false
+  }
 }
 
 function clampInteger(value: number, min: number, max: number, fallback: number) {
@@ -1151,6 +1715,7 @@ function applyOfficialPreset() {
   aiModelLoadError.value = ''
   aiModelStatus.value = ''
   void aiStore.updateConfig({
+    connectionTemplate: 'standard',
     protocol: aiConfig.value.protocol,
     baseUrl: preset.baseUrl,
     model: preset.model,
@@ -2160,6 +2725,244 @@ onBeforeUnmount(() => {
   }
 }
 
+.sub2api-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(18, 85, 92, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(255, 241, 210, 0.65), transparent 45%),
+    linear-gradient(135deg, rgba(221, 243, 236, 0.72), rgba(228, 236, 255, 0.68));
+}
+
+.sub2api-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sub2api-panel-copy,
+.sub2api-panel-status {
+  display: grid;
+  gap: 6px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  p,
+  small {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+}
+
+.sub2api-panel-status {
+  min-width: min(240px, 100%);
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 85, 92, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.sub2api-root-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.sub2api-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sub2api-mode-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 85, 92, 0.14);
+  background: rgba(255, 255, 255, 0.62);
+  text-align: left;
+  cursor: pointer;
+  transition: transform $transition-fast, border-color $transition-fast, box-shadow $transition-fast;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  small {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: rgba(18, 85, 92, 0.28);
+    box-shadow: $shadow-card;
+  }
+
+  &.active {
+    border-color: rgba(18, 85, 92, 0.28);
+    background: linear-gradient(135deg, rgba(255, 249, 234, 0.85), rgba(222, 243, 236, 0.82));
+  }
+}
+
+.sub2api-mode-route {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(18, 85, 92, 0.08);
+  color: #12555c;
+  font-size: 11px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.sub2api-route-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub2api-route-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid rgba(18, 85, 92, 0.08);
+
+  &.is-accent {
+    color: #12555c;
+    background: rgba(221, 243, 236, 0.88);
+  }
+}
+
+.sub2api-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sub2api-tool-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 85, 92, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.sub2api-tool-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+}
+
+.sub2api-check-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sub2api-check-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(18, 85, 92, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+
+  span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.7;
+    text-align: right;
+  }
+
+  &.is-success {
+    border-color: rgba(18, 120, 96, 0.18);
+    background: rgba(228, 248, 239, 0.88);
+  }
+
+  &.is-error {
+    border-color: rgba(180, 35, 24, 0.16);
+    background: rgba(254, 243, 242, 0.92);
+  }
+
+  &.is-pending {
+    border-color: rgba(18, 85, 92, 0.14);
+    background: rgba(243, 248, 251, 0.92);
+  }
+}
+
+.sub2api-check-copy {
+  display: grid;
+  gap: 4px;
+
+  strong {
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  small {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.6;
+    word-break: break-all;
+  }
+}
+
+.sub2api-config-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.sub2api-config-block {
+  display: grid;
+  gap: 6px;
+}
+
+.sub2api-config-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.sub2api-config-textarea {
+  font-family: 'Consolas', 'Cascadia Mono', 'SFMono-Regular', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .range-wrap {
   display: inline-flex;
   align-items: center;
@@ -2311,11 +3114,22 @@ onBeforeUnmount(() => {
   .ai-provider-grid {
     grid-template-columns: 1fr;
   }
+
+  .sub2api-tools-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sub2api-mode-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
   .page-hero,
   .ai-runtime-banner,
+  .sub2api-panel-head,
+  .sub2api-root-row,
+  .sub2api-tool-head,
   .setting-row {
     flex-direction: column;
     align-items: stretch;

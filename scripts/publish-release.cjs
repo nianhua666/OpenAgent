@@ -35,7 +35,8 @@ function parseArgs(argv) {
     repository: 'nianhua666/OpenAgent',
     targetCommitish: '',
     draft: false,
-    prerelease: false
+    prerelease: false,
+    metadataOnly: false
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -65,6 +66,11 @@ function parseArgs(argv) {
 
     if (token === '--prerelease') {
       options.prerelease = true
+      continue
+    }
+
+    if (token === '--metadata-only') {
+      options.metadataOnly = true
     }
   }
 
@@ -95,7 +101,7 @@ function getReleaseNotes(repositoryRoot, version) {
     return `OpenAgent v${version}`
   }
 
-  const lines = fs.readFileSync(changelogPath, 'utf8').split(/\r?\n/)
+  const lines = fs.readFileSync(changelogPath, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)
   const heading = `## ${version}`
   const startIndex = lines.findIndex(line => line.trim() === heading)
   if (startIndex === -1) {
@@ -112,6 +118,22 @@ function getReleaseNotes(repositoryRoot, version) {
 
   const notes = lines.slice(startIndex + 1, endIndex).join('\n').trim()
   return notes || `OpenAgent v${version}`
+}
+
+function normalizeReleaseBodyText(value) {
+  return String(value || '').replace(/\r\n/g, '\n').trim()
+}
+
+function createGitHubJsonRequestOptions(payload, method) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8')
+  return {
+    method,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': String(body.length)
+    },
+    body
+  }
 }
 
 function resolveTargetCommitish(requestedTargetCommitish) {
@@ -349,21 +371,46 @@ async function createOrLoadRelease(repository, token, payload) {
 
   try {
     const existingRelease = await githubRequest(releaseByTagApi, token)
-    console.log(`Release already exists: ${payload.tag_name}`)
-    return existingRelease
+    const needsMetadataUpdate = existingRelease.name !== payload.name
+      || normalizeReleaseBodyText(existingRelease.body) !== normalizeReleaseBodyText(payload.body)
+      || Boolean(existingRelease.draft) !== Boolean(payload.draft)
+      || Boolean(existingRelease.prerelease) !== Boolean(payload.prerelease)
+      || String(existingRelease.target_commitish || '').trim() !== String(payload.target_commitish || '').trim()
+
+    if (!needsMetadataUpdate) {
+      console.log(`Release already exists: ${payload.tag_name}`)
+      return existingRelease
+    }
+
+    const updatePayload = {
+      target_commitish: payload.target_commitish,
+      name: payload.name,
+      body: payload.body,
+      draft: payload.draft,
+      prerelease: payload.prerelease
+    }
+
+    const updatedRelease = await githubRequest(
+      `${releasesApi}/${existingRelease.id}`,
+      token,
+      createGitHubJsonRequestOptions(updatePayload, 'PATCH'),
+      [200]
+    )
+
+    console.log(`Updated release metadata: ${payload.tag_name}`)
+    return updatedRelease
   } catch (error) {
     if (error.status !== 404) {
       throw error
     }
   }
 
-  const createdRelease = await githubRequest(releasesApi, token, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  }, [201])
+  const createdRelease = await githubRequest(
+    releasesApi,
+    token,
+    createGitHubJsonRequestOptions(payload, 'POST'),
+    [201]
+  )
 
   console.log(`Created release: ${payload.tag_name}`)
   return createdRelease
@@ -394,8 +441,8 @@ async function main() {
   const token = getGitHubToken(options.repository)
   const targetCommitish = resolveTargetCommitish(options.targetCommitish)
   const releaseNotes = getReleaseNotes(repositoryRoot, version)
-  const assetDefinitions = getAssetDefinitions(repositoryRoot, version)
-  const uploadTempDirectory = createUploadTempDirectory(version)
+  const assetDefinitions = options.metadataOnly ? [] : getAssetDefinitions(repositoryRoot, version)
+  const uploadTempDirectory = options.metadataOnly ? '' : createUploadTempDirectory(version)
   const releasePayload = {
     tag_name: `v${version}`,
     target_commitish: targetCommitish,
@@ -407,7 +454,7 @@ async function main() {
 
   try {
     const release = await createOrLoadRelease(options.repository, token, releasePayload)
-    const uploadUrl = String(release.upload_url).replace(/\{\?name,label\}$/, '')
+    const uploadUrl = String(release.upload_url || '').replace(/\{\?name,label\}$/, '')
 
     for (const assetDefinition of assetDefinitions) {
       await uploadAsset(options.repository, token, release.id, uploadUrl, assetDefinition, uploadTempDirectory)
@@ -416,7 +463,9 @@ async function main() {
     const finalRelease = await githubRequest(`https://api.github.com/repos/${options.repository}/releases/tags/v${version}`, token)
     console.log(`Release URL: ${finalRelease.html_url}`)
   } finally {
-    fs.rmSync(uploadTempDirectory, { recursive: true, force: true })
+    if (uploadTempDirectory) {
+      fs.rmSync(uploadTempDirectory, { recursive: true, force: true })
+    }
   }
 }
 

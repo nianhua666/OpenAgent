@@ -182,6 +182,8 @@ export interface RuntimeDataStorageInfo {
 
 export type AIProtocol = 'openai' | 'anthropic' | 'ollama-local' | 'ollama-cloud' | 'custom'
 
+export type AIGatewayTemplate = 'standard' | 'sub2api-openai' | 'sub2api-claude' | 'sub2api-antigravity'
+
 export interface AIProviderModel {
   id: string
   name: string
@@ -267,6 +269,7 @@ export interface AIConfig {
   baseUrl: string
   model: string
   protocol: AIProtocol
+  connectionTemplate: AIGatewayTemplate
   contextWindow: number
   maxTokens: number
   temperature: number

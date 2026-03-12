@@ -99,6 +99,14 @@ npm run release:publish
 
 该命令会自动读取当前 package.json 版本号，若远端不存在对应 Tag / Release，会自动创建 Release，并用当前版本目录下的安装包、便携版、blockmap 和 latest.yml 覆盖上传。
 
+如果远端 Release 已存在，脚本会先同步标题、正文和发布属性，再覆盖上传当前版本资产。Release 正文会按 UTF-8 从 CHANGELOG 提取，避免中文说明在 GitHub 移动端显示成问号。
+
+如需只修复已有 Release 的标题或正文而不重复上传大文件，可执行：
+
+```bash
+node scripts/publish-release.cjs --version 2.2.0 --metadata-only
+```
+
 ### 构建并自动发布当前版本
 
 ```bash
@@ -108,17 +116,17 @@ npm run electron:release
 构建完成后，产物会输出到：
 
 ```text
-release/v2.2.0/
+release/v当前版本/
 ```
 
 其中包含：
 
-- OpenAgent Setup 2.2.0.exe
-- OpenAgent Setup 2.2.0.exe.blockmap
-- OpenAgent Portable 2.2.0.exe
+- OpenAgent Setup 当前版本.exe
+- OpenAgent Setup 当前版本.exe.blockmap
+- OpenAgent Portable 当前版本.exe
 - win-unpacked/
 
-后续版本会自动按当前 package.json 的版本号输出到对应目录，例如 v2.1.0、v2.2.0。
+后续版本会自动按当前 package.json 的版本号输出到对应目录，例如 v2.3.0、v2.4.0。
 
 ## 发布说明
 

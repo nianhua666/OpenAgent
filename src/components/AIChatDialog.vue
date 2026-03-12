@@ -387,7 +387,17 @@ const messages = computed(() => {
 
   return session.messages.filter(m => m.role === 'user' || m.role === 'assistant')
 })
-const canRefreshModels = computed(() => Boolean(aiConfig.value.baseUrl.trim()) && (aiStore.isConfigured || aiConfig.value.protocol === 'ollama-local' || aiConfig.value.protocol === 'custom'))
+const canRefreshModels = computed(() => {
+  if (!aiConfig.value.baseUrl.trim()) {
+    return false
+  }
+
+  if (aiConfig.value.protocol === 'ollama-local' || aiConfig.value.protocol === 'custom') {
+    return true
+  }
+
+  return aiConfig.value.apiKey.trim().length > 0
+})
 const currentModelMeta = computed(() => {
   const matchedModel = availableAiModels.value.find(model => model.name === aiConfig.value.model)
   if (matchedModel) {
@@ -407,7 +417,16 @@ const currentModelMeta = computed(() => {
   } satisfies AIProviderModel
 })
 const currentModelBadges = computed(() => {
+  const gatewayBadges = aiConfig.value.connectionTemplate === 'sub2api-antigravity'
+    ? ['Sub2API', 'Antigravity']
+    : aiConfig.value.connectionTemplate === 'sub2api-openai'
+      ? ['Sub2API', 'Responses']
+      : aiConfig.value.connectionTemplate === 'sub2api-claude'
+        ? ['Sub2API']
+      : []
+
   return [
+    ...gatewayBadges,
     ...getModelCapabilityLabels(currentModelMeta.value?.capabilities),
     ...getModelLimitLabels(currentModelMeta.value?.limits)
   ]

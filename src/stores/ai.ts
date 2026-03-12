@@ -6,6 +6,7 @@ import type {
   AIChatMessage,
   AIMemoryEntry,
   AIToolCall,
+  AIGatewayTemplate,
   AIProtocol,
   AIChatPreferences,
   AIAgentTask,
@@ -49,6 +50,7 @@ const DEFAULT_AI_CONFIG: AIConfig = {
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   protocol: 'openai',
+  connectionTemplate: 'standard',
   contextWindow: 128000,
   maxTokens: 4096,
   temperature: 0.7,
@@ -200,6 +202,14 @@ function normalizeAIProtocol(protocol: string | undefined, baseUrl: string) {
   return 'openai'
 }
 
+function normalizeAIGatewayTemplate(template: string | undefined): AIGatewayTemplate {
+  if (template === 'sub2api-openai' || template === 'sub2api-claude' || template === 'sub2api-antigravity') {
+    return template
+  }
+
+  return 'standard'
+}
+
 function normalizeAIConfig(saved: Partial<AIConfig> | null | undefined): AIConfig {
   const merged: AIConfig = {
     ...DEFAULT_AI_CONFIG,
@@ -207,6 +217,7 @@ function normalizeAIConfig(saved: Partial<AIConfig> | null | undefined): AIConfi
   }
 
   merged.protocol = normalizeAIProtocol((saved?.protocol as string | undefined) ?? merged.protocol, merged.baseUrl) as AIProtocol
+  merged.connectionTemplate = normalizeAIGatewayTemplate(saved?.connectionTemplate as string | undefined)
 
   if (merged.protocol === 'ollama-local' && (!merged.baseUrl || merged.baseUrl === 'https://api.openai.com/v1')) {
     merged.baseUrl = 'http://localhost:11434/api'
