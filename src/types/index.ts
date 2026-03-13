@@ -590,6 +590,7 @@ export interface ProjectFile {
 export type IDETerminalStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type IDETerminalStream = 'stdout' | 'stderr' | 'system'
 export type IDETerminalSessionMode = 'command' | 'shell'
+export type IDETerminalGuardReason = 'timeout' | 'idle' | 'interactive' | 'loop'
 
 export interface IDETerminalRunRequest {
   command: string
@@ -645,6 +646,26 @@ export interface IDETerminalEvent {
   exitCode?: number | null
   signal?: string | null
   error?: string
+}
+
+export interface IDETerminalSessionSnapshot {
+  sessionId: string
+  command: string
+  cwd: string
+  mode: IDETerminalSessionMode
+  title: string
+  shell: string
+  status: IDETerminalStatus
+  startedAt: number
+  updatedAt: number
+  finishedAt?: number
+  lastActivityAt?: number
+  exitCode?: number | null
+  signal?: string | null
+  error?: string
+  guardReason?: IDETerminalGuardReason
+  outputBytes: number
+  repeatedOutputCount: number
 }
 
 export interface IDEEditorTabSession {
@@ -848,6 +869,10 @@ export interface ContextSnapshot {
   activeGoals: string[]
   tokenCount: number
   createdAt: number
+  source?: 'local' | 'compression'
+  messageCount?: number
+  lastMessageAt?: number
+  recentToolNames?: string[]
 }
 
 export interface ContextPriority {

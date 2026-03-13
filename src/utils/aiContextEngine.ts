@@ -35,6 +35,12 @@ const MAX_KEY_FACTS = 20
 // 快照中活跃目标的最大条数
 const MAX_ACTIVE_GOALS = 5
 
+// 快照中保留的最近工具名数量
+const MAX_RECENT_TOOL_NAMES = 8
+
+// 本地快照摘要每个区块的最大条目数
+const MAX_SUMMARY_SECTION_ITEMS = 5
+
 // ==================== 语义优先级 ====================
 
 // 高优先级消息匹配模式
@@ -140,9 +146,11 @@ export function shouldCreateSnapshot(
   const session = aiStore.getSessionById(sessionId)
   if (!session) return false
 
-  const messagesSinceSnapshot = session.messages.filter(
-    msg => msg.timestamp > latest.createdAt
-  ).length
+  const messagesSinceSnapshot = typeof latest.messageCount === 'number'
+    ? Math.max(0, messageCount - latest.messageCount)
+    : session.messages.filter(
+      msg => msg.timestamp > (latest.lastMessageAt || latest.createdAt)
+    ).length
 
   return messagesSinceSnapshot >= INCREMENTAL_SNAPSHOT_INTERVAL
 }
@@ -195,24 +203,57 @@ export function extractActiveGoals(messages: AIChatMessage[]): string[] {
 }
 
 /**
+ * 从消息历史中提取最近使用过的工具
+ */
+export function extractRecentToolNames(messages: AIChatMessage[]): string[] {
+  const toolNames = messages
+    .filter(message => message.role === 'tool' && message.toolName)
+    .map(message => String(message.toolName || '').trim())
+    .filter(Boolean)
+
+  return [...new Set(toolNames)].slice(-MAX_RECENT_TOOL_NAMES)
+}
+
+type CreateLocalContextSnapshotOptions = {
+  source?: ContextSnapshot['source']
+  summaryOverride?: string
+}
+
+/**
  * 创建增量上下文快照（纯本地分析，不调用 LLM）
  */
 export function createLocalContextSnapshot(
   sessionId: string,
-  messages: AIChatMessage[]
+  messages: AIChatMessage[],
+  options: CreateLocalContextSnapshotOptions = {}
 ): ContextSnapshot {
   const aiStore = useAIStore()
   const latest = aiStore.getLatestContextSnapshot(sessionId)
 
   // 增量：只处理新消息
   const newMessages = latest
-    ? messages.filter(m => m.timestamp > latest.createdAt)
+    ? typeof latest.messageCount === 'number'
+      ? messages.slice(Math.min(messages.length, latest.messageCount))
+      : messages.filter(m => m.timestamp > (latest.lastMessageAt || latest.createdAt))
     : messages
 
   const keyFacts = extractKeyFacts(newMessages)
   const activeGoals = extractActiveGoals(messages)
-  const summary = buildIncrementalSummary(latest?.summary, newMessages)
+  const recentToolNames = extractRecentToolNames(messages)
+  const summary = options.summaryOverride?.trim()
+    || buildIncrementalSummary({
+      previousSummary: latest?.summary,
+      newMessages,
+      activeGoals,
+      keyFacts: latest
+        ? [...(latest.keyFacts || []).slice(-10), ...keyFacts].slice(-MAX_KEY_FACTS)
+        : keyFacts,
+      recentToolNames,
+    })
   const tokenCount = messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0)
+  const lastMessageAt = messages.length > 0
+    ? Math.max(...messages.map(message => message.timestamp || 0))
+    : Date.now()
 
   const snapshot = aiStore.saveContextSnapshot({
     sessionId,
@@ -221,7 +262,11 @@ export function createLocalContextSnapshot(
       ? [...(latest.keyFacts || []).slice(-10), ...keyFacts].slice(-MAX_KEY_FACTS)
       : keyFacts,
     activeGoals,
-    tokenCount
+    tokenCount,
+    source: options.source || 'local',
+    messageCount: messages.length,
+    lastMessageAt,
+    recentToolNames,
   })
 
   return snapshot
@@ -252,10 +297,29 @@ export function assembleContext(
 
   // 注入摘要上下文（如果有快照）
   if (snapshot?.summary) {
+    const snapshotMeta: string[] = []
+    if (snapshot.source === 'compression') {
+      snapshotMeta.push('- 来源：上下文压缩接力摘要')
+    } else if (snapshot.source === 'local') {
+      snapshotMeta.push('- 来源：本地增量快照')
+    }
+    if (snapshot.messageCount) {
+      snapshotMeta.push(`- 已覆盖消息数：${snapshot.messageCount}`)
+    }
+    if (snapshot.recentToolNames?.length) {
+      snapshotMeta.push(`- 最近工具：${snapshot.recentToolNames.join('、')}`)
+    }
+
     const summaryMessage: AIChatMessage = {
       id: 'context-snapshot',
       role: 'system',
-      content: `## 历史上下文摘要\n${snapshot.summary}\n\n### 关键事实\n${(snapshot.keyFacts || []).map(f => `- ${f}`).join('\n')}\n\n### 当前目标\n${(snapshot.activeGoals || []).map(g => `- ${g}`).join('\n')}`,
+      content: [
+        '## 历史上下文接力摘要',
+        snapshot.summary,
+        snapshotMeta.length > 0 ? `### 快照元数据\n${snapshotMeta.join('\n')}` : '',
+        (snapshot.keyFacts || []).length > 0 ? `### 关键事实\n${(snapshot.keyFacts || []).map(f => `- ${f}`).join('\n')}` : '',
+        (snapshot.activeGoals || []).length > 0 ? `### 当前目标\n${(snapshot.activeGoals || []).map(g => `- ${g}`).join('\n')}` : '',
+      ].filter(Boolean).join('\n\n'),
       timestamp: 0
     }
     const snapshotTokens = estimateMessageTokens(summaryMessage)
@@ -346,32 +410,149 @@ export function buildSharedContext(
  * 纯本地增量摘要（不调用 LLM，基于文本截取）
  */
 function buildIncrementalSummary(
-  previousSummary: string | undefined,
-  newMessages: AIChatMessage[]
+  options: {
+    previousSummary?: string
+    newMessages: AIChatMessage[]
+    activeGoals: string[]
+    keyFacts: string[]
+    recentToolNames: string[]
+  }
 ): string {
-  const newContent = newMessages
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .map(m => {
-      const role = m.role === 'user' ? '用户' : 'AI'
-      const text = (m.content || '').trim()
-      return text ? `${role}: ${text.slice(0, 150)}` : ''
-    })
-    .filter(Boolean)
-    .slice(-8)
-    .join('\n')
+  const carriedContext = extractCarryForwardLines(options.previousSummary)
+  const instructions = summarizeMessages(options.newMessages, ['user'], MAX_SUMMARY_SECTION_ITEMS)
+  const accomplished = summarizeMessages(options.newMessages, ['assistant', 'tool'], MAX_SUMMARY_SECTION_ITEMS)
+  const discoveries = dedupeTextList(options.keyFacts, MAX_SUMMARY_SECTION_ITEMS + 1)
+  const activeGoals = dedupeTextList(options.activeGoals, MAX_SUMMARY_SECTION_ITEMS)
+  const toolNames = dedupeTextList(options.recentToolNames, MAX_SUMMARY_SECTION_ITEMS)
 
-  if (!previousSummary) {
-    return newContent || '（暂无历史上下文）'
+  const sections: string[] = []
+
+  if (activeGoals.length > 0) {
+    sections.push([
+      '## Goal',
+      `- ${activeGoals[activeGoals.length - 1]}`,
+    ].join('\n'))
   }
 
-  // 增量追加，控制总长度
-  const combined = `${previousSummary}\n---\n${newContent}`
-  if (estimateTextTokens(combined) > 2000) {
-    // 截取后半部分保留新信息
-    const lines = combined.split('\n')
-    const kept = lines.slice(-30).join('\n')
-    return kept
+  if (instructions.length > 0) {
+    sections.push([
+      '## Instructions',
+      ...instructions.map(item => `- ${item}`),
+    ].join('\n'))
   }
 
-  return combined
+  if (discoveries.length > 0) {
+    sections.push([
+      '## Discoveries',
+      ...discoveries.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (accomplished.length > 0) {
+    sections.push([
+      '## Accomplished',
+      ...accomplished.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (toolNames.length > 0) {
+    sections.push([
+      '## Relevant Tools',
+      ...toolNames.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (carriedContext.length > 0) {
+    sections.push([
+      '## Continued Context',
+      ...carriedContext.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (sections.length === 0) {
+    return '## Goal\n- 暂无可用上下文，请回看最近一轮用户目标和工具输出。'
+  }
+
+  const summary = sections.join('\n\n')
+  if (estimateTextTokens(summary) <= 1800) {
+    return summary
+  }
+
+  return sections.slice(0, 4).join('\n\n')
+}
+
+function summarizeMessages(
+  messages: AIChatMessage[],
+  roles: Array<AIChatMessage['role']>,
+  limit: number
+) {
+  return dedupeTextList(messages
+    .filter(message => roles.includes(message.role))
+    .map(message => formatMessageForSummary(message))
+    .filter(Boolean), limit)
+}
+
+function formatMessageForSummary(message: AIChatMessage) {
+  const content = String(message.content || '').trim().replace(/\s+/g, ' ')
+  const attachmentHint = message.attachments?.length
+    ? ` | 附件 ${message.attachments.length} 个`
+    : ''
+
+  if (message.role === 'tool') {
+    const toolName = String(message.toolName || 'tool').trim()
+    if (!content) {
+      return `工具 ${toolName}${attachmentHint}`
+    }
+    return `工具 ${toolName}: ${truncateSummaryText(content, 140)}${attachmentHint}`
+  }
+
+  const roleLabel = message.role === 'assistant' ? 'AI' : message.role === 'user' ? '用户' : '消息'
+  if (!content) {
+    return `${roleLabel}${attachmentHint}`
+  }
+
+  return `${roleLabel}: ${truncateSummaryText(content, 160)}${attachmentHint}`
+}
+
+function dedupeTextList(values: string[], limit: number) {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of values) {
+    const normalized = truncateSummaryText(value, 180)
+    if (!normalized) continue
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(normalized)
+  }
+
+  return deduped.slice(-limit)
+}
+
+function extractCarryForwardLines(summary: string | undefined) {
+  if (!summary) {
+    return []
+  }
+
+  const lines = summary
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !/^##\s+/i.test(line))
+    .map(line => line.replace(/^[-*]\s+/, ''))
+
+  return dedupeTextList(lines, 3)
+}
+
+function truncateSummaryText(value: string, limit: number) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!normalized) {
+    return ''
+  }
+
+  if (normalized.length <= limit) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, limit - 3)}...`
 }

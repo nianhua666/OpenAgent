@@ -2,7 +2,7 @@
  * AI 工具执行器
  * 接收AI返回的工具调用，路由到对应的实际操作
  */
-import type { AIChatMessage, AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, AIProviderModel, DevLogEntry, IDETerminalEvent, IDEWorkspace, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
+import type { AIChatMessage, AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, AIProviderModel, DevLogEntry, IDETerminalEvent, IDETerminalSessionSnapshot, IDEWorkspace, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
 import { useAccountStore } from '@/stores/account'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAIStore } from '@/stores/ai'
@@ -1615,6 +1615,9 @@ async function awaitIdeCommandResult(sessionId: string, overallTimeoutMs: number
     let truncated = false
     const startedAt = Date.now()
     let finished = false
+    let polling = false
+    let lastHeartbeatAt = startedAt
+    let pollTimer: ReturnType<typeof setInterval> | null = null
 
     const finalize = (result: {
       status: 'completed' | 'failed' | 'cancelled'
@@ -1628,6 +1631,9 @@ async function awaitIdeCommandResult(sessionId: string, overallTimeoutMs: number
 
       finished = true
       clearTimeout(timeoutTimer)
+      if (pollTimer) {
+        clearInterval(pollTimer)
+      }
       removeListener?.()
       const trimmedStdout = trimTerminalCapture(stdout)
       const trimmedStderr = trimTerminalCapture(stderr)
@@ -1652,6 +1658,37 @@ async function awaitIdeCommandResult(sessionId: string, overallTimeoutMs: number
         return `${preservedHead}\n...[output truncated in middle]...\n${preservedTail}`
       }
       return next
+    }
+
+    const finalizeFromSnapshot = (snapshot: IDETerminalSessionSnapshot) => {
+      if (snapshot.status === 'running') {
+        const lastActivityAt = snapshot.lastActivityAt || snapshot.startedAt
+        const idleFor = Date.now() - lastActivityAt
+        if (idleFor >= 2_000 && Date.now() - lastHeartbeatAt >= 5_000) {
+          lastHeartbeatAt = Date.now()
+          system = pushChunk(
+            system,
+            `[system] 命令仍在运行：已运行 ${Math.max(1, Math.round((Date.now() - snapshot.startedAt) / 1000))} 秒，距上次输出 ${Math.max(1, Math.round(idleFor / 1000))} 秒。\n`
+          )
+        }
+        return
+      }
+
+      if (!stdout.trim() && !stderr.trim() && !system.trim()) {
+        system = pushChunk(
+          system,
+          typeof snapshot.exitCode === 'number' && snapshot.exitCode === 0
+            ? '[system] 命令已结束，未产生标准输出。\n'
+            : '[system] 命令已结束，但事件通道未收到额外输出，已根据运行快照完成收口。\n',
+        )
+      }
+
+      finalize({
+        status: snapshot.status,
+        exitCode: typeof snapshot.exitCode === 'number' ? snapshot.exitCode : null,
+        signal: snapshot.signal ?? null,
+        eventError: snapshot.error || '',
+      })
     }
 
     const removeListener = api.onIdeTerminalEvent((event: IDETerminalEvent) => {
@@ -1693,6 +1730,24 @@ async function awaitIdeCommandResult(sessionId: string, overallTimeoutMs: number
         })
       }
     })
+
+    pollTimer = setInterval(async () => {
+      if (finished || polling || typeof api.ideGetTerminalSessionSnapshot !== 'function') {
+        return
+      }
+
+      polling = true
+      try {
+        const snapshot = await api.ideGetTerminalSessionSnapshot(sessionId)
+        if (snapshot) {
+          finalizeFromSnapshot(snapshot)
+        }
+      } catch {
+        // ignore polling failures and keep waiting for primary event channel
+      } finally {
+        polling = false
+      }
+    }, 1_500)
 
     const timeoutTimer = setTimeout(async () => {
       try {
@@ -1866,7 +1921,11 @@ async function ideRunCommandTool(args: Record<string, unknown>): Promise<ToolExe
       })
     }
 
-    return successResult('工作区命令执行完成', {
+    const successMessage = combinedOutput.trim()
+      ? '工作区命令执行完成'
+      : '工作区命令执行完成，未产生标准输出'
+
+    return successResult(successMessage, {
       command,
       reason,
       cwd,

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
 
 // 安全地向渲染进程暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ideCloseTerminalSession: (sessionId: string) => ipcRenderer.invoke('ide:closeTerminalSession', sessionId) as Promise<boolean>,
   ideRunCommand: (payload: IDETerminalRunRequest) => ipcRenderer.invoke('ide:runCommand', payload) as Promise<IDETerminalRunResult>,
   ideCancelCommand: (sessionId: string) => ipcRenderer.invoke('ide:cancelCommand', sessionId) as Promise<boolean>,
+  ideGetTerminalSessionSnapshot: (sessionId: string) => ipcRenderer.invoke('ide:getTerminalSessionSnapshot', sessionId) as Promise<IDETerminalSessionSnapshot | null>,
   onIdeTerminalEvent: (callback: (payload: IDETerminalEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: IDETerminalEvent) => callback(payload)
     ipcRenderer.on('ide:terminal:event', listener)

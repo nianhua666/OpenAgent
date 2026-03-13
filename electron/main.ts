@@ -12,7 +12,7 @@ import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSyst
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import { createSub2ApiDesktopManager } from './sub2apiDesktop'
-import type { AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
+import type { AppSettings, IDETerminalEvent, IDETerminalGuardReason, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -539,6 +539,7 @@ let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 const activeWindowDrags = new Map<number, { startCursor: WindowDragPoint; startPosition: [number, number] }>()
 const ideTerminalTrackedOwners = new Set<number>()
 const ideTerminalOwnerSessions = new Map<number, Set<string>>()
+const ideTerminalSnapshotOwners = new Map<string, number>()
 type IdeTerminalProcessEntry = {
   sessionId: string
   owner: Electron.WebContents
@@ -554,20 +555,31 @@ type IdeTerminalProcessEntry = {
   lastActivityAt?: number
   commandTimeoutMs?: number
   idleTimeoutMs?: number
-  guardReason?: 'timeout' | 'idle' | 'interactive'
+  guardReason?: IDETerminalGuardReason
   guardMessage?: string
   guardInterval?: ReturnType<typeof setInterval>
   guardWarningSent?: boolean
+  lastHeartbeatAt?: number
+  lastLoopSignature?: string
+  loopRepeatCount?: number
+  loopWarningSent?: boolean
 }
 
 const ideTerminalProcesses = new Map<string, IdeTerminalProcessEntry>()
+const ideTerminalSessionSnapshots = new Map<string, IDETerminalSessionSnapshot>()
 
 const IDE_COMMAND_DEFAULT_TIMEOUT_MS = 30_000
 const IDE_COMMAND_MAX_TIMEOUT_MS = 120_000
 const IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS = 12_000
 const IDE_COMMAND_MAX_IDLE_TIMEOUT_MS = 30_000
 const IDE_COMMAND_GUARD_TICK_MS = 1_000
+const IDE_COMMAND_HEARTBEAT_MS = 5_000
+const IDE_COMMAND_LOOP_WARNING_THRESHOLD = 12
+const IDE_COMMAND_LOOP_STOP_THRESHOLD = 24
+const IDE_COMMAND_LOOP_MIN_RUNTIME_MS = 8_000
+const IDE_TERMINAL_SNAPSHOT_TTL_MS = 10 * 60 * 1000
 const IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN = /(y\/n|yes\/no|password|passphrase|press any key|select an option|choose one|continue\?|are you sure|请输入|确认是否|是否继续|输入密码)/i
+const TERMINAL_ANSI_PATTERN = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
 
 if (!IS_LIVE2D_DIAGNOSTIC_MODE && !app.requestSingleInstanceLock()) {
   app.quit()
@@ -667,6 +679,119 @@ function untrackIdeTerminalSession(ownerId: number, sessionId: string) {
   }
 }
 
+function updateIdeTerminalSessionSnapshot(sessionId: string, patch: Partial<IDETerminalSessionSnapshot>) {
+  const current = ideTerminalSessionSnapshots.get(sessionId)
+  if (!current) {
+    return null
+  }
+
+  const nextSnapshot: IDETerminalSessionSnapshot = {
+    ...current,
+    ...patch,
+    updatedAt: patch.updatedAt ?? Date.now()
+  }
+  ideTerminalSessionSnapshots.set(sessionId, nextSnapshot)
+  return nextSnapshot
+}
+
+function scheduleIdeTerminalSnapshotCleanup(sessionId: string) {
+  setTimeout(() => {
+    ideTerminalSessionSnapshots.delete(sessionId)
+    ideTerminalSnapshotOwners.delete(sessionId)
+  }, IDE_TERMINAL_SNAPSHOT_TTL_MS).unref()
+}
+
+function createIdeTerminalSessionSnapshot(entry: IdeTerminalProcessEntry) {
+  const now = entry.startedAt || Date.now()
+  const snapshot: IDETerminalSessionSnapshot = {
+    sessionId: entry.sessionId,
+    command: entry.command,
+    cwd: entry.cwd,
+    mode: entry.mode,
+    title: entry.title,
+    shell: entry.shell,
+    status: 'running',
+    startedAt: now,
+    updatedAt: now,
+    lastActivityAt: now,
+    outputBytes: 0,
+    repeatedOutputCount: 0,
+  }
+  ideTerminalSessionSnapshots.set(entry.sessionId, snapshot)
+  ideTerminalSnapshotOwners.set(entry.sessionId, entry.owner.id)
+  return snapshot
+}
+
+function normalizeTerminalLoopSignature(line: string) {
+  const normalized = line
+    .replace(TERMINAL_ANSI_PATTERN, '')
+    .replace(/[A-Z]:\\[^\s"'`]+/gi, '<path>')
+    .replace(/\/[^\s"'`]+/g, match => match.includes('/') && match.length > 3 ? '<path>' : match)
+    .replace(/\b\d+\b/g, '<num>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  return normalized.length >= 12 ? normalized.slice(0, 240) : ''
+}
+
+function recordIdeTerminalOutput(entry: IdeTerminalProcessEntry, chunk: string) {
+  const now = Date.now()
+  entry.lastActivityAt = now
+  updateIdeTerminalSessionSnapshot(entry.sessionId, {
+    lastActivityAt: now,
+    outputBytes: (ideTerminalSessionSnapshots.get(entry.sessionId)?.outputBytes || 0) + Buffer.byteLength(chunk, 'utf8')
+  })
+
+  if (entry.mode !== 'command') {
+    return false
+  }
+
+  const signatures = chunk
+    .split(/[\r\n]+/)
+    .map(normalizeTerminalLoopSignature)
+    .filter(Boolean)
+
+  for (const signature of signatures) {
+    if (entry.lastLoopSignature === signature) {
+      entry.loopRepeatCount = (entry.loopRepeatCount || 0) + 1
+    } else {
+      entry.lastLoopSignature = signature
+      entry.loopRepeatCount = 1
+    }
+
+    updateIdeTerminalSessionSnapshot(entry.sessionId, {
+      repeatedOutputCount: Math.max(
+        ideTerminalSessionSnapshots.get(entry.sessionId)?.repeatedOutputCount || 0,
+        entry.loopRepeatCount || 0
+      )
+    })
+
+    if (!entry.loopWarningSent && (entry.loopRepeatCount || 0) >= IDE_COMMAND_LOOP_WARNING_THRESHOLD) {
+      entry.loopWarningSent = true
+      emitIdeTerminalNotice(entry, '[system] 检测到同类输出持续重复，若这是循环命令或 watch 输出，将按自动停机策略处理。')
+    }
+
+    if (
+      !entry.guardReason
+      && (entry.loopRepeatCount || 0) >= IDE_COMMAND_LOOP_STOP_THRESHOLD
+      && now - entry.startedAt >= IDE_COMMAND_LOOP_MIN_RUNTIME_MS
+    ) {
+      entry.guardReason = 'loop'
+      entry.guardMessage = '检测到相同输出持续重复，疑似进入循环命令或 watch 输出，已自动停止。'
+      updateIdeTerminalSessionSnapshot(entry.sessionId, {
+        guardReason: entry.guardReason,
+        error: entry.guardMessage
+      })
+      emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
+      stopIdeTerminalSession(entry.sessionId)
+      return true
+    }
+  }
+
+  return false
+}
+
 function ensureIdeTerminalOwnerCleanup(owner: Electron.WebContents) {
   if (ideTerminalTrackedOwners.has(owner.id)) {
     return
@@ -742,10 +867,11 @@ function scheduleIdeCommandGuard(entry: {
   lastActivityAt?: number
   commandTimeoutMs?: number
   idleTimeoutMs?: number
-  guardReason?: 'timeout' | 'idle' | 'interactive'
+  guardReason?: IDETerminalGuardReason
   guardMessage?: string
   guardInterval?: ReturnType<typeof setInterval>
   guardWarningSent?: boolean
+  lastHeartbeatAt?: number
 }) {
   if (entry.mode !== 'command') {
     return
@@ -765,6 +891,14 @@ function scheduleIdeCommandGuard(entry: {
     const idleTimeoutMs = entry.idleTimeoutMs || IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS
     const commandTimeoutMs = entry.commandTimeoutMs || IDE_COMMAND_DEFAULT_TIMEOUT_MS
 
+    if (idleFor >= 2_000 && now - (entry.lastHeartbeatAt || entry.startedAt) >= IDE_COMMAND_HEARTBEAT_MS) {
+      entry.lastHeartbeatAt = now
+      emitIdeTerminalNotice(
+        entry,
+        `[system] 命令仍在运行：已运行 ${Math.round(runningFor / 1000)} 秒，距上次输出 ${Math.round(idleFor / 1000)} 秒。`
+      )
+    }
+
     if (!entry.guardWarningSent && idleFor >= Math.max(6_000, Math.floor(idleTimeoutMs * 0.6))) {
       entry.guardWarningSent = true
       emitIdeTerminalNotice(entry, '[system] 命令已运行一段时间且暂无新输出，若它需要交互输入或进入 watch 模式，将会被自动停止。')
@@ -773,6 +907,10 @@ function scheduleIdeCommandGuard(entry: {
     if (!entry.guardReason && idleFor >= idleTimeoutMs) {
       entry.guardReason = 'idle'
       entry.guardMessage = `命令在 ${Math.round(idleTimeoutMs / 1000)} 秒内无新输出，疑似等待输入或卡住，已自动停止。`
+      updateIdeTerminalSessionSnapshot(entry.sessionId, {
+        guardReason: entry.guardReason,
+        error: entry.guardMessage
+      })
       emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
       stopIdeTerminalSession(entry.sessionId)
       clearIdeCommandGuard(entry)
@@ -782,6 +920,10 @@ function scheduleIdeCommandGuard(entry: {
     if (!entry.guardReason && runningFor >= commandTimeoutMs) {
       entry.guardReason = 'timeout'
       entry.guardMessage = `命令执行超过 ${Math.round(commandTimeoutMs / 1000)} 秒，已按安全策略自动停止。`
+      updateIdeTerminalSessionSnapshot(entry.sessionId, {
+        guardReason: entry.guardReason,
+        error: entry.guardMessage
+      })
       emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
       stopIdeTerminalSession(entry.sessionId)
       clearIdeCommandGuard(entry)
@@ -798,6 +940,9 @@ function cleanupIdeTerminalSession(sessionId: string) {
   clearIdeCommandGuard(entry)
   ideTerminalProcesses.delete(sessionId)
   untrackIdeTerminalSession(entry.owner.id, sessionId)
+  if (ideTerminalSessionSnapshots.has(sessionId)) {
+    scheduleIdeTerminalSnapshotCleanup(sessionId)
+  }
 }
 
 function stopIdeTerminalSession(sessionId: string) {
@@ -902,6 +1047,7 @@ function stopIdeTerminalSessionsByOwner(ownerId: number) {
 function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
   ideTerminalProcesses.set(entry.sessionId, entry)
   trackIdeTerminalSession(entry.owner.id, entry.sessionId)
+  createIdeTerminalSessionSnapshot(entry)
 
   let finalized = false
   const finalize = (payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) => {
@@ -910,6 +1056,14 @@ function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
     }
 
     finalized = true
+    updateIdeTerminalSessionSnapshot(entry.sessionId, {
+      status: payload.status || 'failed',
+      finishedAt: Date.now(),
+      exitCode: payload.exitCode,
+      signal: payload.signal,
+      error: payload.error,
+      guardReason: entry.guardReason,
+    })
     emitIdeTerminalEvent(entry, payload)
     cleanupIdeTerminalSession(entry.sessionId)
   }
@@ -926,7 +1080,10 @@ function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
         return
       }
 
-      entry.lastActivityAt = Date.now()
+      const stoppedByLoop = recordIdeTerminalOutput(entry, chunk)
+      if (stoppedByLoop) {
+        return
+      }
 
       emitIdeTerminalEvent(entry, {
         type: 'data',
@@ -962,7 +1119,10 @@ function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
       return
     }
 
-    entry.lastActivityAt = Date.now()
+    const stoppedByLoop = recordIdeTerminalOutput(entry, chunk)
+    if (stoppedByLoop) {
+      return
+    }
 
     emitIdeTerminalEvent(entry, {
       type: 'data',
@@ -977,7 +1137,10 @@ function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
       return
     }
 
-    entry.lastActivityAt = Date.now()
+    const stoppedByLoop = recordIdeTerminalOutput(entry, chunk)
+    if (stoppedByLoop) {
+      return
+    }
 
     emitIdeTerminalEvent(entry, {
       type: 'data',
@@ -3005,6 +3168,7 @@ app.whenReady().then(() => {
 
     ideTerminalProcesses.set(sessionId, entry)
     trackIdeTerminalSession(event.sender.id, sessionId)
+    createIdeTerminalSessionSnapshot(entry)
     entry.lastActivityAt = startedAt
     entry.commandTimeoutMs = timeoutMs
     entry.idleTimeoutMs = idleTimeoutMs
@@ -3017,6 +3181,14 @@ app.whenReady().then(() => {
       }
 
       finalized = true
+      updateIdeTerminalSessionSnapshot(entry.sessionId, {
+        status: payload.status || 'failed',
+        finishedAt: Date.now(),
+        exitCode: payload.exitCode,
+        signal: payload.signal,
+        error: payload.error,
+        guardReason: entry.guardReason,
+      })
       emitIdeTerminalEvent(entry, payload)
       cleanupIdeTerminalSession(sessionId)
     }
@@ -3032,7 +3204,7 @@ app.whenReady().then(() => {
         return
       }
 
-      entry.lastActivityAt = Date.now()
+      const stoppedByLoop = recordIdeTerminalOutput(entry, chunk)
       emitIdeTerminalEvent(entry, {
         type: 'data',
         timestamp: Date.now(),
@@ -3040,9 +3212,17 @@ app.whenReady().then(() => {
         chunk
       })
 
+      if (stoppedByLoop) {
+        return
+      }
+
       if (!entry.guardReason && IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN.test(chunk)) {
         entry.guardReason = 'interactive'
         entry.guardMessage = '检测到交互式提示，AI 命令执行链路不支持继续等待输入，已自动停止。'
+        updateIdeTerminalSessionSnapshot(entry.sessionId, {
+          guardReason: entry.guardReason,
+          error: entry.guardMessage,
+        })
         emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
         stopIdeTerminalSession(sessionId)
         return
@@ -3054,7 +3234,7 @@ app.whenReady().then(() => {
         return
       }
 
-      entry.lastActivityAt = Date.now()
+      const stoppedByLoop = recordIdeTerminalOutput(entry, chunk)
       emitIdeTerminalEvent(entry, {
         type: 'data',
         timestamp: Date.now(),
@@ -3062,9 +3242,17 @@ app.whenReady().then(() => {
         chunk
       })
 
+      if (stoppedByLoop) {
+        return
+      }
+
       if (!entry.guardReason && IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN.test(chunk)) {
         entry.guardReason = 'interactive'
         entry.guardMessage = '检测到交互式提示，AI 命令执行链路不支持继续等待输入，已自动停止。'
+        updateIdeTerminalSessionSnapshot(entry.sessionId, {
+          guardReason: entry.guardReason,
+          error: entry.guardMessage,
+        })
         emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
         stopIdeTerminalSession(sessionId)
         return
@@ -3114,6 +3302,18 @@ app.whenReady().then(() => {
     }
 
     return stopIdeTerminalSession(sessionId)
+  })
+
+  ipcMain.handle('ide:getTerminalSessionSnapshot', (event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return null
+    }
+
+    if (ideTerminalSnapshotOwners.get(sessionId) !== event.sender.id) {
+      return null
+    }
+
+    return ideTerminalSessionSnapshots.get(sessionId) ?? null
   })
 
   ipcMain.handle('app:getDataPath', () => getDataDir())

@@ -1,4 +1,4 @@
-import type { AIChatAttachment, AIChatPreferences, AIToolCall, AIChatMessage, AITaskStep } from '@/types'
+import type { AIChatAttachment, AIChatPreferences, AIToolCall, AIChatMessage, AIChatSession, AITaskStep } from '@/types'
 import { useAIStore } from '@/stores/ai'
 import { chatCompletion, splitEmbeddedReasoningContent, streamChat } from '@/utils/ai'
 import { executeToolCall } from '@/utils/aiTools'
@@ -627,6 +627,139 @@ function normalizeCompressionCategory(category: string | undefined) {
   return 'context'
 }
 
+type CompressionMemoryCategory = 'preference' | 'fact' | 'context' | 'instruction'
+
+type CompressionSummaryPayload = {
+  goal: string
+  instructions: string[]
+  discoveries: string[]
+  accomplished: string[]
+  nextSteps: string[]
+  relevantFiles: string[]
+  memories: Array<{ content: string; category: CompressionMemoryCategory }>
+}
+
+function normalizeCompressionText(value: unknown, limit = 220) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ')
+  if (!normalized) {
+    return ''
+  }
+
+  if (normalized.length <= limit) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, limit - 3)}...`
+}
+
+function normalizeCompressionList(value: unknown, limit = 6) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const normalized = value
+    .map(item => normalizeCompressionText(item, 220))
+    .filter(Boolean)
+
+  return [...new Set(normalized)].slice(0, limit)
+}
+
+function buildCompressionSummaryPayload(
+  sessionId: string,
+  session: AIChatSession,
+  parsed: Partial<{
+    summary: string
+    goal: string
+    instructions: unknown[]
+    discoveries: unknown[]
+    accomplished: unknown[]
+    nextSteps: unknown[]
+    relevantFiles: unknown[]
+    memories: Array<{ content?: string; category?: string }>
+  }>
+): CompressionSummaryPayload {
+  const fallbackGoal = normalizeCompressionText(
+    parsed.goal
+    || getLatestMeaningfulUserMessage(sessionId)
+    || session.title,
+    280,
+  )
+
+  const fallbackSummaryLines = String(parsed.summary || '')
+    .split(/\r?\n/)
+    .map(line => normalizeCompressionText(line, 220))
+    .filter(Boolean)
+
+  const payload: CompressionSummaryPayload = {
+    goal: fallbackGoal || '继续当前会话任务',
+    instructions: normalizeCompressionList(parsed.instructions, 6),
+    discoveries: normalizeCompressionList(parsed.discoveries, 8),
+    accomplished: normalizeCompressionList(parsed.accomplished, 8),
+    nextSteps: normalizeCompressionList(parsed.nextSteps, 6),
+    relevantFiles: normalizeCompressionList(parsed.relevantFiles, 8),
+    memories: Array.isArray(parsed.memories)
+      ? parsed.memories
+          .map(item => ({
+            content: normalizeCompressionText(item?.content, 200),
+            category: normalizeCompressionCategory(item?.category) as CompressionMemoryCategory,
+          }))
+          .filter(item => item.content)
+      : [],
+  }
+
+  if (payload.discoveries.length === 0 && fallbackSummaryLines.length > 0) {
+    payload.discoveries = [...new Set(fallbackSummaryLines)].slice(0, 6)
+  }
+
+  return payload
+}
+
+function buildCompressionHandoffSummary(payload: CompressionSummaryPayload) {
+  const sections: string[] = [
+    [
+      '## Goal',
+      `- ${payload.goal}`,
+    ].join('\n'),
+  ]
+
+  if (payload.instructions.length > 0) {
+    sections.push([
+      '## Instructions',
+      ...payload.instructions.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (payload.discoveries.length > 0) {
+    sections.push([
+      '## Discoveries',
+      ...payload.discoveries.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (payload.accomplished.length > 0) {
+    sections.push([
+      '## Accomplished',
+      ...payload.accomplished.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (payload.nextSteps.length > 0) {
+    sections.push([
+      '## Next Steps',
+      ...payload.nextSteps.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  if (payload.relevantFiles.length > 0) {
+    sections.push([
+      '## Relevant Files',
+      ...payload.relevantFiles.map(item => `- ${item}`),
+    ].join('\n'))
+  }
+
+  return sections.join('\n\n').slice(0, 3200)
+}
+
 async function syncIDEExecutionHandoff(sessionId: string) {
   const aiStore = useAIStore()
   const workspace = aiStore.ideWorkspace
@@ -656,11 +789,16 @@ async function syncIDEExecutionHandoff(sessionId: string) {
 function formatCompressionMessages(messages: AIChatMessage[]) {
   return messages.map(message => {
     const role = message.role === 'assistant' ? 'AI' : message.role === 'tool' ? '工具' : message.role === 'system' ? '系统' : '用户'
+    const toolSummary = message.toolName ? `[工具:${message.toolName}]` : ''
+    const toolCallsSummary = (message.toolCalls ?? [])
+      .map(toolCall => toolCall.name?.trim())
+      .filter(Boolean)
+      .join(', ')
     const attachmentSummary = (message.attachments ?? []).map(attachment => attachment.type === 'image'
       ? `[图片:${attachment.name}]`
       : `[文件:${attachment.name}]`).join(' ')
 
-    return `${role}: ${[message.content, attachmentSummary].filter(Boolean).join(' ')}`.trim()
+    return `${role}: ${[toolSummary, toolCallsSummary ? `[调用:${toolCallsSummary}]` : '', message.content, attachmentSummary].filter(Boolean).join(' ')}`.trim()
   }).join('\n')
 }
 
@@ -680,10 +818,20 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
   hooks.onStream(aiStore.runtime.content)
 
   const compressionPrompt = [
-    '你是 AI 对话上下文压缩器。你的任务是把旧对话压缩成结构化 JSON，供后续长任务继续执行。',
-    '只保留长期有效、后续任务还需要的信息。短期无效的窗口句柄、临时坐标、一次性验证码、重复寒暄不要进入记忆。',
+    '你是 AI 对话上下文压缩器。',
+    '目标：把即将被压缩出上下文窗口的旧对话整理成下一位模型也能直接接手执行的结构化 JSON。',
+    '只保留后续仍然有效的信息：目标、约束、已完成工作、关键发现、阻塞点、下一步和相关文件。',
+    '丢弃短期无效内容：寒暄、一次性验证码、瞬时 UI 坐标、重复确认、无结论的试探。',
     '返回严格 JSON，不要输出解释。格式如下：',
-    '{"summary":"...","memories":[{"content":"...","category":"preference|fact|context|instruction"}]}'
+    '{"goal":"...","instructions":["..."],"discoveries":["..."],"accomplished":["..."],"nextSteps":["..."],"relevantFiles":["..."],"memories":[{"content":"...","category":"preference|fact|context|instruction"}]}',
+    '约束：',
+    '- goal 用一句话描述当前真正要继续完成的任务。',
+    '- instructions 只保留仍然有效的长期规则、用户偏好和禁止事项。',
+    '- discoveries 写已经证实的事实、错误根因、可复用结论，不写猜测。',
+    '- accomplished 写已经完成且不必重复做的工作。',
+    '- nextSteps 写下一位模型最应该继续推进的动作。',
+    '- relevantFiles 只写真实相关的文件、目录、脚本或接口名。',
+    '- memories 仅保留值得写入长期记忆的稳定信息。',
   ].join('\n')
 
   const userPrompt = [
@@ -705,21 +853,33 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
 
   const parsedContent = extractJsonObject(content)
   let nextSummary = ''
-  let memoryList: Array<{ content: string; category: 'preference' | 'fact' | 'context' | 'instruction' }> = []
+  let memoryList: Array<{ content: string; category: CompressionMemoryCategory }> = []
 
   try {
-    const parsed = JSON.parse(parsedContent) as { summary?: string; memories?: Array<{ content?: string; category?: string }> }
-    nextSummary = String(parsed.summary || '').trim()
-    memoryList = Array.isArray(parsed.memories)
-      ? parsed.memories
-          .map(item => ({
-            content: String(item.content || '').trim(),
-            category: normalizeCompressionCategory(item.category) as 'preference' | 'fact' | 'context' | 'instruction'
-          }))
-          .filter(item => item.content)
-      : []
+    const parsed = JSON.parse(parsedContent) as Partial<{
+      summary: string
+      goal: string
+      instructions: unknown[]
+      discoveries: unknown[]
+      accomplished: unknown[]
+      nextSteps: unknown[]
+      relevantFiles: unknown[]
+      memories: Array<{ content?: string; category?: string }>
+    }>
+    const compressionPayload = buildCompressionSummaryPayload(sessionId, session, parsed)
+    nextSummary = buildCompressionHandoffSummary(compressionPayload)
+    memoryList = compressionPayload.memories
   } catch {
-    nextSummary = parsedContent.slice(0, 2000)
+    const fallbackPayload = buildCompressionSummaryPayload(sessionId, session, {
+      goal: getLatestMeaningfulUserMessage(sessionId) || session.title,
+      discoveries: parsedContent
+        .split(/\r?\n/)
+        .map(line => normalizeCompressionText(line, 220))
+        .filter(Boolean)
+        .slice(0, 6),
+      nextSteps: ['基于最近一轮用户目标和工具结果继续执行，不要重复已完成步骤。'],
+    })
+    nextSummary = buildCompressionHandoffSummary(fallbackPayload)
   }
 
   if (nextSummary) {
@@ -733,6 +893,16 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
     memoryList.forEach(memory => {
       aiStore.addMemory(memory.content, memory.category, 'ai', sessionScope, sessionAgent?.id)
     })
+  }
+
+  if (nextSummary) {
+    const refreshedSession = aiStore.getSessionById(sessionId)
+    if (refreshedSession) {
+      createLocalContextSnapshot(sessionId, refreshedSession.messages, {
+        source: 'compression',
+        summaryOverride: nextSummary,
+      })
+    }
   }
 
   aiStore.recordCompression(sessionId)

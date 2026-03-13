@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -79,6 +79,7 @@ interface ElectronAPI {
   ideCloseTerminalSession: (sessionId: string) => Promise<boolean>
   ideRunCommand: (payload: IDETerminalRunRequest) => Promise<IDETerminalRunResult>
   ideCancelCommand: (sessionId: string) => Promise<boolean>
+  ideGetTerminalSessionSnapshot: (sessionId: string) => Promise<IDETerminalSessionSnapshot | null>
   onIdeTerminalEvent: (callback: (payload: IDETerminalEvent) => void) => (() => void)
   // MCP 工具
   mcpExecuteCommand: (command: string) => Promise<MCPToolResult>

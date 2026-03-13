@@ -110,6 +110,8 @@ const DEFAULT_RUNTIME_STATE: AIRuntimeState = {
 const MAX_MEMORY_ENTRIES = 100
 // 注入系统提示词的长期记忆上限
 const MAX_PROMPT_MEMORIES = 20
+// 系统提示词中保留的摘要节选上限，避免与上下文快照重复占用窗口
+const MAX_PROMPT_SUMMARY_CHARS = 1400
 // 单次对话直接携带的最大历史消息数
 const MAX_CONTEXT_MESSAGES = 16
 // 会话摘要最多保留的旧轮次要点
@@ -154,6 +156,21 @@ function createDefaultAgentCapabilities(partial?: Partial<AIAgentCapabilitySetti
     skillEnabled: true,
     ...(partial ?? {})
   }
+}
+
+function clampPromptSummary(summary: string, limit = MAX_PROMPT_SUMMARY_CHARS) {
+  const normalized = String(summary || '').trim()
+  if (!normalized) {
+    return ''
+  }
+
+  if (normalized.length <= limit) {
+    return normalized
+  }
+
+  const headLength = Math.max(500, Math.floor(limit * 0.68))
+  const tailLength = Math.max(240, limit - headLength - 32)
+  return `${normalized.slice(0, headLength)}\n...\n${normalized.slice(-tailLength)}`
 }
 
 function createBuiltinAgentProfiles(): AIAgentProfile[] {
@@ -950,10 +967,14 @@ function normalizeContextSnapshots(data: ContextSnapshot[] | null | undefined) {
       keyFacts: Array.isArray(snapshot.keyFacts) ? snapshot.keyFacts.map(item => String(item).trim()).filter(Boolean) : [],
       activeGoals: Array.isArray(snapshot.activeGoals) ? snapshot.activeGoals.map(item => String(item).trim()).filter(Boolean) : [],
       tokenCount: Math.max(0, Number(snapshot.tokenCount || 0) || 0),
-      createdAt: Number(snapshot.createdAt || Date.now()) || Date.now()
+      createdAt: Number(snapshot.createdAt || Date.now()) || Date.now(),
+      source: snapshot.source === 'compression' ? 'compression' : 'local',
+      messageCount: Math.max(0, Number(snapshot.messageCount || 0) || 0),
+      lastMessageAt: Math.max(0, Number(snapshot.lastMessageAt || 0) || 0),
+      recentToolNames: Array.isArray(snapshot.recentToolNames) ? snapshot.recentToolNames.map(item => String(item).trim()).filter(Boolean).slice(-8) : []
     }))
     .filter(snapshot => snapshot.sessionId)
-    .sort((left, right) => left.createdAt - right.createdAt)
+    .sort((left, right) => (left.lastMessageAt || left.createdAt) - (right.lastMessageAt || right.createdAt))
     .slice(-20)
 }
 
@@ -2171,6 +2192,7 @@ export const useAIStore = defineStore('ai', () => {
     const runtimeCapabilities = inferModelCapabilities(effectiveConfig.model, effectiveConfig.protocol)
     const tokenLimits = resolveConfigTokenLimits(effectiveConfig)
     const basePrompt = config.value.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT
+    const latestSnapshot = getLatestContextSnapshot(session.id)
     const sections: string[] = [basePrompt]
 
     if (sessionAgent?.systemPrompt.trim()) {
@@ -2336,8 +2358,24 @@ export const useAIStore = defineStore('ai', () => {
       ].join('\n'))
     }
 
-    if (session.summary) {
-      sections.push(`## 会话长摘要\n${session.summary}`)
+    const handoffSummary = clampPromptSummary(latestSnapshot?.summary || session.summary || '')
+    if (handoffSummary) {
+      const metaLines: string[] = []
+      if (latestSnapshot) {
+        metaLines.push('- 已存在独立上下文快照；完整接力摘要会作为单独上下文消息注入。')
+        if (latestSnapshot.activeGoals.length > 0) {
+          metaLines.push(`- 当前目标：${latestSnapshot.activeGoals[latestSnapshot.activeGoals.length - 1]}`)
+        }
+        if (latestSnapshot.recentToolNames?.length) {
+          metaLines.push(`- 最近工具：${latestSnapshot.recentToolNames.join('、')}`)
+        }
+      }
+
+      sections.push([
+        latestSnapshot ? '## 当前接力摘要（节选）' : '## 会话长摘要',
+        ...metaLines,
+        handoffSummary,
+      ].join('\n'))
     }
 
     return sections.join('\n\n')
@@ -2755,6 +2793,10 @@ export const useAIStore = defineStore('ai', () => {
     const newSnapshot: ContextSnapshot = {
       id: genId(),
       createdAt: Date.now(),
+      source: snapshot.source === 'compression' ? 'compression' : 'local',
+      messageCount: Math.max(0, Number(snapshot.messageCount || 0) || 0),
+      lastMessageAt: Math.max(0, Number(snapshot.lastMessageAt || 0) || 0),
+      recentToolNames: Array.isArray(snapshot.recentToolNames) ? snapshot.recentToolNames.map(item => String(item).trim()).filter(Boolean).slice(-8) : [],
       ...snapshot
     }
     contextSnapshots.value.push(newSnapshot)
