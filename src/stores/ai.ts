@@ -365,6 +365,12 @@ function normalizeSubAgents(data: SubAgent[] | null | undefined) {
       status: normalizeSubAgentStatus(agent.status),
       messages: Array.isArray(agent.messages) ? agent.messages : [],
       contextBudget: Math.max(4096, Number(agent.contextBudget || DEFAULT_AI_CONFIG.contextWindow) || DEFAULT_AI_CONFIG.contextWindow),
+      modelReason: typeof agent.modelReason === 'string' ? agent.modelReason.trim() : '',
+      selectedCapabilities: Array.isArray(agent.selectedCapabilities) ? agent.selectedCapabilities.map(item => String(item).trim()).filter(Boolean) : [],
+      availableModelCount: Math.max(0, Number(agent.availableModelCount || 0) || 0),
+      selectionMode: agent.selectionMode === 'manual' || agent.selectionMode === 'router' || agent.selectionMode === 'fallback'
+        ? agent.selectionMode
+        : 'fallback',
       createdAt: Number(agent.createdAt || Date.now()) || Date.now(),
       completedAt: Number(agent.completedAt || 0) || undefined
     }))
@@ -1670,6 +1676,10 @@ export const useAIStore = defineStore('ai', () => {
       status: 'pending',
       messages: [],
       contextBudget: config.value.contextWindow,
+      modelReason: request.modelReason || '',
+      selectedCapabilities: request.selectedCapabilities || [],
+      availableModelCount: Math.max(0, Number(request.availableModelCount || 0) || 0),
+      selectionMode: request.selectionMode || 'fallback',
       createdAt: now
     }
     subAgents.value.push(agent)

@@ -4,6 +4,7 @@ import { chatCompletion, splitEmbeddedReasoningContent, streamChat } from '@/uti
 import { executeToolCall } from '@/utils/aiTools'
 import { genId } from '@/utils/helpers'
 import { shouldCreateSnapshot, createLocalContextSnapshot } from '@/utils/aiContextEngine'
+import { flushPlanToWorkspace } from '@/utils/aiPlanEngine'
 
 export interface AIConversationHooks {
   onStream: (content: string) => void
@@ -626,6 +627,32 @@ function normalizeCompressionCategory(category: string | undefined) {
   return 'context'
 }
 
+async function syncIDEExecutionHandoff(sessionId: string) {
+  const aiStore = useAIStore()
+  const workspace = aiStore.ideWorkspace
+  if (!workspace) {
+    return
+  }
+
+  const plan = [...aiStore.projectPlans]
+    .filter(item => item.workspaceId === workspace.id)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0]
+
+  if (!plan) {
+    return
+  }
+
+  aiStore.addDevLog(plan.id, {
+    type: 'context-compress',
+    title: '刷新执行上下文摘要',
+    content: `会话 ${sessionId} 已完成一次上下文压缩，并同步刷新工作区内的 CONTEXT.md 接力摘要。`,
+    metadata: {
+      sessionId,
+    },
+  })
+  await flushPlanToWorkspace(workspace, aiStore.getProjectPlan(plan.id) || plan)
+}
+
 function formatCompressionMessages(messages: AIChatMessage[]) {
   return messages.map(message => {
     const role = message.role === 'assistant' ? 'AI' : message.role === 'tool' ? '工具' : message.role === 'system' ? '系统' : '用户'
@@ -706,6 +733,7 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
 
   aiStore.recordCompression(sessionId)
   aiStore.updateRuntimeContext(sessionId, aiStore.getContextMetrics(sessionId))
+  await syncIDEExecutionHandoff(sessionId)
   await notifyUpdate(hooks)
   if (!signal?.aborted) {
     aiStore.setRuntimePhase(sessionId, 'streaming')

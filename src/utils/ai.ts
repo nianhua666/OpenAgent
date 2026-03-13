@@ -2836,7 +2836,7 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
       type: 'function',
       function: {
         name: 'route_model',
-        description: '分析当前任务并自主选择最适合的模型。返回推荐的模型名、协议和选择理由。在遇到需要特殊能力（大上下文、视觉、深度推理）的任务时调用。',
+        description: '分析当前任务并基于当前接口可用模型列表自主选择最适合的模型。返回推荐的模型名、协议和选择理由。在遇到需要特殊能力（大上下文、视觉、深度推理）的任务时调用。',
         parameters: {
           type: 'object',
           properties: {
@@ -2851,7 +2851,7 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
       type: 'function',
       function: {
         name: 'spawn_sub_agent',
-        description: '生成并运行一个独立子代理执行特定子任务。子代理拥有独立的 Prompt 和可选的独立模型，适合并行处理分析、编码、测试等子任务。',
+        description: '生成并运行一个独立子代理执行特定子任务。主代理会自动获取当前接口支持的模型列表并为子代理选择合适模型；子代理只负责被委派任务，不能继续创建代理。',
         parameters: {
           type: 'object',
           properties: {
@@ -2859,7 +2859,7 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
             role: { type: 'string', description: '角色标识: code-analyst, frontend-dev, backend-dev, tester, reviewer, architect, devops' },
             task: { type: 'string', description: '分配给子代理的任务描述' },
             contextFromParent: { type: 'string', description: '从当前对话注入给子代理的关键上下文' },
-            model: { type: 'string', description: '可选：指定子代理使用的模型' }
+            model: { type: 'string', description: '可选：主代理显式指定子代理使用的模型；若未指定，系统会按当前接口返回的模型列表自动选型' }
           },
           required: ['name', 'role', 'task']
         }

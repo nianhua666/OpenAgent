@@ -15,6 +15,10 @@
         <span class="meta-label">模型</span>
         <strong>{{ agent.model }}</strong>
       </div>
+      <div v-if="agent.selectionMode">
+        <span class="meta-label">选型方式</span>
+        <strong>{{ selectionModeLabel(agent.selectionMode) }}</strong>
+      </div>
       <div>
         <span class="meta-label">协议</span>
         <strong>{{ agent.protocol }}</strong>
@@ -28,6 +32,10 @@
         <strong>{{ formatTime(agent.completedAt) }}</strong>
       </div>
     </div>
+
+    <p v-if="agent.modelReason" class="model-reason">
+      {{ agent.modelReason }}
+    </p>
 
     <div v-if="agent.result" class="result-block">
       <p class="result-title">执行摘要</p>
@@ -62,6 +70,16 @@ function statusLabel(status: SubAgentStatus) {
     cancelled: '已取消',
   }
   return labels[status]
+}
+
+function selectionModeLabel(mode: SubAgent['selectionMode']) {
+  const labels: Record<NonNullable<SubAgent['selectionMode']>, string> = {
+    manual: '主代理指定',
+    router: '自动路由',
+    fallback: '回退当前模型',
+  }
+
+  return mode ? labels[mode] : '未记录'
 }
 </script>
 
@@ -126,6 +144,7 @@ h4 {
 }
 
 .card-task,
+.model-reason,
 .result-content {
   color: var(--text-secondary);
   line-height: 1.7;

@@ -312,10 +312,15 @@ export function buildSharedContext(
   sessionId: string
 ): string {
   const aiStore = useAIStore()
+  const session = aiStore.getSessionById(sessionId)
   const snapshot = aiStore.getLatestContextSnapshot(sessionId)
   const task = aiStore.getLatestTaskForSession(sessionId)
 
   const sections: string[] = []
+
+  if (session?.summary) {
+    sections.push(`会话长摘要：\n${session.summary}`)
+  }
 
   if (task) {
     sections.push(`当前任务：${task.goal}`)

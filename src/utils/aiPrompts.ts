@@ -108,19 +108,19 @@ export const IDE_MODE_PROMPT = `你是 OpenAgent IDE 的核心开发引擎，一
 - 生成详细计划后，先向用户说明范围、阶段、关键风险和并行策略
 - 在用户明确确认前，计划保持 drafting，不直接进入连续开发
 - 用户确认后：调用 \`ide_update_plan_status\` 切换到 approved / in-progress
-- 同步利用工作区内 \`.openagent/PLAN.md\`、\`.openagent/TASKS.md\`、\`.openagent/SUBAGENTS.md\`、\`.openagent/SUPERVISOR.md\` 作为持续执行基线
+- 同步利用工作区内 \`.openagent/PLAN.md\`、\`.openagent/TASKS.md\`、\`.openagent/CONTEXT.md\`、\`.openagent/SUBAGENTS.md\`、\`.openagent/SUPERVISOR.md\` 作为持续执行基线
 
 ### 6. 持续开发
 进入持续开发循环：
 - 按计划顺序逐个完成任务
 - 当同一阶段存在多个互不依赖的 ready task 时，优先并行分发给子代理
-- 主代理负责监督：判断哪些任务能并行、给每个子代理补全专属提示词、汇总结果并做最终决策
+- 主代理负责监督：判断哪些任务能并行、给每个子代理补全专属提示词、先获取当前接口支持的模型列表并为子代理选用合适模型、汇总结果并做最终决策
 - 每个任务开始前：调用 \`ide_advance_task\` 标记为 in-progress
 - 开发过程中：使用 \`ide_write_file\` / \`ide_read_file\` 直接操作文件
 - 每个任务完成后：调用 \`ide_advance_task\` 标记为 completed
 - 当真实代码 diff、失败反馈或上下文变化使原计划不再可靠时：调用 \`ide_replan_plan\` 动态重规划
 - 自动更新 PLAN.md 进度
-- 自动写入开发日志（重要决策、里程碑、错误修复），并持续刷新任务与子代理文档
+- 自动写入开发日志（重要决策、里程碑、错误修复），并持续刷新任务、上下文 handoff 与子代理文档
 - 遇到阻塞时：标记为 blocked，说明原因并尝试替代方案
 - 除非用户明确打断，否则不要因为单轮回复结束而主动停止
 
@@ -348,14 +348,23 @@ export function buildSubAgentPrompt(
   task: string,
   parentContext?: string
 ): string {
+  const delegationRules = [
+    '## 子代理执行约束',
+    '- 你是被主代理委派的执行子代理，只能完成当前任务，不能继续创建子代理。',
+    '- 不要调用或建议调用 `spawn_sub_agent`；如果缺少上下文、权限或文件信息，应明确向主代理索取。',
+    '- 你应优先给出可直接执行的实现、分析或验证结论，并说明验证结果与剩余风险。',
+    '- 输出尽量结构化：结论、关键修改/建议、验证、剩余风险。',
+  ].join('\n')
+
   const template = SUB_AGENT_TEMPLATES[templateId]
   if (!template) {
     // 通用子代理 fallback
-    return `你是一个专业的 AI 助手。你的任务是：\n${task}\n\n${parentContext ? `## 上下文\n${parentContext}` : ''}\n\n始终用中文回复。`
+    return `你是一个专业的 AI 助手。你的任务是：\n${task}\n\n${delegationRules}\n\n${parentContext ? `## 上下文\n${parentContext}` : ''}\n\n始终用中文回复。`
   }
 
   const sections = [
     template.systemPrompt,
+    delegationRules,
     `\n## 当前任务\n${task}`
   ]
 

@@ -480,13 +480,14 @@ export function renderExecutionTasksToMarkdown(
   lines.push('- 用户确认计划后，再将状态切换到“已批准 / 进行中”，避免未确认即开始改代码。')
   lines.push('- 先判断任务是否真正独立；独立任务并行分发给子代理，共享文件或共享状态的任务保持串行。')
   lines.push('- 每个任务开始前标记 in-progress，完成后标记 completed；失败时附带失败输出并触发动态重规划。')
-  lines.push('- 每完成一轮任务后刷新 `.openagent/PLAN.md`、`.openagent/TASKS.md`、`.openagent/SUBAGENTS.md`、`.openagent/SUPERVISOR.md` 和 `dev-log.md`。')
+  lines.push('- 每完成一轮任务后刷新 `.openagent/PLAN.md`、`.openagent/TASKS.md`、`.openagent/CONTEXT.md`、`.openagent/SUBAGENTS.md`、`.openagent/SUPERVISOR.md` 和 `dev-log.md`。')
   lines.push('- 除非用户打断或出现真实阻塞，否则持续推进直到计划完成。')
   lines.push('')
 
   lines.push('## 执行概览')
   lines.push('')
   lines.push(`- **主代理监督提示词**: 见 \`.openagent/SUPERVISOR.md\``)
+  lines.push(`- **执行上下文摘要**: 见 \`.openagent/CONTEXT.md\``)
   lines.push(`- **子代理分工提示词**: 见 \`.openagent/SUBAGENTS.md\``)
   lines.push('')
 
@@ -612,6 +613,152 @@ export function renderSupervisorPromptToMarkdown(
     '```',
     '',
   ].join('\n')
+}
+
+export function renderContextHandoffToMarkdown(
+  plan: ProjectPlan,
+  packet: ProjectPlanExecutionPacket = buildPlanExecutionPacket(plan),
+): string {
+  const aiStore = useAIStore()
+  const sessionId = aiStore.activeSessionId
+  const session = sessionId ? aiStore.getSessionById(sessionId) : null
+  const runtimeTask = sessionId ? aiStore.getLatestTaskForSession(sessionId) : null
+  const snapshot = sessionId ? aiStore.getLatestContextSnapshot(sessionId) : null
+  const contextMetrics = sessionId ? aiStore.getContextMetrics(sessionId) : null
+  const recentSubAgents = sessionId
+    ? [...aiStore.getSubAgentsForSession(sessionId)]
+        .sort((left, right) => (right.completedAt || right.createdAt) - (left.completedAt || left.createdAt))
+        .slice(0, 6)
+    : []
+  const recentLogs = [...plan.devLog]
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, 8)
+
+  const lines: string[] = []
+
+  lines.push('# 执行上下文摘要')
+  lines.push('')
+  lines.push(`- **项目**: ${plan.goal}`)
+  lines.push(`- **状态**: ${formatPlanStatus(plan.status)} (${plan.progress}%)`)
+  lines.push(`- **下一优先任务**: ${packet.nextTaskTitle || '暂无'}`)
+  lines.push(`- **最后更新**: ${formatTime(plan.updatedAt)}`)
+  lines.push('')
+
+  lines.push('## 切模型 / 续跑恢复顺序')
+  lines.push('')
+  lines.push('1. 先阅读 `PLAN.md` 明确总目标和阶段状态。')
+  lines.push('2. 再阅读 `TASKS.md` 查看全量任务树、当前 ready queue 和 blocked queue。')
+  lines.push('3. 接着阅读 `CONTEXT.md` 快速恢复当前执行锚点、最近决策和上下文压缩结果。')
+  lines.push('4. 如需并行派发，阅读 `SUBAGENTS.md` 与 `SUPERVISOR.md`。')
+  lines.push('5. 若当前运行环境提供 MCP 或 Skill，优先复用现有能力，不要重复造轮子。')
+  lines.push('')
+
+  lines.push('## 当前执行锚点')
+  lines.push('')
+  if (packet.readyTasks.length > 0) {
+    packet.readyTasks.forEach((task, index) => {
+      lines.push(`- Ready ${index + 1}: **${task.phaseName} / ${task.taskTitle}** -> ${task.recommendedAgentName}`)
+    })
+  } else {
+    lines.push('- 当前没有 ready task。')
+  }
+
+  if (packet.blockedTasks.length > 0) {
+    lines.push('')
+    lines.push('### 当前阻塞')
+    lines.push('')
+    packet.blockedTasks.forEach(task => {
+      lines.push(`- **${task.phaseName} / ${task.taskTitle}**：等待 ${task.dependencyTitles.join('、') || '前置任务'} 完成`)
+    })
+  }
+
+  lines.push('')
+  lines.push('## 会话压缩锚点')
+  lines.push('')
+  if (!sessionId || !session) {
+    lines.push('- 当前没有活动会话摘要。')
+  } else {
+    lines.push(`- **活动会话**: ${session.title || sessionId}`)
+    lines.push(`- **会话更新时间**: ${formatTime(session.updatedAt)}`)
+    if (runtimeTask) {
+      lines.push(`- **运行时任务**: ${runtimeTask.goal} (${runtimeTask.status})`)
+      if (runtimeTask.summary) {
+        lines.push(`- **运行时任务摘要**: ${truncateText(runtimeTask.summary, 280)}`)
+      }
+    }
+    if (contextMetrics) {
+      lines.push(`- **上下文占用**: ${contextMetrics.estimatedInputTokens}/${contextMetrics.selectedContextTokens} tokens，压缩 ${contextMetrics.compressionCount} 次`)
+    }
+    if (session.summary) {
+      lines.push('')
+      lines.push('### 会话摘要')
+      lines.push('')
+      lines.push(session.summary)
+    }
+    if (snapshot) {
+      lines.push('')
+      lines.push('### 最近上下文快照')
+      lines.push('')
+      lines.push(`- **快照时间**: ${formatTime(snapshot.createdAt)}`)
+      lines.push(`- **快照摘要**: ${truncateText(snapshot.summary, 320)}`)
+      if (snapshot.activeGoals.length > 0) {
+        lines.push(`- **活跃目标**: ${snapshot.activeGoals.join('、')}`)
+      }
+      if (snapshot.keyFacts.length > 0) {
+        lines.push('- **关键事实**:')
+        snapshot.keyFacts.slice(0, 8).forEach(fact => {
+          lines.push(`  - ${fact}`)
+        })
+      }
+    }
+  }
+
+  lines.push('')
+  lines.push('## 最近子代理')
+  lines.push('')
+  if (recentSubAgents.length === 0) {
+    lines.push('- 当前没有子代理执行记录。')
+  } else {
+    recentSubAgents.forEach(agent => {
+      lines.push(`- **${agent.name}** (${agent.role})：${formatSubAgentStatusLabel(agent.status)}，模型 ${agent.model || '未记录'}`)
+      if (agent.modelReason) {
+        lines.push(`  - 选型理由：${truncateText(agent.modelReason, 180)}`)
+      }
+      if (agent.result?.output) {
+        lines.push(`  - 结果：${truncateText(agent.result.output, 220)}`)
+      }
+    })
+  }
+
+  lines.push('')
+  lines.push('## 最近开发日志')
+  lines.push('')
+  if (recentLogs.length === 0) {
+    lines.push('- 当前没有开发日志。')
+  } else {
+    recentLogs.forEach(entry => {
+      lines.push(`- **${formatTime(entry.timestamp)} [${entry.type}] ${entry.title}**：${truncateText(entry.content, 180)}`)
+    })
+  }
+
+  lines.push('')
+  lines.push('## 恢复执行建议')
+  lines.push('')
+  if (plan.status === 'drafting') {
+    lines.push('1. 当前计划仍处于 drafting，先向用户确认详细计划，再切换到 approved / in-progress。')
+  } else if (packet.readyTasks.length > 0) {
+    lines.push('1. 优先从 ready queue 中选择真正独立的任务推进；共享文件任务保持串行。')
+  } else if (packet.blockedTasks.length > 0) {
+    lines.push('1. 当前没有 ready task，优先检查 blocked queue、真实代码 diff 与是否需要重规划。')
+  } else {
+    lines.push('1. 当前执行队列为空，先复核计划状态、最新变更和任务拆分粒度。')
+  }
+  lines.push('2. 如需委派子代理，先读取当前接口返回的模型列表，再按任务能力匹配合适模型。')
+  lines.push('3. 子代理只负责被委派任务，不允许再继续创建代理。')
+  lines.push('4. 完成一轮任务后刷新 `PLAN.md`、`TASKS.md`、`CONTEXT.md`、`SUBAGENTS.md`、`SUPERVISOR.md` 和 `dev-log.md`。')
+  lines.push('')
+
+  return lines.join('\n')
 }
 
 /** 推进任务状态并同步 store 与日志 */
@@ -863,7 +1010,7 @@ function buildSupervisorPrompt(
     '2. 计划确认后，把计划状态切换到 in-progress，并优先推进 ready task；同一轮中仅把真正独立的任务并行派发给子代理。',
     '3. 你负责给每个子代理补充上下文、文件范围、验收标准和验证命令；子代理默认提示词只是底座，不能裸用。',
     '4. 每个任务开始前标记 in-progress，完成后标记 completed；失败时必须附带 failureOutput 并立即触发 ide_replan_plan。',
-    '5. 每完成一轮任务后刷新 PLAN.md、TASKS.md、SUBAGENTS.md、SUPERVISOR.md 与 dev-log.md，保持工作区内文档与真实执行进度一致。',
+    '5. 每完成一轮任务后刷新 PLAN.md、TASKS.md、CONTEXT.md、SUBAGENTS.md、SUPERVISOR.md 与 dev-log.md，保持工作区内文档与真实执行进度一致。',
     '6. 若 ready task 全部耗尽但计划未完成，优先检查阻塞依赖、真实代码 diff、失败反馈和是否需要动态重规划。',
     '',
     '当前 ready task：',
@@ -899,6 +1046,29 @@ function formatTaskStatusLabel(status: ProjectTaskStatus) {
   return map[status] || status
 }
 
+function formatSubAgentStatusLabel(status: string) {
+  const map: Record<string, string> = {
+    pending: '待执行',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+  }
+
+  return map[status] || status
+}
+
+function truncateText(text: string | undefined, maxLength = 200) {
+  const normalized = String(text || '').trim()
+  if (!normalized) {
+    return ''
+  }
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}...`
+    : normalized
+}
+
 /** 将 Plan 和日志写入工作区文件 */
 export async function flushPlanToWorkspace(
   workspace: IDEWorkspace,
@@ -910,15 +1080,18 @@ export async function flushPlanToWorkspace(
   const executionPacket = buildPlanExecutionPacket(plan)
   const planMd = renderPlanToMarkdown(plan)
   const tasksMd = renderExecutionTasksToMarkdown(plan, executionPacket)
+  const contextMd = renderContextHandoffToMarkdown(plan, executionPacket)
   const subAgentsMd = renderSubAgentGuideToMarkdown(plan, executionPacket)
   const supervisorMd = renderSupervisorPromptToMarkdown(plan, executionPacket)
   const planPath = workspace.rootPath + '/.openagent/PLAN.md'
   const tasksPath = workspace.rootPath + '/.openagent/TASKS.md'
+  const contextPath = workspace.rootPath + '/.openagent/CONTEXT.md'
   const subAgentsPath = workspace.rootPath + '/.openagent/SUBAGENTS.md'
   const supervisorPath = workspace.rootPath + '/.openagent/SUPERVISOR.md'
   await api.ideCreateDirectory(workspace.rootPath + '/.openagent')
   await api.ideWriteFile(planPath, planMd)
   await api.ideWriteFile(tasksPath, tasksMd)
+  await api.ideWriteFile(contextPath, contextMd)
   await api.ideWriteFile(subAgentsPath, subAgentsMd)
   await api.ideWriteFile(supervisorPath, supervisorMd)
 

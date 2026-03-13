@@ -2,7 +2,7 @@
  * AI 工具执行器
  * 接收AI返回的工具调用，路由到对应的实际操作
  */
-import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
+import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, AIProviderModel, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
 import { useAccountStore } from '@/stores/account'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAIStore } from '@/stores/ai'
@@ -15,6 +15,8 @@ import { listLocalLive2DModels } from '@/utils/live2d'
 import { coerceToolArguments } from '@/utils/aiToolArgs'
 import { routeModel, recommendSubAgentModel } from '@/utils/aiModelRouter'
 import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
+import { fetchAvailableModels } from '@/utils/ai'
+import { buildSharedContext } from '@/utils/aiContextEngine'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
 import {
   advanceTask,
@@ -36,6 +38,9 @@ interface ToolExecutionResult {
 interface ToolExecutionContext {
   sessionId?: string
 }
+
+const MODEL_CATALOG_CACHE_TTL_MS = 60 * 1000
+const modelCatalogCache = new Map<string, { expiresAt: number; models: AIProviderModel[] }>()
 
 function jsonOutput(payload: Record<string, unknown>) {
   return JSON.stringify(payload, null, 2)
@@ -113,6 +118,80 @@ async function extractScreenshotAttachment(result: { output?: string; data?: unk
 
 function normalizeStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(item => String(item)).filter(Boolean) : []
+}
+
+function createFallbackModelEntry(modelId: string): AIProviderModel {
+  return {
+    id: modelId,
+    name: modelId,
+    label: modelId,
+  }
+}
+
+function getModelCatalogCacheKey() {
+  const aiStore = useAIStore()
+  return [
+    aiStore.config.protocol,
+    aiStore.config.baseUrl.trim(),
+    aiStore.config.model.trim(),
+  ].join('|')
+}
+
+async function resolveAvailableModelsForRouting() {
+  const aiStore = useAIStore()
+  const cacheKey = getModelCatalogCacheKey()
+  const cached = modelCatalogCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now() && cached.models.length > 0) {
+    return {
+      models: cached.models,
+      source: 'cache' as const,
+      warning: '',
+    }
+  }
+
+  try {
+    const models = await fetchAvailableModels(aiStore.config)
+    if (models.length > 0) {
+      modelCatalogCache.set(cacheKey, {
+        models,
+        expiresAt: Date.now() + MODEL_CATALOG_CACHE_TTL_MS,
+      })
+      return {
+        models,
+        source: 'remote' as const,
+        warning: '',
+      }
+    }
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : '模型列表拉取失败'
+    const currentModel = aiStore.config.model.trim()
+    return {
+      models: currentModel ? [createFallbackModelEntry(currentModel)] : [],
+      source: 'fallback' as const,
+      warning,
+    }
+  }
+
+  const currentModel = aiStore.config.model.trim()
+  return {
+    models: currentModel ? [createFallbackModelEntry(currentModel)] : [],
+    source: 'fallback' as const,
+    warning: currentModel ? '远端模型列表为空，已回退到当前模型。' : '当前没有可用模型。',
+  }
+}
+
+function getLatestPlanInActiveWorkspace() {
+  const aiStore = useAIStore()
+  const workspace = getActiveWorkspace()
+  if (!workspace) {
+    return { workspace: null, plan: null }
+  }
+
+  const plan = [...aiStore.projectPlans]
+    .filter(item => item.workspaceId === workspace.id)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
+
+  return { workspace, plan }
 }
 
 function normalizeEnvRecord(value: unknown) {
@@ -1024,17 +1103,14 @@ async function routeModelTool(args: Record<string, unknown>): Promise<ToolExecut
     return errorResult('缺少任务描述')
   }
 
-  // 当前阶段优先基于现有配置做路由建议，避免额外引入模型列表获取链路。
-  const currentModel = aiStore.config.model?.trim()
-  if (!currentModel) {
-    return errorResult('当前未配置 AI 模型，无法执行模型路由')
+  const modelCatalog = await resolveAvailableModelsForRouting()
+  if (modelCatalog.models.length === 0) {
+    return errorResult('当前没有可用于模型路由的模型')
   }
-
-  const availableModels = [{ id: currentModel, name: currentModel, label: currentModel }]
 
   const decision = routeModel(
     task,
-    availableModels,
+    modelCatalog.models,
     aiStore.config.protocol,
     {
       preferSpeed: args.preferSpeed === true,
@@ -1047,6 +1123,9 @@ async function routeModelTool(args: Record<string, unknown>): Promise<ToolExecut
 
   return successResult('模型路由完成', {
     decision,
+    availableModelCount: modelCatalog.models.length,
+    catalogSource: modelCatalog.source,
+    ...(modelCatalog.warning ? { warning: modelCatalog.warning } : {}),
   })
 }
 
@@ -1059,6 +1138,7 @@ async function spawnSubAgentTool(
   const name = normalizeTextValue(args.name)
   const role = normalizeTextValue(args.role)
   const task = normalizeTextValue(args.task)
+  const requestedModel = normalizeTextValue(args.model)
 
   if (!parentSessionId) {
     return errorResult('当前没有活动会话，无法生成子代理')
@@ -1068,35 +1148,105 @@ async function spawnSubAgentTool(
     return errorResult('生成子代理需要 name、role、task')
   }
 
-  const currentModel = aiStore.config.model?.trim()
-  const availableModels = currentModel
-    ? [{ id: currentModel, name: currentModel, label: currentModel }]
-    : []
+  const modelCatalog = await resolveAvailableModelsForRouting()
+  const sharedContext = buildSharedContext(parentSessionId)
+  const parentContext = [normalizeTextValue(args.contextFromParent), sharedContext]
+    .filter(Boolean)
+    .join('\n\n')
 
   const recommended = recommendSubAgentModel(
     role,
     task,
-    availableModels,
+    modelCatalog.models,
     aiStore.config.protocol,
   )
+
+  const matchedRequestedModel = requestedModel
+    ? modelCatalog.models.find(model => model.id === requestedModel || model.name === requestedModel || model.label === requestedModel) ?? null
+    : null
+
+  const selectedModel = matchedRequestedModel?.id
+    || ((requestedModel && modelCatalog.models.length === 0) ? requestedModel : '')
+  const delegatedModel = selectedModel
+    || recommended?.model
+    || aiStore.config.model
+
+  if (!delegatedModel) {
+    return errorResult('当前没有可用于子代理的模型')
+  }
+
+  const selectionMode = matchedRequestedModel
+    ? 'manual'
+    : recommended?.model
+      ? 'router'
+      : 'fallback'
+  const modelReason = matchedRequestedModel
+    ? `主代理显式指定子代理使用 ${matchedRequestedModel.label || matchedRequestedModel.id}。`
+    : recommended?.reason
+      || `未获取到更优模型路由，已回退到当前模型 ${delegatedModel}。`
+  const selectionWarning = requestedModel && !matchedRequestedModel && modelCatalog.models.length > 0
+    ? `指定模型 ${requestedModel} 不在当前接口返回的模型列表中，已按自动路由改用 ${delegatedModel}。`
+    : modelCatalog.warning
 
   const result = await spawnAndRunSubAgent(parentSessionId, {
     name,
     role,
     task,
-    contextFromParent: normalizeTextValue(args.contextFromParent),
-    model: normalizeTextValue(args.model) || recommended?.model || aiStore.config.model,
+    contextFromParent: parentContext,
+    model: delegatedModel,
     protocol: recommended?.protocol || aiStore.config.protocol,
+    modelReason,
+    selectedCapabilities: recommended?.capabilities || [],
+    availableModelCount: modelCatalog.models.length,
+    selectionMode,
   })
+
+  const { workspace, plan } = getLatestPlanInActiveWorkspace()
+  if (workspace && plan) {
+    aiStore.addDevLog(plan.id, {
+      type: result.success ? 'milestone' : 'error',
+      title: `${result.success ? '子代理完成' : '子代理失败'}: ${name}`,
+      content: [
+        `角色：${role}`,
+        `模型：${delegatedModel}`,
+        `选型方式：${selectionMode}`,
+        `选型理由：${modelReason}`,
+        selectionWarning ? `选型告警：${selectionWarning}` : '',
+        `任务：${task}`,
+        result.output ? `结果摘要：${result.output.slice(0, 600)}` : '',
+      ].filter(Boolean).join('\n'),
+      metadata: {
+        subAgentName: name,
+        subAgentRole: role,
+        model: delegatedModel,
+        selectionMode,
+        availableModelCount: modelCatalog.models.length,
+        selectedCapabilities: recommended?.capabilities || [],
+      },
+    })
+    await flushPlanToWorkspace(workspace, aiStore.getProjectPlan(plan.id) || plan)
+  }
 
   if (!result.success) {
     return errorResult('子代理执行失败', {
       result,
+      selectedModel: delegatedModel,
+      selectionMode,
+      modelReason,
+      availableModelCount: modelCatalog.models.length,
+      ...(selectionWarning ? { warning: selectionWarning } : {}),
     })
   }
 
   return successResult('子代理执行完成', {
     result,
+    selectedModel: delegatedModel,
+    selectionMode,
+    modelReason,
+    availableModelCount: modelCatalog.models.length,
+    selectedCapabilities: recommended?.capabilities || [],
+    catalogSource: modelCatalog.source,
+    ...(selectionWarning ? { warning: selectionWarning } : {}),
   })
 }
 

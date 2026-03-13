@@ -478,6 +478,10 @@ export interface SubAgent {
   status: SubAgentStatus
   messages: AIChatMessage[]
   contextBudget: number
+  modelReason?: string
+  selectedCapabilities?: string[]
+  availableModelCount?: number
+  selectionMode?: 'manual' | 'router' | 'fallback'
   result?: SubAgentResult
   createdAt: number
   completedAt?: number
@@ -494,6 +498,10 @@ export interface SubAgentSpawnRequest {
   apiKey?: string
   contextFromParent?: string
   maxIterations?: number
+  modelReason?: string
+  selectedCapabilities?: string[]
+  availableModelCount?: number
+  selectionMode?: 'manual' | 'router' | 'fallback'
 }
 
 /** 模型路由决策 */
