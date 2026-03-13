@@ -61,6 +61,7 @@
             @select-tab="selectTab"
             @close-tab="closeTab"
             @update-content="updateActiveTabContent"
+            @update-selection="updateActiveTabSelection"
             @save="saveActiveTab"
             @save-all="saveAllTabs"
           />
@@ -97,6 +98,9 @@
         :open-files="editorTabs.length"
         :dirty-files="dirtyFileCount"
         :plan-count="workspacePlans.length"
+        :cursor-line="editorCursorState.line"
+        :cursor-column="editorCursorState.column"
+        :selection-length="editorCursorState.selectionLength"
         :active-file-path="activeFilePath"
       />
     </template>
@@ -126,6 +130,8 @@ interface EditorTabState {
   language?: string
   loading: boolean
   error: string
+  selectionStart: number
+  selectionEnd: number
 }
 
 interface ExplorerEntryPayload {
@@ -152,6 +158,11 @@ interface ExplorerRenameEntriesPayload {
 interface ExplorerMoveEntriesPayload {
   sources: string[]
   targetDirectory: string
+}
+
+interface EditorSelectionPayload {
+  selectionStart: number
+  selectionEnd: number
 }
 
 type WorkspacePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
@@ -189,6 +200,21 @@ const openTabPaths = computed(() => editorTabs.value.map(tab => tab.path))
 const clipboardCount = computed(() => explorerClipboardEntries.value.length)
 const dirtyFileCount = computed(() => editorTabs.value.filter(tab => tab.content !== tab.savedContent).length)
 const activeTab = computed(() => editorTabs.value.find(tab => tab.path === activeFilePath.value) ?? null)
+const editorCursorState = computed(() => {
+  if (!activeTab.value) {
+    return {
+      line: 1,
+      column: 1,
+      selectionLength: 0,
+    }
+  }
+
+  return deriveEditorCursorState(
+    activeTab.value.content,
+    activeTab.value.selectionStart,
+    activeTab.value.selectionEnd,
+  )
+})
 
 async function withEditorSessionSyncPaused(task: () => void | Promise<void>) {
   syncingEditorSession = true
@@ -200,6 +226,38 @@ async function withEditorSessionSyncPaused(task: () => void | Promise<void>) {
   }
 }
 
+function normalizeSelectionOffset(value: number, contentLength: number) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+
+  return Math.min(Math.max(Math.trunc(value), 0), contentLength)
+}
+
+function normalizeEditorSelectionRange(content: string, selectionStart: number, selectionEnd: number) {
+  const contentLength = content.length
+  const start = normalizeSelectionOffset(selectionStart, contentLength)
+  const end = normalizeSelectionOffset(selectionEnd, contentLength)
+
+  return {
+    selectionStart: Math.min(start, end),
+    selectionEnd: Math.max(start, end),
+  }
+}
+
+function deriveEditorCursorState(content: string, selectionStart: number, selectionEnd: number) {
+  const normalizedSelection = normalizeEditorSelectionRange(content, selectionStart, selectionEnd)
+  const leadingContent = content.slice(0, normalizedSelection.selectionStart)
+  const lines = leadingContent.split(/\r?\n/)
+  const activeLine = lines[lines.length - 1] ?? ''
+
+  return {
+    line: lines.length,
+    column: activeLine.length + 1,
+    selectionLength: normalizedSelection.selectionEnd - normalizedSelection.selectionStart,
+  }
+}
+
 function buildEditorSessionSnapshot(): IDEEditorSession | null {
   if (!workspace.value) {
     return null
@@ -207,12 +265,17 @@ function buildEditorSessionSnapshot(): IDEEditorSession | null {
 
   const tabs = editorTabs.value
     .filter(tab => tab.path.trim() && !tab.loading && (!tab.error || tab.content !== tab.savedContent))
-    .map(tab => ({
-      path: tab.path,
-      content: tab.content,
-      savedContent: tab.savedContent,
-      language: tab.language,
-    }))
+    .map(tab => {
+      const normalizedSelection = normalizeEditorSelectionRange(tab.content, tab.selectionStart, tab.selectionEnd)
+      return {
+        path: tab.path,
+        content: tab.content,
+        savedContent: tab.savedContent,
+        language: tab.language,
+        selectionStart: normalizedSelection.selectionStart,
+        selectionEnd: normalizedSelection.selectionEnd,
+      }
+    })
 
   if (tabs.length === 0) {
     return null
@@ -259,6 +322,7 @@ async function restoreEditorSessionForWorkspace(workspaceId: string) {
     .map(tab => {
       const normalizedPath = normalizeWorkspaceRelativePath(tab.path)
       const fileMissing = shouldValidateTabs && !workspaceFileSet.has(normalizedPath)
+      const normalizedSelection = normalizeEditorSelectionRange(tab.content, tab.selectionStart ?? 0, tab.selectionEnd ?? 0)
       return {
         path: normalizedPath,
         content: tab.content,
@@ -266,6 +330,8 @@ async function restoreEditorSessionForWorkspace(workspaceId: string) {
         language: tab.language,
         loading: false,
         error: fileMissing ? '文件已不在当前工作区中，当前保留的是上次未保存草稿。' : '',
+        selectionStart: normalizedSelection.selectionStart,
+        selectionEnd: normalizedSelection.selectionEnd,
       } satisfies EditorTabState
     })
 
@@ -549,6 +615,8 @@ async function openFile(path: string) {
     language,
     loading: true,
     error: '',
+    selectionStart: 0,
+    selectionEnd: 0,
   }
 
   editorTabs.value.push(nextTab)
@@ -592,7 +660,28 @@ function closeTab(path: string) {
 function updateActiveTabContent(content: string) {
   if (activeTab.value) {
     activeTab.value.content = content
+    const normalizedSelection = normalizeEditorSelectionRange(
+      content,
+      activeTab.value.selectionStart,
+      activeTab.value.selectionEnd,
+    )
+    activeTab.value.selectionStart = normalizedSelection.selectionStart
+    activeTab.value.selectionEnd = normalizedSelection.selectionEnd
   }
+}
+
+function updateActiveTabSelection(payload: EditorSelectionPayload) {
+  if (!activeTab.value) {
+    return
+  }
+
+  const normalizedSelection = normalizeEditorSelectionRange(
+    activeTab.value.content,
+    payload.selectionStart,
+    payload.selectionEnd,
+  )
+  activeTab.value.selectionStart = normalizedSelection.selectionStart
+  activeTab.value.selectionEnd = normalizedSelection.selectionEnd
 }
 
 async function saveActiveTab() {

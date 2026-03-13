@@ -549,11 +549,21 @@ function normalizeIDEEditorTabSession(
     return null
   }
 
+  const content = typeof tab.content === 'string' ? tab.content : ''
+  const savedContent = typeof tab.savedContent === 'string' ? tab.savedContent : ''
+  const selectionStart = Math.min(Math.max(0, Number(tab.selectionStart || 0) || 0), content.length)
+  const selectionEnd = Math.min(
+    Math.max(selectionStart, Number(tab.selectionEnd || 0) || 0),
+    content.length,
+  )
+
   return {
     path,
-    content: typeof tab.content === 'string' ? tab.content : '',
-    savedContent: typeof tab.savedContent === 'string' ? tab.savedContent : '',
-    language: typeof tab.language === 'string' && tab.language.trim() ? tab.language.trim() : undefined
+    content,
+    savedContent,
+    language: typeof tab.language === 'string' && tab.language.trim() ? tab.language.trim() : undefined,
+    selectionStart,
+    selectionEnd,
   }
 }
 

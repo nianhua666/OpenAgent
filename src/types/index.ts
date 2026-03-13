@@ -597,6 +597,8 @@ export interface IDEEditorTabSession {
   content: string
   savedContent: string
   language?: string
+  selectionStart?: number
+  selectionEnd?: number
 }
 
 export interface IDEEditorSession {
