@@ -594,6 +594,8 @@ export type IDETerminalSessionMode = 'command' | 'shell'
 export interface IDETerminalRunRequest {
   command: string
   cwd: string
+  timeoutMs?: number
+  idleTimeoutMs?: number
 }
 
 export interface IDETerminalRunResult {

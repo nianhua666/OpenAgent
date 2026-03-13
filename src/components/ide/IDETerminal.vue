@@ -70,7 +70,7 @@
     </div>
 
     <p class="terminal-hint">
-      提示：`↑/↓` 可切换最近命令；点击终端画布后可直接键入、粘贴并运行全屏命令，顶部按钮会优先中断当前 shell 命令。
+      提示：`↑/↓` 可切换最近命令；点击终端画布后可直接键入、粘贴并运行全屏命令，顶部按钮会优先中断当前 shell 命令。AI 通过 `ide_run_command` 发起的一次性验证命令会在无输出、交互提示或超时后自动停止。
     </p>
 
     <div v-if="scripts.length > 0" class="terminal-script-list">

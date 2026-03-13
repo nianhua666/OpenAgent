@@ -539,7 +539,7 @@ let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 const activeWindowDrags = new Map<number, { startCursor: WindowDragPoint; startPosition: [number, number] }>()
 const ideTerminalTrackedOwners = new Set<number>()
 const ideTerminalOwnerSessions = new Map<number, Set<string>>()
-const ideTerminalProcesses = new Map<string, {
+type IdeTerminalProcessEntry = {
   sessionId: string
   owner: Electron.WebContents
   command: string
@@ -551,7 +551,23 @@ const ideTerminalProcesses = new Map<string, {
   child?: ChildProcess
   pty?: NodePtyProcess
   cancelRequested: boolean
-}>()
+  lastActivityAt?: number
+  commandTimeoutMs?: number
+  idleTimeoutMs?: number
+  guardReason?: 'timeout' | 'idle' | 'interactive'
+  guardMessage?: string
+  guardInterval?: ReturnType<typeof setInterval>
+  guardWarningSent?: boolean
+}
+
+const ideTerminalProcesses = new Map<string, IdeTerminalProcessEntry>()
+
+const IDE_COMMAND_DEFAULT_TIMEOUT_MS = 30_000
+const IDE_COMMAND_MAX_TIMEOUT_MS = 120_000
+const IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS = 12_000
+const IDE_COMMAND_MAX_IDLE_TIMEOUT_MS = 30_000
+const IDE_COMMAND_GUARD_TICK_MS = 1_000
+const IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN = /(y\/n|yes\/no|password|passphrase|press any key|select an option|choose one|continue\?|are you sure|请输入|确认是否|是否继续|输入密码)/i
 
 if (!IS_LIVE2D_DIAGNOSTIC_MODE && !app.requestSingleInstanceLock()) {
   app.quit()
@@ -593,6 +609,11 @@ function assertValidIdeWorkingDirectory(cwd: string | null) {
   }
 
   return cwd
+}
+
+function normalizeIdeCommandDuration(value: unknown, fallback: number, max: number) {
+  const numericValue = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback
+  return Math.min(Math.max(numericValue, 3_000), max)
 }
 
 function buildIdeShellCommand(command: string) {
@@ -684,12 +705,97 @@ function emitIdeTerminalEvent(entry: {
   entry.owner.send('ide:terminal:event', nextPayload)
 }
 
+function emitIdeTerminalNotice(entry: {
+  owner: Electron.WebContents
+  sessionId: string
+  command: string
+  title: string
+  cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
+}, message: string) {
+  emitIdeTerminalEvent(entry, {
+    type: 'data',
+    timestamp: Date.now(),
+    stream: 'system',
+    chunk: `${message.endsWith('\n') ? message : `${message}\n`}`,
+  })
+}
+
+function clearIdeCommandGuard(entry: { guardInterval?: ReturnType<typeof setInterval> }) {
+  if (entry.guardInterval) {
+    clearInterval(entry.guardInterval)
+    entry.guardInterval = undefined
+  }
+}
+
+function scheduleIdeCommandGuard(entry: {
+  sessionId: string
+  owner: Electron.WebContents
+  command: string
+  title: string
+  cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
+  startedAt: number
+  cancelRequested: boolean
+  lastActivityAt?: number
+  commandTimeoutMs?: number
+  idleTimeoutMs?: number
+  guardReason?: 'timeout' | 'idle' | 'interactive'
+  guardMessage?: string
+  guardInterval?: ReturnType<typeof setInterval>
+  guardWarningSent?: boolean
+}) {
+  if (entry.mode !== 'command') {
+    return
+  }
+
+  clearIdeCommandGuard(entry)
+  entry.lastActivityAt = entry.lastActivityAt || entry.startedAt
+  entry.guardInterval = setInterval(() => {
+    if (!ideTerminalProcesses.has(entry.sessionId)) {
+      clearIdeCommandGuard(entry)
+      return
+    }
+
+    const now = Date.now()
+    const idleFor = now - (entry.lastActivityAt || entry.startedAt)
+    const runningFor = now - entry.startedAt
+    const idleTimeoutMs = entry.idleTimeoutMs || IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS
+    const commandTimeoutMs = entry.commandTimeoutMs || IDE_COMMAND_DEFAULT_TIMEOUT_MS
+
+    if (!entry.guardWarningSent && idleFor >= Math.max(6_000, Math.floor(idleTimeoutMs * 0.6))) {
+      entry.guardWarningSent = true
+      emitIdeTerminalNotice(entry, '[system] 命令已运行一段时间且暂无新输出，若它需要交互输入或进入 watch 模式，将会被自动停止。')
+    }
+
+    if (!entry.guardReason && idleFor >= idleTimeoutMs) {
+      entry.guardReason = 'idle'
+      entry.guardMessage = `命令在 ${Math.round(idleTimeoutMs / 1000)} 秒内无新输出，疑似等待输入或卡住，已自动停止。`
+      emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
+      stopIdeTerminalSession(entry.sessionId)
+      clearIdeCommandGuard(entry)
+      return
+    }
+
+    if (!entry.guardReason && runningFor >= commandTimeoutMs) {
+      entry.guardReason = 'timeout'
+      entry.guardMessage = `命令执行超过 ${Math.round(commandTimeoutMs / 1000)} 秒，已按安全策略自动停止。`
+      emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
+      stopIdeTerminalSession(entry.sessionId)
+      clearIdeCommandGuard(entry)
+    }
+  }, IDE_COMMAND_GUARD_TICK_MS)
+}
+
 function cleanupIdeTerminalSession(sessionId: string) {
   const entry = ideTerminalProcesses.get(sessionId)
   if (!entry) {
     return
   }
 
+  clearIdeCommandGuard(entry)
   ideTerminalProcesses.delete(sessionId)
   untrackIdeTerminalSession(entry.owner.id, sessionId)
 }
@@ -793,19 +899,7 @@ function stopIdeTerminalSessionsByOwner(ownerId: number) {
   return stopped
 }
 
-function registerIdeTerminalProcess(entry: {
-  sessionId: string
-  owner: Electron.WebContents
-  command: string
-  title: string
-  cwd: string
-  mode: IDETerminalSessionMode
-  shell: string
-  startedAt: number
-  child?: ChildProcess
-  pty?: NodePtyProcess
-  cancelRequested: boolean
-}) {
+function registerIdeTerminalProcess(entry: IdeTerminalProcessEntry) {
   ideTerminalProcesses.set(entry.sessionId, entry)
   trackIdeTerminalSession(entry.owner.id, entry.sessionId)
 
@@ -832,6 +926,8 @@ function registerIdeTerminalProcess(entry: {
         return
       }
 
+      entry.lastActivityAt = Date.now()
+
       emitIdeTerminalEvent(entry, {
         type: 'data',
         timestamp: Date.now(),
@@ -844,9 +940,10 @@ function registerIdeTerminalProcess(entry: {
       finalize({
         type: 'exit',
         timestamp: Date.now(),
-        status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+        status: entry.guardReason ? 'failed' : entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
         exitCode,
-        signal: typeof signal === 'number' && signal > 0 ? String(signal) : null
+        signal: typeof signal === 'number' && signal > 0 ? String(signal) : null,
+        error: entry.guardMessage,
       })
     })
 
@@ -865,6 +962,8 @@ function registerIdeTerminalProcess(entry: {
       return
     }
 
+    entry.lastActivityAt = Date.now()
+
     emitIdeTerminalEvent(entry, {
       type: 'data',
       timestamp: Date.now(),
@@ -878,6 +977,8 @@ function registerIdeTerminalProcess(entry: {
       return
     }
 
+    entry.lastActivityAt = Date.now()
+
     emitIdeTerminalEvent(entry, {
       type: 'data',
       timestamp: Date.now(),
@@ -890,8 +991,8 @@ function registerIdeTerminalProcess(entry: {
     finalize({
       type: 'error',
       timestamp: Date.now(),
-      status: entry.cancelRequested ? 'cancelled' : 'failed',
-      error: error.message
+      status: entry.guardReason ? 'failed' : entry.cancelRequested ? 'cancelled' : 'failed',
+      error: entry.guardMessage || error.message
     })
   })
 
@@ -899,9 +1000,10 @@ function registerIdeTerminalProcess(entry: {
     finalize({
       type: 'exit',
       timestamp: Date.now(),
-      status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+      status: entry.guardReason ? 'failed' : entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
       exitCode,
-      signal: signal ?? null
+      signal: signal ?? null,
+      error: entry.guardMessage
     })
   })
 }
@@ -917,7 +1019,7 @@ function createIdeTerminalEntry(
     shell: string
   },
 ) {
-  const entry = {
+  const entry: IdeTerminalProcessEntry = {
     sessionId: randomUUID(),
     owner,
     command: payload.command,
@@ -2851,6 +2953,8 @@ app.whenReady().then(() => {
 
     const command = typeof payload?.command === 'string' ? payload.command.trim() : ''
     const cwd = sanitizeIdePath(payload?.cwd)
+    const timeoutMs = normalizeIdeCommandDuration(payload?.timeoutMs, IDE_COMMAND_DEFAULT_TIMEOUT_MS, IDE_COMMAND_MAX_TIMEOUT_MS)
+    const idleTimeoutMs = normalizeIdeCommandDuration(payload?.idleTimeoutMs, IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS, Math.min(IDE_COMMAND_MAX_IDLE_TIMEOUT_MS, Math.max(timeoutMs - 1_000, 3_000)))
 
     if (!command || Buffer.byteLength(command, 'utf-8') > 4096) {
       throw new Error('终端命令不能为空，且长度不能超过 4096 字节')
@@ -2886,7 +2990,7 @@ app.whenReady().then(() => {
 
     const startedAt = Date.now()
     const sessionId = randomUUID()
-    const entry = {
+    const entry: IdeTerminalProcessEntry = {
       sessionId,
       owner: event.sender,
       command,
@@ -2901,6 +3005,10 @@ app.whenReady().then(() => {
 
     ideTerminalProcesses.set(sessionId, entry)
     trackIdeTerminalSession(event.sender.id, sessionId)
+    entry.lastActivityAt = startedAt
+    entry.commandTimeoutMs = timeoutMs
+    entry.idleTimeoutMs = idleTimeoutMs
+    entry.guardWarningSent = false
 
     let finalized = false
     const finalize = (payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) => {
@@ -2924,12 +3032,21 @@ app.whenReady().then(() => {
         return
       }
 
+      entry.lastActivityAt = Date.now()
       emitIdeTerminalEvent(entry, {
         type: 'data',
         timestamp: Date.now(),
         stream: 'stdout',
         chunk
       })
+
+      if (!entry.guardReason && IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN.test(chunk)) {
+        entry.guardReason = 'interactive'
+        entry.guardMessage = '检测到交互式提示，AI 命令执行链路不支持继续等待输入，已自动停止。'
+        emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
+        stopIdeTerminalSession(sessionId)
+        return
+      }
     })
 
     child.stderr.on('data', (chunk: string) => {
@@ -2937,20 +3054,29 @@ app.whenReady().then(() => {
         return
       }
 
+      entry.lastActivityAt = Date.now()
       emitIdeTerminalEvent(entry, {
         type: 'data',
         timestamp: Date.now(),
         stream: 'stderr',
         chunk
       })
+
+      if (!entry.guardReason && IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN.test(chunk)) {
+        entry.guardReason = 'interactive'
+        entry.guardMessage = '检测到交互式提示，AI 命令执行链路不支持继续等待输入，已自动停止。'
+        emitIdeTerminalNotice(entry, `[system] ${entry.guardMessage}`)
+        stopIdeTerminalSession(sessionId)
+        return
+      }
     })
 
     child.on('error', error => {
       finalize({
         type: 'error',
         timestamp: Date.now(),
-        status: entry.cancelRequested ? 'cancelled' : 'failed',
-        error: error.message
+        status: entry.guardReason ? 'failed' : entry.cancelRequested ? 'cancelled' : 'failed',
+        error: entry.guardMessage || error.message
       })
     })
 
@@ -2958,11 +3084,14 @@ app.whenReady().then(() => {
       finalize({
         type: 'exit',
         timestamp: Date.now(),
-        status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+        status: entry.guardReason ? 'failed' : entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
         exitCode,
-        signal: signal ?? null
+        signal: signal ?? null,
+        error: entry.guardMessage
       })
     })
+
+    scheduleIdeCommandGuard(entry)
 
     const result: IDETerminalRunResult = {
       sessionId,

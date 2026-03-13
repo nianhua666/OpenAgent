@@ -2986,6 +2986,24 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
           }
         }
       },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_run_command',
+          description: '在当前工作区执行一次短时、非交互、可结束的命令，并把 stdout/stderr/system 输出结构化回传。命令若长时间无输出、出现交互式提示或超过超时阈值，会被自动停止。',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: '要执行的单条命令，例如 npm run build、pnpm lint、git status' },
+              cwd: { type: 'string', description: '可选：仅允许填写当前工作区内的相对子目录；不传则使用工作区根目录' },
+              timeoutMs: { type: 'number', description: '可选：总超时毫秒数，默认 30000，最大 120000' },
+              idleTimeoutMs: { type: 'number', description: '可选：无输出超时毫秒数，默认 12000，最大 30000' },
+              reason: { type: 'string', description: '可选：说明这条命令用于什么验证或观测；优先使用非交互参数' }
+            },
+            required: ['command']
+          }
+        }
+      },
     )
   }
 
@@ -3045,6 +3063,24 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
               pattern: { type: 'string', description: '搜索模式' }
             },
             required: ['pattern']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_run_command',
+          description: '在当前工作区执行一次短时、非交互、可结束的命令，并把 stdout/stderr/system 输出结构化回传。命令若长时间无输出、出现交互式提示或超过超时阈值，会被自动停止。',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: '要执行的单条命令，例如 npm run build、pnpm lint、git status' },
+              cwd: { type: 'string', description: '可选：仅允许填写当前工作区内的相对子目录；不传则使用工作区根目录' },
+              timeoutMs: { type: 'number', description: '可选：总超时毫秒数，默认 30000，最大 120000' },
+              idleTimeoutMs: { type: 'number', description: '可选：无输出超时毫秒数，默认 12000，最大 30000' },
+              reason: { type: 'string', description: '可选：说明这条命令用于什么验证或观测；优先使用非交互参数' }
+            },
+            required: ['command']
           }
         }
       },

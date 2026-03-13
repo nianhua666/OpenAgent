@@ -64,13 +64,15 @@ const COMMAND_BLACKLIST = [
   /\b(?:powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?)\b/i,
   /\b(?:invoke-expression|iex)\b/i,
   /-encodedcommand\b/i,
-  /rm\s+-rf\s+[\/\\]/i,
+  /\b(?:remove-item|del|erase|rd|rmdir)\b/i,
+  /rm\s+-rf\s+(?:[\/\\]|[a-z]:)/i,
   /format\s+[a-z]:/i,
-  /del\s+\/[sf]/i,
-  /remove-item.*-recurse.*[\/\\](?:windows|system32|program)/i,
-  /stop-computer/i,
-  /restart-computer/i,
-  /clear-disk/i
+  /\b(?:diskpart|clear-disk|cipher\s+\/w|bcdedit|bootcfg)\b/i,
+  /\b(?:shutdown|stop-computer|restart-computer|reboot)\b/i,
+  /\b(?:reg(?:\.exe)?\s+(?:add|delete|import|restore)|schtasks(?:\.exe)?\s+\/(?:create|delete|change|run)|sc(?:\.exe)?\s+(?:config|create|delete|start|stop))\b/i,
+  /\b(?:takeown|icacls|wevtutil|vssadmin|mountvol)\b/i,
+  /\b(?:taskkill)\b[\s\S]*\b(?:explorer|winlogon|csrss|lsass|services|svchost)(?:\.exe)?\b/i,
+  /\b(?:copy-item|move-item|rename-item|set-content|add-content|clear-content|copy|move|ren)\b[\s\S]*(?:[a-z]:\\(?:windows|program files|programdata|users\\default)|%windir%|%systemroot%)/i
 ]
 
 function ensureTempDir() {
