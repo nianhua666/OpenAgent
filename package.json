@@ -32,7 +32,9 @@
     "electron:dev": "vite",
     "electron:build": "npm run build && electron-builder --config electron-builder.config.cjs",
     "electron:build:clean": "npm run build:clean && npm run electron:build",
-    "electron:preview": "npm run build && electron .",
+    "electron:preview": "npm run build && node scripts/run-electron.cjs .",
+    "check:live2d": "npm run build && node scripts/run-electron.cjs . --live2d-diagnose",
+    "check:sub2api": "node scripts/check-sub2api.cjs",
     "release:publish": "node scripts/publish-release.cjs",
     "electron:release": "npm run electron:build:clean && npm run release:publish"
   },

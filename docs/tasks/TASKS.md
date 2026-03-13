@@ -206,3 +206,9 @@
 | 2026-03-13 | code | Phase 8 终端防挂起补强：`electron/main.ts` / `preload.ts` / `env.d.ts` / `types/index.ts` 新增命令会话运行快照查询，`aiTools.ts` 在等待命令结果时改为“事件流 + 运行快照轮询”双通道收口；若命令已经退出但前端没收到终态事件，会根据快照补发心跳与终态说明，重复循环输出也会进入自动停机守卫 |
 | 2026-03-13 | review | Phase 8 长任务巡检：确认旧实现存在“快照按 createdAt 切片导致新消息被漏算、压缩摘要缺乏接力结构、命令结束无输出时模型可能误判为仍在运行、退出事件丢失会导致工具层长时间等待”的风险；当前版本已通过消息锚点快照、结构化压缩摘要、运行快照轮询与无输出显式回执完成收口 |
 | 2026-03-13 | test | Phase 8 长时间运行收口验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认上下文快照扩展、运行快照 IPC、终端轮询收口与 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路兼容 |
+
+## Latest Check
+
+- 2026-03-13 Live2D 巡检确认：此前 `electron:preview -- --live2d-diagnose` 的失败根因不是 Live2D 代码或资源损坏，而是终端环境残留 `ELECTRON_RUN_AS_NODE=1`，导致 Electron 被错误降级为普通 Node 进程。
+- 2026-03-13 Live2D 真实验证：在清理环境变量后的真实 Electron 环境中，`npm.cmd run check:live2d` 已通过，默认 Shizuku 模型、`live2d://` 资源协议与采样资源请求均诊断成功。
+- 2026-03-13 Sub2API 核心契约验证：新增 `npm.cmd run check:sub2api`，已确认 OpenAgent 依赖的 `/v1/models`、`/v1/responses` 与 responses-only legacy `/v1/chat/completions` 提示契约可用；真实上游模型调用仍需用户自己的网关地址与 API Key 做联调。
