@@ -162,8 +162,12 @@ export async function readWorkspaceFile(
 ): Promise<string | null> {
   const api = getApi()
   if (!api) return null
-  const fullPath = joinPath(workspace.rootPath, relativePath)
-  return await api.ideReadFile(fullPath)
+  try {
+    const fullPath = joinPath(workspace.rootPath, relativePath)
+    return await api.ideReadFile(fullPath)
+  } catch {
+    return null
+  }
 }
 
 /** 写入工作区文件（自动创建目录） */
@@ -174,8 +178,21 @@ export async function writeWorkspaceFile(
 ): Promise<boolean> {
   const api = getApi()
   if (!api) return false
-  const fullPath = joinPath(workspace.rootPath, relativePath)
-  return await api.ideWriteFile(fullPath, content)
+  try {
+    const fullPath = joinPath(workspace.rootPath, relativePath)
+    return await api.ideWriteFile(fullPath, content)
+  } catch {
+    return false
+  }
+}
+
+/** 创建工作区文件（默认创建空文件，并自动补齐上级目录） */
+export async function createWorkspaceFile(
+  workspace: IDEWorkspace,
+  relativePath: string,
+  content = '',
+): Promise<boolean> {
+  return await writeWorkspaceFile(workspace, relativePath, content)
 }
 
 /** 检查工作区文件是否存在 */
@@ -185,8 +202,12 @@ export async function workspaceFileExists(
 ): Promise<boolean> {
   const api = getApi()
   if (!api) return false
-  const fullPath = joinPath(workspace.rootPath, relativePath)
-  return await api.ideFileExists(fullPath)
+  try {
+    const fullPath = joinPath(workspace.rootPath, relativePath)
+    return await api.ideFileExists(fullPath)
+  } catch {
+    return false
+  }
 }
 
 /** 按 glob 模式搜索工作区文件（基于已扫描的结构） */
@@ -215,8 +236,61 @@ export async function createWorkspaceDirectory(
 ): Promise<boolean> {
   const api = getApi()
   if (!api) return false
-  const fullPath = joinPath(workspace.rootPath, relativePath)
-  return await api.ideCreateDirectory(fullPath)
+  try {
+    const fullPath = joinPath(workspace.rootPath, relativePath)
+    return await api.ideCreateDirectory(fullPath)
+  } catch {
+    return false
+  }
+}
+
+/** 重命名工作区中的文件或目录 */
+export async function renameWorkspaceEntry(
+  workspace: IDEWorkspace,
+  fromRelativePath: string,
+  toRelativePath: string,
+): Promise<boolean> {
+  const api = getApi()
+  if (!api) return false
+  try {
+    const fromFullPath = joinPath(workspace.rootPath, fromRelativePath)
+    const toFullPath = joinPath(workspace.rootPath, toRelativePath)
+    return await api.ideRenameEntry(fromFullPath, toFullPath)
+  } catch {
+    return false
+  }
+}
+
+/** 复制工作区中的文件或目录 */
+export async function copyWorkspaceEntry(
+  workspace: IDEWorkspace,
+  fromRelativePath: string,
+  toRelativePath: string,
+): Promise<boolean> {
+  const api = getApi()
+  if (!api) return false
+  try {
+    const fromFullPath = joinPath(workspace.rootPath, fromRelativePath)
+    const toFullPath = joinPath(workspace.rootPath, toRelativePath)
+    return await api.ideCopyEntry(fromFullPath, toFullPath)
+  } catch {
+    return false
+  }
+}
+
+/** 删除工作区中的文件或目录 */
+export async function deleteWorkspaceEntry(
+  workspace: IDEWorkspace,
+  relativePath: string,
+): Promise<boolean> {
+  const api = getApi()
+  if (!api) return false
+  try {
+    const fullPath = joinPath(workspace.rootPath, relativePath)
+    return await api.ideDeleteEntry(fullPath)
+  } catch {
+    return false
+  }
 }
 
 /** 刷新工作区结构缓存 */
@@ -232,10 +306,27 @@ export async function refreshWorkspaceStructure(workspace: IDEWorkspace): Promis
 // ========== 内部工具函数 ==========
 
 function joinPath(base: string, relative: string): string {
-  // 规范化路径分隔符
-  const normalized = relative.replace(/\\/g, '/')
-  const baseNorm = base.replace(/\\/g, '/').replace(/\/$/, '')
-  return baseNorm + '/' + normalized.replace(/^\//, '')
+  const baseNorm = base.replace(/\\/g, '/').replace(/\/+$/, '')
+  const normalized = relative.replace(/\\/g, '/').trim()
+  if (!normalized) {
+    return baseNorm
+  }
+
+  const nextSegments: string[] = []
+  for (const segment of normalized.replace(/^\/+/, '').split('/')) {
+    if (!segment || segment === '.') {
+      continue
+    }
+
+    // 工作区操作必须限制在根目录内，避免通过 ../ 逃出当前项目。
+    if (segment === '..') {
+      throw new Error('工作区路径不能超出根目录')
+    }
+
+    nextSegments.push(segment)
+  }
+
+  return nextSegments.length > 0 ? `${baseNorm}/${nextSegments.join('/')}` : baseNorm
 }
 
 function inferPrimaryLanguage(structure: ProjectStructure): string | undefined {

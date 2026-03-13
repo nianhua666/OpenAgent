@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalRunRequest, IDETerminalRunResult, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -68,6 +68,14 @@ interface ElectronAPI {
   ideListDirectory: (dirPath: string) => Promise<Array<{ name: string; isDirectory: boolean }> | null>
   ideFileExists: (filePath: string) => Promise<boolean>
   ideFileStat: (filePath: string) => Promise<{ size: number; isFile: boolean; isDirectory: boolean; modifiedAt: number } | null>
+  ideRenameEntry: (fromPath: string, toPath: string) => Promise<boolean>
+  ideCopyEntry: (fromPath: string, toPath: string) => Promise<boolean>
+  ideDeleteEntry: (entryPath: string) => Promise<boolean>
+  ideCreateTerminalSession: (payload: IDETerminalSessionCreateRequest) => Promise<IDETerminalSessionInfo>
+  ideWriteTerminalInput: (payload: IDETerminalInputRequest) => Promise<boolean>
+  ideResizeTerminalSession: (payload: IDETerminalResizeRequest) => Promise<boolean>
+  ideInterruptTerminalSession: (sessionId: string) => Promise<boolean>
+  ideCloseTerminalSession: (sessionId: string) => Promise<boolean>
   ideRunCommand: (payload: IDETerminalRunRequest) => Promise<IDETerminalRunResult>
   ideCancelCommand: (sessionId: string) => Promise<boolean>
   onIdeTerminalEvent: (callback: (payload: IDETerminalEvent) => void) => (() => void)

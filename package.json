@@ -25,6 +25,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "build:clean": "node scripts/build-clean.cjs",
+    "smoke:routes": "node scripts/smoke-routes.cjs",
     "rebuild:native": "electron-builder install-app-deps",
     "postinstall": "npm run rebuild:native",
     "preview": "vite preview",
@@ -38,6 +39,8 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "dayjs": "^1.11.10",
     "echarts": "^5.5.0",
     "fuse.js": "^7.0.0",

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalRunRequest, IDETerminalRunResult, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
 
 // 安全地向渲染进程暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -108,6 +108,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ideListDirectory: (dirPath: string) => ipcRenderer.invoke('ide:listDirectory', dirPath),
   ideFileExists: (filePath: string) => ipcRenderer.invoke('ide:fileExists', filePath),
   ideFileStat: (filePath: string) => ipcRenderer.invoke('ide:fileStat', filePath),
+  ideRenameEntry: (fromPath: string, toPath: string) => ipcRenderer.invoke('ide:renameEntry', fromPath, toPath) as Promise<boolean>,
+  ideCopyEntry: (fromPath: string, toPath: string) => ipcRenderer.invoke('ide:copyEntry', fromPath, toPath) as Promise<boolean>,
+  ideDeleteEntry: (entryPath: string) => ipcRenderer.invoke('ide:deleteEntry', entryPath) as Promise<boolean>,
+  ideCreateTerminalSession: (payload: IDETerminalSessionCreateRequest) => ipcRenderer.invoke('ide:createTerminalSession', payload) as Promise<IDETerminalSessionInfo>,
+  ideWriteTerminalInput: (payload: IDETerminalInputRequest) => ipcRenderer.invoke('ide:writeTerminalInput', payload) as Promise<boolean>,
+  ideResizeTerminalSession: (payload: IDETerminalResizeRequest) => ipcRenderer.invoke('ide:resizeTerminalSession', payload) as Promise<boolean>,
+  ideInterruptTerminalSession: (sessionId: string) => ipcRenderer.invoke('ide:interruptTerminalSession', sessionId) as Promise<boolean>,
+  ideCloseTerminalSession: (sessionId: string) => ipcRenderer.invoke('ide:closeTerminalSession', sessionId) as Promise<boolean>,
   ideRunCommand: (payload: IDETerminalRunRequest) => ipcRenderer.invoke('ide:runCommand', payload) as Promise<IDETerminalRunResult>,
   ideCancelCommand: (sessionId: string) => ipcRenderer.invoke('ide:cancelCommand', sessionId) as Promise<boolean>,
   onIdeTerminalEvent: (callback: (payload: IDETerminalEvent) => void) => {

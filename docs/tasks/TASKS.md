@@ -82,15 +82,18 @@
 |---|------|------|----------|
 | 8.1 | 构建验证 | 已完成 | `npm.cmd run build` |
 | 8.2 | 功能测试 | 进行中 | `/ai`, `/ide`, `/ai-overlay`, `/sub2api`, `node-pty`, `electron/main.ts` |
-| 8.3 | 代码巡检 | 已完成 | `electron/main.ts`, `src/components/ide/IDETerminal.vue`, `src/utils/aiPlanEngine.ts`, `src/utils/aiTools.ts`, `src/views/IDEView.vue` |
+| 8.3 | 代码巡检 | 已完成 | `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/types/index.ts`, `src/components/ide/IDETerminal.vue`, `src/components/ide/IDEPlanPanel.vue`, `src/components/ide/IDEExplorer.vue`, `src/utils/aiPlanEngine.ts`, `src/utils/aiTools.ts`, `src/views/IDEView.vue`, `vite.config.mts` |
 
 ---
 
 ## 当前剩余缺口
 
-- `IDETerminal` 已支持多标签、持久 shell、stdin 持续输入，并在 Electron 运行时优先走 `node-pty`；当前剩余风险主要是缺少 TUI/全屏命令（如 `vim`、`top`）层面的人工回归。
-- IDE 项目计划已支持基于真实工作区快照、diff、失败反馈和上下文摘要的动态重规划，并新增 `ide_replan_plan` 工具与面板入口；剩余工作是继续观察真实长链路开发中的计划稳定性。
-- `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 已完成本地预览路由可达性烟测，Electron 内也已完成 `node-pty` 装载与 PTY spawn 烟测；但 Playwright 浏览器自动化在本机 Chrome 启动阶段退出（exit code 13），所以完整自动化 UI 回归仍待补。
+- `IDETerminal` 已支持多标签、持久 shell、stdin 持续输入、`xterm` 渲染、按键直通与 resize 同步，`vim` / `top` 这类全屏命令也具备前端承载条件；当前剩余风险主要是缺少这类 TUI 场景的人工回归，以及长时间运行命令下的稳定性观察。
+- IDE 项目计划已支持基于真实工作区快照、diff、失败反馈和上下文摘要的动态重规划，并在 `IDEPlanPanel` 中补齐了“计划漂移可见性 + 手动同步基线”能力：用户现在能直接看到当前计划与工作区之间的新增 / 修改 / 删除差异，区分“需要重规划”还是“仅需确认基线”；剩余工作是继续观察复杂冲突、跨阶段返工与多次连续重规划场景下的计划稳定性。
+- `IDEExplorer` 已补齐资源管理器的高频交互闭环：支持 Ctrl/Cmd 多选、Shift 连选、根目录拖放区、目录拖拽移动、批量删除、剪贴板式复制/粘贴与批量重命名；复制会在目标目录中自动规避重名，并在目录自拷贝到子目录这类危险路径上做前置跳过，批量重命名会保留文件扩展名并在提交前预览冲突。当前剩余工作更多偏增量体验优化，例如跨工作区复制提示、更细的复制冲突策略和批量重命名模板增强，不再属于交付阻断项。
+- `IDEPlanPanel` 已把“创建草案”文案改为“生成项目计划”，并显式提示会结合工作区结构、脚本和技术栈自动生成阶段/任务，避免用户误以为这里只会创建空计划；剩余工作是继续通过真实项目验证生成结果的可解释性和任务颗粒度。
+- 构建层已把 `xterm` 相关依赖单独切分到 `terminal-vendor`，避免 IDE 终端能力把主 `vendor` chunk 继续推高；剩余工作是继续观察真实发布包下的加载体积与首屏行为。
+- `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 现在已补齐可复用的 `npm.cmd run smoke:routes` 路由烟测脚本，能在本机自动拉起 `vite preview`、验证关键页面返回 200 并在 Windows 上正确回收 preview 进程树；剩余缺口是完整浏览器 / Electron 交互级自动化回归，当前仍受 Playwright 在本机 Chrome 启动阶段退出（exit code 13）限制。
 
 ---
 
@@ -142,3 +145,23 @@
 | 2026-03-13 | review | Phase 8 巡检：收口 `stores/ai.ts` 计划进度计算重复逻辑，并复核 `IDETerminal`、主进程终端会话管理、动态重规划插入阶段与日志快照链路的一致性 |
 | 2026-03-13 | test | Phase 8 烟测：`npm.cmd run build` 通过；`Invoke-WebRequest` 验证 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 本地预览均返回 200；Electron 运行时完成 `node-pty` import 与 PTY spawn smoke |
 | 2026-03-13 | risk | Phase 8 风险记录：Playwright 浏览器自动化在本机 Chrome 启动阶段退出（exit code 13），因此本轮 UI 回归以路由烟测 + Electron PTY 运行时验证 + 代码巡检为主，后续需补自动化 UI 验证 |
+| 2026-03-13 | review | Phase 8 用户视角深巡检：确认 IDE 终端顶部“停止”按钮在 shell 模式下直接关闭会话不符合用户预期，切标签后缺少输入草稿/命令历史连续性，计划面板“创建草案”文案与真实自动生成逻辑不一致，已列为 UX 阻断项并完成修复 |
+| 2026-03-13 | code | Phase 8 UX 优化：`electron/main.ts` / `preload.ts` / `env.d.ts` 新增 `ideInterruptTerminalSession`，`IDETerminal.vue` 改为 shell 优先发送 Ctrl+C 中断、补齐每标签草稿与命令历史浏览，`IDEPlanPanel.vue` 同步校正文案与生成提示 |
+| 2026-03-13 | code | Phase 8 终端补全：`IDETerminal.vue` 接入 `xterm` 终端画布与按键直通，`electron/main.ts` / `preload.ts` / `env.d.ts` / `types/index.ts` 新增 `ideResizeTerminalSession`，让 PTY cols/rows 跟随前端视口同步，补齐全屏终端类命令的前端承载能力 |
+| 2026-03-13 | review | Phase 8 性能巡检：新增 `vite.config.mts` 中的 `terminal-vendor` chunk 拆分，避免 `xterm` 相关依赖继续推高主 `vendor` 包体；当前构建无新增超限告警，仅保留既有 wasm/runtime warning |
+| 2026-03-13 | build | Phase 8 PTY 视图补全后 `npm.cmd run build` 通过，终端依赖已拆分为独立 `terminal-vendor` chunk |
+| 2026-03-13 | code | Phase 8 资源管理器补全：`IDEExplorer.vue` 新增新建文件 / 新建目录 / 重命名 / 删除动作、目标目录提示、名称校验与焦点态；`IDEView.vue` 接入创建后自动刷新结构与文件自动打开，并在重命名 / 删除时同步处理打开标签；`electron/main.ts` / `preload.ts` / `env.d.ts` / `aiIDEWorkspace.ts` 新增条目重命名与删除链路 |
+| 2026-03-13 | build | Phase 8 资源管理器管理链路接入后 `npm.cmd run build` 通过 |
+| 2026-03-13 | review | Phase 8 用户视角巡检：确认资源管理器高级剩余项集中在批量选择反馈、目录拖拽移动与批量删除闭环；同时要求批量操作不能打断已打开标签路径映射，也不能在父子节点同时选中时重复执行文件系统动作 |
+| 2026-03-13 | code | Phase 8 资源管理器高级补全：`IDEExplorer.vue` 新增 Ctrl/Cmd 多选、Shift 连选、根目录拖放区、目录拖拽移动与批量删除；`IDEView.vue` 接入批量删除 / 移动后的脏文件保护、顶层路径折叠、标签路径重映射与统一结构刷新 |
+| 2026-03-13 | build | Phase 8 资源管理器高级交互补齐后 `npm.cmd run build` 通过 |
+| 2026-03-13 | review | Phase 8 用户视角巡检：确认项目计划虽然已具备动态重规划，但用户仍缺少“当前计划是否已与真实工作区漂移”的可视判断，容易在应当重规划和只需同步基线之间误判 |
+| 2026-03-13 | code | Phase 8 计划稳定性补全：`aiPlanEngine.ts` 导出计划漂移检查与基线同步能力，`IDEPlanPanel.vue` 新增漂移摘要卡片、基线时间与样例文件展示，`IDEView.vue` 在保存 / 刷新 / 重规划后联动刷新计划漂移状态并提供“同步基线”入口 |
+| 2026-03-13 | build | Phase 8 计划漂移可视化与基线同步接入后 `npm.cmd run build` 通过 |
+| 2026-03-13 | code | Phase 8 回归兜底补全：新增 `scripts/smoke-routes.cjs` 与 `npm.cmd run smoke:routes`，自动拉起 `vite preview` 并验证 `/`、`/ai`、`/ide`、`/ai-overlay`、`/sub2api` 返回 200；同时修复 Windows 下 preview 进程树未回收导致脚本挂住的问题 |
+| 2026-03-13 | test | Phase 8 路由烟测脚本验证通过：`npm.cmd run smoke:routes` 已在当前环境完成关键页面可达性检查，并确认 preview 进程能正确退出 |
+| 2026-03-13 | code | Phase 8 资源管理器复制链路补全：`electron/main.ts` / `preload.ts` / `env.d.ts` / `aiIDEWorkspace.ts` 新增 `ide:copyEntry` 复制通道；`IDEView.vue` 接入工作区剪贴板、批量复制、重名避让与目录自拷贝保护；`IDEExplorer.vue` 补齐复制 / 粘贴按钮、快捷键与目标目录提示 |
+| 2026-03-13 | build | Phase 8 资源管理器复制链路接入后 `npm.cmd run build` 通过 |
+| 2026-03-13 | code | Phase 8 资源管理器批量重命名补全：`IDEExplorer.vue` 新增批量重命名面板、查找替换 / 前后缀预览与冲突提示；`IDEView.vue` 接入两阶段临时路径重命名提交，解决多条目互换命名时的循环冲突，并同步迁移已打开标签路径 |
+| 2026-03-13 | review | Phase 8 工作区安全加固：`aiIDEWorkspace.ts` 收紧工作区相对路径解析，禁止通过 `../` 逃出项目根目录，避免异常输入把文件系统操作越界到工作区外 |
+| 2026-03-13 | build | Phase 8 批量重命名与路径守卫接入后 `npm.cmd run build` 通过 |

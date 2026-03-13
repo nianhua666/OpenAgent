@@ -54,17 +54,24 @@
           type="text"
           placeholder="例如 npm run build"
           :disabled="!canTypeIntoActiveTab"
+          @input="handleCommandInput"
+          @keydown.up.prevent="navigateCommandHistory('up')"
+          @keydown.down.prevent="navigateCommandHistory('down')"
           @keydown.enter.exact.prevent="sendCommandToActiveTab"
         />
       </label>
 
       <div class="command-actions">
         <button class="btn btn-primary btn-sm" :disabled="!canSendCommand" @click="sendCommandToActiveTab">发送</button>
-        <button class="btn btn-secondary btn-sm" :disabled="!canStopActiveTab" @click="stopActiveTab">停止</button>
+        <button class="btn btn-secondary btn-sm" :disabled="!canStopActiveTab" @click="stopActiveTab">{{ stopActionLabel }}</button>
         <button class="btn btn-ghost btn-sm" :disabled="!selectedTab || selectedTab.lines.length === 0" @click="copySelectedOutput">复制输出</button>
         <button class="btn btn-ghost btn-sm" :disabled="!canClearTabs" @click="clearClosedTabs">清理已结束</button>
       </div>
     </div>
+
+    <p class="terminal-hint">
+      提示：`↑/↓` 可切换最近命令；点击终端画布后可直接键入、粘贴并运行全屏命令，顶部按钮会优先中断当前 shell 命令。
+    </p>
 
     <div v-if="scripts.length > 0" class="terminal-script-list">
       <button
@@ -79,7 +86,7 @@
       </button>
     </div>
 
-    <div ref="consoleRef" class="terminal-console" :class="{ 'terminal-console--empty': !selectedTab }">
+    <div ref="consoleRef" class="terminal-console" :class="{ 'terminal-console--empty': !selectedTab }" @click="focusActiveTerminal">
       <template v-if="selectedTab">
         <div class="console-headline">
           <div>
@@ -89,16 +96,29 @@
           <span>{{ formatSessionState(selectedTab) }}</span>
         </div>
 
-        <pre
-          v-for="line in selectedTab.lines"
-          :key="line.id"
-          class="console-line"
-          :class="`is-${line.stream}`"
-        >{{ line.text }}</pre>
-
-        <div v-if="selectedTab.lines.length === 0" class="terminal-empty">
-          <p>终端会话已经启动，等待输出。</p>
+        <div v-if="supportsTerminalViewport" class="terminal-viewport-stack">
+          <div
+            v-for="tab in terminalTabs"
+            v-show="tab.id === selectedTab.id"
+            :key="`${tab.id}-viewport`"
+            class="terminal-viewport-pane"
+          >
+            <div :ref="element => setTerminalViewportRef(tab.id, element)" class="terminal-viewport" />
+          </div>
         </div>
+
+        <template v-else>
+          <pre
+            v-for="line in selectedTab.lines"
+            :key="line.id"
+            class="console-line"
+            :class="`is-${line.stream}`"
+          >{{ line.text }}</pre>
+
+          <div v-if="selectedTab.lines.length === 0" class="terminal-empty">
+            <p>终端会话已经启动，等待输出。</p>
+          </div>
+        </template>
       </template>
 
       <div v-else class="terminal-empty">
@@ -111,8 +131,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { IDETerminalEvent, IDETerminalSessionInfo, IDETerminalSessionMode, IDETerminalStatus, IDETerminalStream } from '@/types'
+import '@xterm/xterm/css/xterm.css'
+
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import type { IDETerminalEvent, IDETerminalSessionMode, IDETerminalStatus, IDETerminalStream } from '@/types'
 import { showToast } from '@/utils/toast'
 
 const props = defineProps<{
@@ -142,12 +166,23 @@ interface TerminalTabView {
   signal?: string | null
   error?: string
   lastCommand?: string
+  draftInput: string
+  commandHistory: string[]
+  historyCursor: number
+  pendingViewportChars: number
+  pendingViewportChunks: string[]
   lines: TerminalLine[]
+}
+
+interface TerminalRuntime {
+  terminal: Terminal
+  fitAddon: FitAddon
 }
 
 const ANSI_ESCAPE_PATTERN = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
 const MAX_TERMINAL_LINES = 800
 const MAX_TERMINAL_TABS = 10
+const MAX_PENDING_VIEWPORT_CHARS = 240000
 
 const commandInput = ref('')
 const activeTabId = ref('')
@@ -155,6 +190,12 @@ const creatingTerminal = ref(false)
 const terminalTabs = ref<TerminalTabView[]>([])
 const consoleRef = ref<HTMLElement | null>(null)
 const ignoredSessionIds = new Set<string>()
+const terminalViewportRefs = new Map<string, HTMLDivElement>()
+const terminalRuntimes = new Map<string, TerminalRuntime>()
+
+let removeTerminalListener: (() => void) | null = null
+let terminalResizeObserver: ResizeObserver | null = null
+let observedViewportTabId = ''
 
 function getElectronAPI() {
   return (window as Window & { electronAPI?: Window['electronAPI'] }).electronAPI
@@ -166,13 +207,19 @@ const supportsNativeTerminal = computed(() => {
     electronAPI
     && typeof electronAPI.ideCreateTerminalSession === 'function'
     && typeof electronAPI.ideWriteTerminalInput === 'function'
+    && typeof electronAPI.ideResizeTerminalSession === 'function'
+    && typeof electronAPI.ideInterruptTerminalSession === 'function'
     && typeof electronAPI.ideCloseTerminalSession === 'function'
     && typeof electronAPI.ideCancelCommand === 'function'
-    && typeof electronAPI.onIdeTerminalEvent === 'function'
+    && typeof electronAPI.onIdeTerminalEvent === 'function',
   )
 })
+const supportsTerminalViewport = computed(() => supportsNativeTerminal.value)
 const selectedTab = computed(() => terminalTabs.value.find(tab => tab.id === activeTabId.value) ?? terminalTabs.value[0] ?? null)
-const canCreateSession = computed(() => Boolean(supportsNativeTerminal.value && props.workspacePath && !creatingTerminal.value))
+const canCreateSession = computed(() => {
+  const activeSessionCount = terminalTabs.value.filter(tab => tab.status === 'running' || tab.status === 'starting').length
+  return Boolean(supportsNativeTerminal.value && props.workspacePath && !creatingTerminal.value && activeSessionCount < MAX_TERMINAL_TABS)
+})
 const canTypeIntoActiveTab = computed(() => {
   return Boolean(
     supportsNativeTerminal.value
@@ -200,8 +247,13 @@ const statusTone = computed(() => {
   if (selectedTab.value?.status === 'running' || creatingTerminal.value) return 'running'
   return 'ready'
 })
+const stopActionLabel = computed(() => {
+  if (!selectedTab.value) {
+    return '停止'
+  }
 
-let removeTerminalListener: (() => void) | null = null
+  return selectedTab.value.mode === 'shell' ? '中断' : '停止'
+})
 
 watch(
   () => props.workspacePath,
@@ -218,10 +270,30 @@ watch(
   },
 )
 
+watch(activeTabId, async (nextTabId, previousTabId) => {
+  const previousTab = previousTabId ? findTab(previousTabId) : null
+  if (previousTab) {
+    previousTab.draftInput = commandInput.value
+  }
+
+  const nextTab = nextTabId ? findTab(nextTabId) : selectedTab.value
+  commandInput.value = nextTab?.draftInput ?? ''
+  await ensureSelectedTerminalViewport()
+})
+
 onMounted(() => {
   const electronAPI = getElectronAPI()
   if (supportsNativeTerminal.value && electronAPI) {
     removeTerminalListener = electronAPI.onIdeTerminalEvent(handleTerminalEvent)
+  }
+
+  if (typeof ResizeObserver !== 'undefined') {
+    terminalResizeObserver = new ResizeObserver(() => {
+      const currentTab = selectedTab.value
+      if (currentTab) {
+        void syncTerminalViewport(currentTab.id)
+      }
+    })
   }
 
   if (props.workspacePath) {
@@ -233,10 +305,18 @@ onBeforeUnmount(() => {
   void resetTerminalTabs()
   removeTerminalListener?.()
   removeTerminalListener = null
+  detachObservedViewport()
+  terminalResizeObserver?.disconnect()
+  terminalResizeObserver = null
+  disposeAllTerminalRuntimes()
 })
 
 function normalizeChunk(text: string) {
   return text.replace(ANSI_ESCAPE_PATTERN, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function normalizeViewportSystemChunk(text: string) {
+  return text.replace(/\r?\n/g, '\r\n')
 }
 
 function findTab(sessionId: string) {
@@ -261,6 +341,11 @@ function ensureTabSession(payload: {
       shell: payload.shell,
       status: 'starting',
       startedAt: payload.timestamp,
+      draftInput: '',
+      commandHistory: [],
+      historyCursor: 0,
+      pendingViewportChars: 0,
+      pendingViewportChunks: [],
       lines: [],
     }
     terminalTabs.value.unshift(tab)
@@ -272,6 +357,7 @@ function ensureTabSession(payload: {
   tab.mode = payload.mode
   tab.shell = payload.shell
   tab.startedAt = payload.timestamp
+  tab.historyCursor = Math.min(tab.historyCursor, tab.commandHistory.length)
 
   if (!activeTabId.value) {
     activeTabId.value = tab.id
@@ -302,11 +388,16 @@ function trimTerminalTabs() {
     .find(item => item.tab.status !== 'running' && item.tab.status !== 'starting')
 
   if (removable) {
+    disposeTerminalTabResources(removable.tab.id)
     terminalTabs.value.splice(removable.index, 1)
     return
   }
 
-  terminalTabs.value.splice(MAX_TERMINAL_TABS)
+  const overflowTabs = terminalTabs.value.slice(MAX_TERMINAL_TABS)
+  if (overflowTabs.every(tab => tab.status !== 'running' && tab.status !== 'starting')) {
+    overflowTabs.forEach(tab => disposeTerminalTabResources(tab.id))
+    terminalTabs.value.splice(MAX_TERMINAL_TABS)
+  }
 }
 
 function appendLine(tab: TerminalTabView, stream: IDETerminalStream, text: string, timestamp: number) {
@@ -336,13 +427,50 @@ function appendLine(tab: TerminalTabView, stream: IDETerminalStream, text: strin
     }
   }
 
-  if (activeTabId.value === tab.id) {
+  if (activeTabId.value === tab.id && !supportsTerminalViewport.value) {
     void scrollConsoleToBottom()
   }
 }
 
+function queueViewportChunk(tab: TerminalTabView, chunk: string) {
+  if (!chunk) {
+    return
+  }
+
+  const runtime = terminalRuntimes.get(tab.id)
+  if (runtime) {
+    runtime.terminal.write(chunk)
+    return
+  }
+
+  tab.pendingViewportChunks.push(chunk)
+  tab.pendingViewportChars += chunk.length
+
+  while (tab.pendingViewportChars > MAX_PENDING_VIEWPORT_CHARS && tab.pendingViewportChunks.length > 0) {
+    const removed = tab.pendingViewportChunks.shift()
+    tab.pendingViewportChars -= removed?.length ?? 0
+  }
+}
+
+function flushViewportBacklog(tab: TerminalTabView) {
+  if (tab.pendingViewportChunks.length === 0) {
+    return
+  }
+
+  const runtime = terminalRuntimes.get(tab.id)
+  if (!runtime) {
+    return
+  }
+
+  runtime.terminal.write(tab.pendingViewportChunks.join(''))
+  tab.pendingViewportChunks = []
+  tab.pendingViewportChars = 0
+}
+
 function appendSystemLine(tab: TerminalTabView, text: string) {
-  appendLine(tab, 'system', text.endsWith('\n') ? text : `${text}\n`, Date.now())
+  const normalizedText = text.endsWith('\n') ? text : `${text}\n`
+  appendLine(tab, 'system', normalizedText, Date.now())
+  queueViewportChunk(tab, normalizeViewportSystemChunk(normalizedText))
 }
 
 async function scrollConsoleToBottom() {
@@ -368,6 +496,12 @@ async function createShellTab() {
     return null
   }
 
+  const activeSessionCount = terminalTabs.value.filter(tab => tab.status === 'running' || tab.status === 'starting').length
+  if (activeSessionCount >= MAX_TERMINAL_TABS) {
+    showToast('warning', `最多同时保留 ${MAX_TERMINAL_TABS} 个活动终端，请先关闭不再使用的会话`)
+    return null
+  }
+
   creatingTerminal.value = true
   try {
     const session = await electronAPI.ideCreateTerminalSession({
@@ -387,6 +521,8 @@ async function createShellTab() {
     tab.status = 'running'
     activeTabId.value = tab.id
     appendSystemLine(tab, `[system] 已连接交互式终端：${session.shell}`)
+    await ensureSelectedTerminalViewport()
+    focusTerminalTab(tab.id)
     return tab
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '终端初始化失败')
@@ -427,8 +563,9 @@ async function sendCommandToActiveTab() {
     return
   }
 
+  pushCommandHistory(targetTab, normalizedCommand)
   targetTab.lastCommand = normalizedCommand
-  appendSystemLine(targetTab, `$ ${normalizedCommand}`)
+  targetTab.draftInput = ''
   commandInput.value = ''
   activeTabId.value = targetTab.id
 }
@@ -439,7 +576,8 @@ async function runPreset(command: string) {
 }
 
 async function stopActiveTab() {
-  if (!selectedTab.value) {
+  const currentTab = selectedTab.value
+  if (!currentTab) {
     return
   }
 
@@ -448,16 +586,21 @@ async function stopActiveTab() {
     return
   }
 
-  const stopped = selectedTab.value.mode === 'shell'
-    ? await electronAPI.ideCloseTerminalSession(selectedTab.value.id)
-    : await electronAPI.ideCancelCommand(selectedTab.value.id)
+  const stopped = currentTab.mode === 'shell'
+    ? await electronAPI.ideInterruptTerminalSession(currentTab.id)
+    : await electronAPI.ideCancelCommand(currentTab.id)
 
   if (!stopped) {
-    showToast('error', '终止终端失败，请稍后重试')
+    showToast('error', currentTab.mode === 'shell' ? '中断当前命令失败，请稍后重试' : '终止终端失败，请稍后重试')
     return
   }
 
-  appendSystemLine(selectedTab.value, '[system] 已发送停止请求，等待进程退出...')
+  appendSystemLine(
+    currentTab,
+    currentTab.mode === 'shell'
+      ? '[system] 已发送中断信号（Ctrl+C），等待前台命令响应...'
+      : '[system] 已发送停止请求，等待进程退出...',
+  )
 }
 
 async function closeTerminalTab(sessionId: string) {
@@ -483,12 +626,27 @@ async function closeTerminalTab(sessionId: string) {
   removeTab(sessionId)
 }
 
+function disposeTerminalRuntime(sessionId: string) {
+  terminalRuntimes.get(sessionId)?.terminal.dispose()
+  terminalRuntimes.delete(sessionId)
+}
+
+function disposeTerminalTabResources(sessionId: string) {
+  if (observedViewportTabId === sessionId) {
+    detachObservedViewport()
+  }
+
+  terminalViewportRefs.delete(sessionId)
+  disposeTerminalRuntime(sessionId)
+}
+
 function removeTab(sessionId: string) {
   const currentIndex = terminalTabs.value.findIndex(tab => tab.id === sessionId)
   if (currentIndex === -1) {
     return
   }
 
+  disposeTerminalTabResources(sessionId)
   terminalTabs.value.splice(currentIndex, 1)
   if (activeTabId.value === sessionId) {
     activeTabId.value = terminalTabs.value[currentIndex]?.id || terminalTabs.value[currentIndex - 1]?.id || terminalTabs.value[0]?.id || ''
@@ -499,6 +657,7 @@ async function resetTerminalTabs() {
   const sessionIds = terminalTabs.value
     .filter(tab => tab.status === 'running')
     .map(tab => tab.id)
+
   for (const sessionId of sessionIds) {
     ignoredSessionIds.add(sessionId)
     const tab = findTab(sessionId)
@@ -510,12 +669,18 @@ async function resetTerminalTabs() {
     }
   }
 
+  detachObservedViewport()
+  disposeAllTerminalRuntimes()
+  terminalViewportRefs.clear()
   terminalTabs.value = []
   activeTabId.value = ''
   commandInput.value = ''
 }
 
 function clearClosedTabs() {
+  const removedTabs = terminalTabs.value.filter(tab => tab.status !== 'running' && tab.status !== 'starting')
+  removedTabs.forEach(tab => disposeTerminalTabResources(tab.id))
+
   const runningIds = new Set(
     terminalTabs.value
       .filter(tab => tab.status === 'running' || tab.status === 'starting')
@@ -526,6 +691,52 @@ function clearClosedTabs() {
   if (!activeTabId.value || !runningIds.has(activeTabId.value)) {
     activeTabId.value = terminalTabs.value[0]?.id || ''
   }
+}
+
+function handleCommandInput() {
+  if (!selectedTab.value) {
+    return
+  }
+
+  selectedTab.value.draftInput = commandInput.value
+  selectedTab.value.historyCursor = selectedTab.value.commandHistory.length
+}
+
+function pushCommandHistory(tab: TerminalTabView, command: string) {
+  const lastCommand = tab.commandHistory[tab.commandHistory.length - 1]
+  if (lastCommand !== command) {
+    tab.commandHistory.push(command)
+    if (tab.commandHistory.length > 50) {
+      tab.commandHistory.splice(0, tab.commandHistory.length - 50)
+    }
+  }
+
+  tab.historyCursor = tab.commandHistory.length
+}
+
+function navigateCommandHistory(direction: 'up' | 'down') {
+  const tab = selectedTab.value
+  if (!tab || tab.mode !== 'shell' || tab.commandHistory.length === 0) {
+    return
+  }
+
+  if (direction === 'up') {
+    if (tab.historyCursor === tab.commandHistory.length) {
+      tab.draftInput = commandInput.value
+    }
+    tab.historyCursor = Math.max(tab.historyCursor - 1, 0)
+    commandInput.value = tab.commandHistory[tab.historyCursor] || ''
+    return
+  }
+
+  if (tab.historyCursor >= tab.commandHistory.length - 1) {
+    tab.historyCursor = tab.commandHistory.length
+    commandInput.value = tab.draftInput
+    return
+  }
+
+  tab.historyCursor += 1
+  commandInput.value = tab.commandHistory[tab.historyCursor] || ''
 }
 
 async function copySelectedOutput() {
@@ -571,6 +782,7 @@ function handleTerminalEvent(event: IDETerminalEvent) {
 
   if (event.type === 'data' && event.chunk) {
     appendLine(tab, event.stream || 'stdout', event.chunk, event.timestamp)
+    queueViewportChunk(tab, event.chunk)
     return
   }
 
@@ -593,6 +805,187 @@ function handleTerminalEvent(event: IDETerminalEvent) {
   } else {
     appendSystemLine(tab, `[system] 会话异常结束，exit ${tab.exitCode ?? 'unknown'}`)
   }
+}
+
+function buildTerminalRuntime(sessionId: string) {
+  const terminal = new Terminal({
+    cursorBlink: true,
+    convertEol: false,
+    fontFamily: 'Cascadia Code, Consolas, monospace',
+    fontSize: 13,
+    lineHeight: 1.45,
+    scrollback: 3000,
+    allowTransparency: true,
+    theme: {
+      background: '#0b1220',
+      foreground: '#f8fafc',
+      cursor: '#e2e8f0',
+      selectionBackground: 'rgba(147, 197, 253, 0.28)',
+      black: '#0f172a',
+      red: '#fca5a5',
+      green: '#86efac',
+      yellow: '#fde68a',
+      blue: '#93c5fd',
+      magenta: '#f0abfc',
+      cyan: '#67e8f9',
+      white: '#f8fafc',
+      brightBlack: '#64748b',
+      brightRed: '#fda4af',
+      brightGreen: '#bbf7d0',
+      brightYellow: '#fef3c7',
+      brightBlue: '#bfdbfe',
+      brightMagenta: '#f5d0fe',
+      brightCyan: '#a5f3fc',
+      brightWhite: '#ffffff',
+    },
+  })
+  const fitAddon = new FitAddon()
+  terminal.loadAddon(fitAddon)
+
+  // 直接透传键盘输入，才能覆盖 vim、top 这类依赖原始按键流的交互。
+  terminal.onData(data => {
+    const electronAPI = getElectronAPI()
+    const tab = findTab(sessionId)
+    if (!electronAPI || !tab || tab.mode !== 'shell' || tab.status !== 'running') {
+      return
+    }
+
+    void electronAPI.ideWriteTerminalInput({
+      sessionId,
+      input: data,
+    })
+  })
+
+  return {
+    terminal,
+    fitAddon,
+  }
+}
+
+function setTerminalViewportRef(sessionId: string, element: Element | ComponentPublicInstance | null) {
+  if (element instanceof HTMLDivElement) {
+    terminalViewportRefs.set(sessionId, element)
+    if (sessionId === activeTabId.value) {
+      void ensureSelectedTerminalViewport()
+    }
+    return
+  }
+
+  if (observedViewportTabId === sessionId) {
+    detachObservedViewport()
+  }
+
+  terminalViewportRefs.delete(sessionId)
+}
+
+async function ensureSelectedTerminalViewport() {
+  const currentTab = selectedTab.value
+  if (!currentTab || !supportsTerminalViewport.value) {
+    detachObservedViewport()
+    return
+  }
+
+  await nextTick()
+  const viewport = terminalViewportRefs.get(currentTab.id)
+  if (!viewport) {
+    return
+  }
+
+  let runtime = terminalRuntimes.get(currentTab.id)
+  if (!runtime) {
+    runtime = buildTerminalRuntime(currentTab.id)
+    runtime.terminal.open(viewport)
+    terminalRuntimes.set(currentTab.id, runtime)
+    flushViewportBacklog(currentTab)
+  }
+
+  observeViewport(currentTab.id)
+  await syncTerminalViewport(currentTab.id)
+}
+
+function observeViewport(sessionId: string) {
+  if (!terminalResizeObserver) {
+    return
+  }
+
+  const viewport = terminalViewportRefs.get(sessionId)
+  if (!viewport) {
+    detachObservedViewport()
+    return
+  }
+
+  if (observedViewportTabId && observedViewportTabId !== sessionId) {
+    const previousViewport = terminalViewportRefs.get(observedViewportTabId)
+    if (previousViewport) {
+      terminalResizeObserver.unobserve(previousViewport)
+    }
+  }
+
+  terminalResizeObserver.observe(viewport)
+  observedViewportTabId = sessionId
+}
+
+function detachObservedViewport() {
+  if (!terminalResizeObserver || !observedViewportTabId) {
+    observedViewportTabId = ''
+    return
+  }
+
+  const viewport = terminalViewportRefs.get(observedViewportTabId)
+  if (viewport) {
+    terminalResizeObserver.unobserve(viewport)
+  }
+
+  observedViewportTabId = ''
+}
+
+async function syncTerminalViewport(sessionId: string) {
+  const runtime = terminalRuntimes.get(sessionId)
+  if (!runtime) {
+    return
+  }
+
+  await nextTick()
+
+  try {
+    runtime.fitAddon.fit()
+  } catch {
+    return
+  }
+
+  const tab = findTab(sessionId)
+  if (!tab || tab.mode !== 'shell' || tab.status !== 'running') {
+    return
+  }
+
+  const electronAPI = getElectronAPI()
+  if (!electronAPI?.ideResizeTerminalSession || runtime.terminal.cols <= 0 || runtime.terminal.rows <= 0) {
+    return
+  }
+
+  await electronAPI.ideResizeTerminalSession({
+    sessionId,
+    cols: runtime.terminal.cols,
+    rows: runtime.terminal.rows,
+  })
+}
+
+function focusTerminalTab(sessionId: string) {
+  terminalRuntimes.get(sessionId)?.terminal.focus()
+}
+
+function focusActiveTerminal() {
+  const currentTab = selectedTab.value
+  if (!currentTab) {
+    return
+  }
+
+  focusTerminalTab(currentTab.id)
+}
+
+function disposeAllTerminalRuntimes() {
+  terminalRuntimes.forEach(runtime => runtime.terminal.dispose())
+  terminalRuntimes.clear()
 }
 
 function formatTabMeta(tab: TerminalTabView) {
@@ -687,9 +1080,17 @@ function formatSessionState(tab: TerminalTabView) {
   }
 }
 
-.terminal-summary {
+.terminal-summary,
+.terminal-hint,
+.summary-chip,
+.tab-copy small,
+.script-chip span {
   color: var(--text-muted);
   font-size: $font-xs;
+}
+
+.terminal-hint {
+  line-height: 1.6;
 }
 
 .summary-chip {
@@ -699,9 +1100,15 @@ function formatSessionState(tab: TerminalTabView) {
   white-space: nowrap;
 }
 
-.terminal-tab-strip {
+.terminal-tab-strip,
+.command-actions,
+.tab-actions {
   display: flex;
+  align-items: center;
   gap: $spacing-xs;
+}
+
+.terminal-tab-strip {
   overflow-x: auto;
   padding-bottom: 2px;
 }
@@ -716,8 +1123,8 @@ function formatSessionState(tab: TerminalTabView) {
   border: 1px solid var(--border);
   border-radius: $border-radius-sm;
   background: rgba(255, 255, 255, 0.5);
-  text-align: left;
   color: var(--text-primary);
+  text-align: left;
   transition: transform $transition-fast, border-color $transition-fast, background $transition-fast;
 
   &.active {
@@ -735,21 +1142,19 @@ function formatSessionState(tab: TerminalTabView) {
   gap: 4px;
 
   strong,
-  small {
+  small,
+  span {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  small {
-    color: var(--text-muted);
-  }
 }
 
-.tab-actions {
-  display: flex;
-  align-items: center;
+.tab-action,
+.script-chip,
+.command-input input {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
 }
 
 .tab-action {
@@ -792,7 +1197,6 @@ function formatSessionState(tab: TerminalTabView) {
     border-radius: $border-radius-sm;
     background: rgba(255, 255, 255, 0.72);
     color: var(--text-primary);
-    font-family: 'Cascadia Code', 'Consolas', monospace;
     font-size: $font-sm;
 
     &:focus {
@@ -803,13 +1207,6 @@ function formatSessionState(tab: TerminalTabView) {
   }
 }
 
-.command-actions {
-  display: flex;
-  align-items: center;
-  gap: $spacing-xs;
-  flex-wrap: wrap;
-}
-
 .terminal-script-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -818,9 +1215,9 @@ function formatSessionState(tab: TerminalTabView) {
 
 .script-chip {
   display: flex;
+  align-items: flex-start;
   flex-direction: column;
   gap: 4px;
-  align-items: flex-start;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: $border-radius-sm;
@@ -840,26 +1237,14 @@ function formatSessionState(tab: TerminalTabView) {
     cursor: not-allowed;
     opacity: 0.55;
   }
-
-  strong,
-  span {
-    display: block;
-    width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  span {
-    color: var(--text-muted);
-    font-size: $font-xs;
-  }
 }
 
 .terminal-console {
+  display: flex;
+  flex-direction: column;
   min-height: 240px;
   max-height: 360px;
-  overflow: auto;
+  overflow: hidden;
   padding: $spacing-md;
   border-radius: $border-radius-sm;
   background:
@@ -871,10 +1256,22 @@ function formatSessionState(tab: TerminalTabView) {
   line-height: 1.6;
 }
 
-.terminal-console--empty {
+.terminal-console--empty,
+.terminal-empty {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.terminal-empty {
+  min-height: 160px;
+  text-align: center;
+  color: rgba(226, 232, 240, 0.76);
+
+  p {
+    max-width: 420px;
+    line-height: 1.8;
+  }
 }
 
 .console-headline {
@@ -903,6 +1300,30 @@ function formatSessionState(tab: TerminalTabView) {
   }
 }
 
+.terminal-viewport-stack,
+.terminal-viewport-pane,
+.terminal-viewport {
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+}
+
+.terminal-viewport-stack {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-viewport-pane {
+  display: flex;
+  flex: 1;
+}
+
+.terminal-viewport {
+  min-height: 240px;
+  cursor: text;
+}
+
 .console-line {
   margin: 0;
   white-space: pre-wrap;
@@ -921,18 +1342,16 @@ function formatSessionState(tab: TerminalTabView) {
   }
 }
 
-.terminal-empty {
-  display: flex;
-  min-height: 160px;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: rgba(226, 232, 240, 0.76);
+:deep(.xterm) {
+  height: 100%;
+}
 
-  p {
-    max-width: 420px;
-    line-height: 1.8;
-  }
+:deep(.xterm-viewport) {
+  overflow-y: auto !important;
+}
+
+:deep(.xterm-screen) {
+  width: 100% !important;
 }
 
 @media (max-width: 960px) {

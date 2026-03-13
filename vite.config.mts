@@ -108,6 +108,13 @@ function createManualChunks(id: string) {
   }
 
   if (
+    normalizedId.includes('/@xterm/xterm/') ||
+    normalizedId.includes('/@xterm/addon-fit/')
+  ) {
+    return 'terminal-vendor'
+  }
+
+  if (
     normalizedId.includes('/@vue/') ||
     normalizedId.includes('/vue-router/') ||
     normalizedId.includes('/pinia/')

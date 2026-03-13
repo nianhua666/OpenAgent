@@ -11,7 +11,7 @@
         <button class="mode-pill ghost" @click="openAgentView">Agent</button>
         <button class="mode-pill active">IDE</button>
         <button class="btn btn-secondary btn-sm" @click="openWorkspacePicker">{{ workspace ? '切换工作区' : '打开工作区' }}</button>
-        <button class="btn btn-ghost btn-sm" :disabled="!workspace || refreshingWorkspace" @click="refreshWorkspaceState">刷新结构</button>
+        <button class="btn btn-ghost btn-sm" :disabled="!workspace || refreshingWorkspace" @click="refreshWorkspaceState()">刷新结构</button>
       </div>
     </section>
 
@@ -38,7 +38,17 @@
           :workspace="workspace"
           :active-path="activeFilePath"
           :open-paths="openTabPaths"
+          :clipboard-count="clipboardCount"
           @open-file="openFile"
+          @create-file="handleCreateFile"
+          @create-directory="handleCreateDirectory"
+          @copy-entries="handleCopyEntries"
+          @paste-entries="handlePasteEntries"
+          @rename-entry="handleRenameEntry"
+          @rename-entries="handleRenameEntries"
+          @delete-entry="handleDeleteEntry"
+          @delete-entries="handleDeleteEntries"
+          @move-entries="handleMoveEntries"
           @refresh="refreshWorkspaceState"
           @open-workspace="openWorkspacePicker"
         />
@@ -68,9 +78,12 @@
             :plans="workspacePlans"
             :selected-plan-id="selectedPlanId"
             :replanning="replanningPlan"
+            :syncing-baseline="syncingPlanBaseline"
+            :selected-plan-drift="selectedPlanDrift"
             @select-plan="selectedPlanId = $event"
             @create-plan="createGeneratedPlanDraft"
             @replan-plan="handleReplanPlan"
+            @sync-plan-baseline="handleSyncPlanBaseline"
           />
 
           <IDEDevLog :plan="selectedPlan" />
@@ -101,8 +114,9 @@ import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
-import { workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
-import { flushPlanToWorkspace, generateInitialPlanPhases, recordPlanWorkspaceSnapshot, replanProjectPlan } from '@/utils/aiPlanEngine'
+import type { ProjectPlanDriftSummary } from '@/types'
+import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
+import { flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
 
 interface EditorTabState {
@@ -114,6 +128,32 @@ interface EditorTabState {
   error: string
 }
 
+interface ExplorerEntryPayload {
+  path: string
+  entryType: 'file' | 'directory'
+}
+
+interface ExplorerDeleteEntriesPayload {
+  entries: ExplorerEntryPayload[]
+}
+
+interface ExplorerCopyEntriesPayload {
+  entries: ExplorerEntryPayload[]
+}
+
+interface ExplorerPasteEntriesPayload {
+  targetDirectory: string
+}
+
+interface ExplorerRenameEntriesPayload {
+  entries: Array<{ from: string; to: string; entryType: 'file' | 'directory' }>
+}
+
+interface ExplorerMoveEntriesPayload {
+  sources: string[]
+  targetDirectory: string
+}
+
 type WorkspacePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
 const aiStore = useAIStore()
@@ -122,9 +162,14 @@ const router = useRouter()
 const editorTabs = ref<EditorTabState[]>([])
 const activeFilePath = ref('')
 const terminalScripts = ref<Array<{ name: string; command: string }>>([])
+const explorerClipboardEntries = ref<ExplorerEntryPayload[]>([])
 const selectedPlanId = ref('')
 const refreshingWorkspace = ref(false)
 const replanningPlan = ref(false)
+const syncingPlanBaseline = ref(false)
+const selectedPlanDrift = ref<ProjectPlanDriftSummary | null>(null)
+let selectedPlanDriftRequestId = 0
+let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspacePlans = computed(() => {
@@ -140,6 +185,7 @@ const selectedPlan = computed(() => {
   return workspacePlans.value.find(plan => plan.id === selectedPlanId.value) ?? workspacePlans.value[0] ?? null
 })
 const openTabPaths = computed(() => editorTabs.value.map(tab => tab.path))
+const clipboardCount = computed(() => explorerClipboardEntries.value.length)
 const dirtyFileCount = computed(() => editorTabs.value.filter(tab => tab.content !== tab.savedContent).length)
 const activeTab = computed(() => editorTabs.value.find(tab => tab.path === activeFilePath.value) ?? null)
 
@@ -152,8 +198,10 @@ watch(
 
     editorTabs.value = []
     activeFilePath.value = ''
+    explorerClipboardEntries.value = []
     selectedPlanId.value = workspacePlans.value[0]?.id || ''
     await loadWorkspaceScripts()
+    await refreshSelectedPlanDrift({ silent: true })
   },
   { immediate: true },
 )
@@ -164,9 +212,24 @@ watch(workspacePlans, plans => {
   }
 })
 
+watch(
+  () => [workspace.value?.id || '', selectedPlanId.value, workspacePlans.value.length],
+  () => {
+    void refreshSelectedPlanDrift({ silent: true })
+  },
+  { immediate: true },
+)
+
+watch(dirtyFileCount, (nextCount, previousCount) => {
+  if (nextCount < previousCount) {
+    scheduleSelectedPlanDriftRefresh()
+  }
+})
+
 onMounted(async () => {
   aiStore.setAgentMode('ide')
   await loadWorkspaceScripts()
+  await refreshSelectedPlanDrift({ silent: true })
 })
 
 function openAgentView() {
@@ -197,7 +260,7 @@ async function openWorkspacePicker() {
   showToast('success', `已打开工作区：${nextWorkspace.name}`)
 }
 
-async function refreshWorkspaceState() {
+async function refreshWorkspaceState(options?: { silent?: boolean }) {
   if (!workspace.value) {
     return
   }
@@ -206,7 +269,10 @@ async function refreshWorkspaceState() {
   try {
     await refreshWorkspaceStructure(workspace.value)
     await loadWorkspaceScripts()
-    showToast('success', '工作区结构已刷新')
+    await refreshSelectedPlanDrift({ silent: true })
+    if (!options?.silent) {
+      showToast('success', '工作区结构已刷新')
+    }
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '刷新工作区失败')
   } finally {
@@ -275,6 +341,46 @@ function buildScriptCommand(packageManager: WorkspacePackageManager, name: strin
   }
 
   return `npm run ${name}`
+}
+
+async function refreshSelectedPlanDrift(options?: { silent?: boolean }) {
+  const currentWorkspace = workspace.value
+  const currentPlan = selectedPlan.value
+  const requestId = ++selectedPlanDriftRequestId
+
+  if (!currentWorkspace || !currentPlan) {
+    selectedPlanDrift.value = null
+    return
+  }
+
+  try {
+    const drift = await inspectPlanWorkspaceDrift(currentWorkspace, currentPlan.id)
+    if (requestId !== selectedPlanDriftRequestId) {
+      return
+    }
+
+    selectedPlanDrift.value = drift
+  } catch (error) {
+    if (requestId !== selectedPlanDriftRequestId) {
+      return
+    }
+
+    selectedPlanDrift.value = null
+    if (!options?.silent) {
+      showToast('error', error instanceof Error ? error.message : '检查计划漂移失败')
+    }
+  }
+}
+
+function scheduleSelectedPlanDriftRefresh() {
+  if (selectedPlanDriftTimer) {
+    clearTimeout(selectedPlanDriftTimer)
+  }
+
+  selectedPlanDriftTimer = setTimeout(() => {
+    selectedPlanDriftTimer = null
+    void refreshSelectedPlanDrift({ silent: true })
+  }, 120)
 }
 
 async function openFile(path: string) {
@@ -354,6 +460,7 @@ async function saveActiveTab() {
   }
 
   activeTab.value.savedContent = activeTab.value.content
+  await refreshSelectedPlanDrift({ silent: true })
   showToast('success', `已保存：${activeTab.value.path}`)
 }
 
@@ -377,6 +484,658 @@ async function saveAllTabs() {
   }
 
   showToast('success', `已保存 ${dirtyTabs.length} 个文件`)
+}
+
+function normalizeWorkspaceRelativePath(path: string) {
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
+}
+
+function isSameOrNestedPath(candidatePath: string, targetPath: string) {
+  return candidatePath === targetPath || candidatePath.startsWith(`${targetPath}/`)
+}
+
+function normalizeTopLevelWorkspacePaths(paths: string[]) {
+  const uniquePaths = Array.from(new Set(paths.map(normalizeWorkspaceRelativePath).filter(Boolean)))
+    .sort((left, right) => left.length - right.length || left.localeCompare(right, 'zh-CN', { numeric: true }))
+
+  return uniquePaths.filter(path => !uniquePaths.some(other => other !== path && path.startsWith(`${other}/`)))
+}
+
+function getPathBaseName(path: string) {
+  const segments = normalizeWorkspaceRelativePath(path).split('/').filter(Boolean)
+  return segments[segments.length - 1] || ''
+}
+
+function getPathParent(path: string) {
+  const normalized = normalizeWorkspaceRelativePath(path)
+  const segments = normalized.split('/').filter(Boolean)
+  if (segments.length <= 1) {
+    return ''
+  }
+
+  return segments.slice(0, -1).join('/')
+}
+
+function buildWorkspaceTargetPath(targetDirectory: string, sourcePath: string) {
+  const baseName = getPathBaseName(sourcePath)
+  return targetDirectory ? `${targetDirectory}/${baseName}` : baseName
+}
+
+function splitWorkspaceCopyName(baseName: string, entryType: 'file' | 'directory') {
+  if (entryType === 'directory') {
+    return { stem: baseName, extension: '' }
+  }
+
+  const lastDotIndex = baseName.lastIndexOf('.')
+  if (lastDotIndex <= 0) {
+    return { stem: baseName, extension: '' }
+  }
+
+  return {
+    stem: baseName.slice(0, lastDotIndex),
+    extension: baseName.slice(lastDotIndex),
+  }
+}
+
+function buildWorkspaceCopyVariantName(baseName: string, entryType: 'file' | 'directory', copyIndex: number) {
+  const { stem, extension } = splitWorkspaceCopyName(baseName, entryType)
+  const suffix = copyIndex <= 1 ? ' copy' : ` copy ${copyIndex}`
+  return `${stem}${suffix}${extension}`
+}
+
+function buildWorkspaceCopyTargetPath(
+  sourcePath: string,
+  entryType: 'file' | 'directory',
+  targetDirectory: string,
+  occupiedPaths: Set<string>,
+  reservedPaths: Set<string>,
+) {
+  const baseName = getPathBaseName(sourcePath)
+  const directTargetPath = buildWorkspaceTargetPath(targetDirectory, sourcePath)
+  const isTaken = (candidatePath: string) => occupiedPaths.has(candidatePath) || reservedPaths.has(candidatePath)
+
+  if (directTargetPath && directTargetPath !== sourcePath && !isTaken(directTargetPath)) {
+    return directTargetPath
+  }
+
+  for (let copyIndex = 1; copyIndex < 1000; copyIndex += 1) {
+    const candidateName = buildWorkspaceCopyVariantName(baseName, entryType, copyIndex)
+    const candidatePath = targetDirectory ? `${targetDirectory}/${candidateName}` : candidateName
+    if (candidatePath !== sourcePath && !isTaken(candidatePath)) {
+      return candidatePath
+    }
+  }
+
+  return ''
+}
+
+function sanitizeWorkspaceTempName(name: string) {
+  const sanitized = name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return sanitized || 'entry'
+}
+
+async function buildWorkspaceRenameTempPath(
+  workspaceState: NonNullable<typeof workspace.value>,
+  sourcePath: string,
+  occupiedPaths: Set<string>,
+  reservedPaths: Set<string>,
+) {
+  const parentPath = getPathParent(sourcePath)
+  const sourceName = sanitizeWorkspaceTempName(getPathBaseName(sourcePath))
+  const timestampToken = Date.now().toString(36)
+
+  for (let attempt = 1; attempt < 1000; attempt += 1) {
+    const candidateName = `.__openagent_tmp__${sourceName}__${timestampToken}_${attempt}`
+    const candidatePath = parentPath ? `${parentPath}/${candidateName}` : candidateName
+    if (occupiedPaths.has(candidatePath) || reservedPaths.has(candidatePath)) {
+      continue
+    }
+
+    if (await workspaceFileExists(workspaceState, candidatePath)) {
+      continue
+    }
+
+    reservedPaths.add(candidatePath)
+    return candidatePath
+  }
+
+  return ''
+}
+
+function getDirtyTabsForPaths(targetPaths: string[]) {
+  return editorTabs.value.filter(tab => targetPaths.some(path => isSameOrNestedPath(tab.path, path)) && tab.content !== tab.savedContent)
+}
+
+function remapOpenTabsAfterRename(fromPath: string, toPath: string) {
+  editorTabs.value = editorTabs.value.map(tab => {
+    if (!isSameOrNestedPath(tab.path, fromPath)) {
+      return tab
+    }
+
+    return {
+      ...tab,
+      path: tab.path.replace(fromPath, toPath),
+    }
+  })
+
+  if (isSameOrNestedPath(activeFilePath.value, fromPath)) {
+    activeFilePath.value = activeFilePath.value.replace(fromPath, toPath)
+  }
+}
+
+function closeTabsForDeletedEntry(targetPath: string) {
+  const affectedTabs = editorTabs.value.filter(tab => isSameOrNestedPath(tab.path, targetPath))
+  if (affectedTabs.length === 0) {
+    return { affectedTabs, hasDirtyTabs: false }
+  }
+
+  const hasDirtyTabs = affectedTabs.some(tab => tab.content !== tab.savedContent)
+  const removedPaths = new Set(affectedTabs.map(tab => tab.path))
+  const previousTabs = [...editorTabs.value]
+  editorTabs.value = editorTabs.value.filter(tab => !removedPaths.has(tab.path))
+
+  if (removedPaths.has(activeFilePath.value)) {
+    const previousActiveIndex = previousTabs.findIndex(tab => tab.path === activeFilePath.value)
+    const fallback = editorTabs.value[previousActiveIndex] || editorTabs.value[previousActiveIndex - 1] || editorTabs.value[0] || null
+    activeFilePath.value = fallback?.path || ''
+  }
+
+  return { affectedTabs, hasDirtyTabs }
+}
+
+async function handleCreateFile(path: string) {
+  if (!workspace.value) {
+    return
+  }
+
+  const normalizedPath = normalizeWorkspaceRelativePath(path)
+  if (!normalizedPath) {
+    showToast('error', '文件路径无效')
+    return
+  }
+
+  if (await workspaceFileExists(workspace.value, normalizedPath)) {
+    showToast('warning', `文件已存在：${normalizedPath}`)
+    return
+  }
+
+  const created = await createWorkspaceFile(workspace.value, normalizedPath)
+  if (!created) {
+    showToast('error', `创建文件失败：${normalizedPath}`)
+    return
+  }
+
+  await refreshWorkspaceState({ silent: true })
+  await openFile(normalizedPath)
+  showToast('success', `已创建文件：${normalizedPath}`)
+}
+
+async function handleCreateDirectory(path: string) {
+  if (!workspace.value) {
+    return
+  }
+
+  const normalizedPath = normalizeWorkspaceRelativePath(path)
+  if (!normalizedPath) {
+    showToast('error', '目录路径无效')
+    return
+  }
+
+  if (await workspaceFileExists(workspace.value, normalizedPath)) {
+    showToast('warning', `目录已存在：${normalizedPath}`)
+    return
+  }
+
+  const created = await createWorkspaceDirectory(workspace.value, normalizedPath)
+  if (!created) {
+    showToast('error', `创建目录失败：${normalizedPath}`)
+    return
+  }
+
+  await refreshWorkspaceState({ silent: true })
+  showToast('success', `已创建目录：${normalizedPath}`)
+}
+
+function handleCopyEntries(payload: ExplorerCopyEntriesPayload) {
+  if (!workspace.value) {
+    return
+  }
+
+  const entryTypeMap = new Map<string, 'file' | 'directory'>()
+  for (const entry of payload.entries) {
+    const normalizedPath = normalizeWorkspaceRelativePath(entry.path)
+    if (!normalizedPath) {
+      continue
+    }
+    entryTypeMap.set(normalizedPath, entry.entryType)
+  }
+
+  const sourcePaths = normalizeTopLevelWorkspacePaths(Array.from(entryTypeMap.keys()))
+  if (sourcePaths.length === 0) {
+    explorerClipboardEntries.value = []
+    showToast('warning', '没有可复制的条目')
+    return
+  }
+
+  explorerClipboardEntries.value = sourcePaths
+    .map(path => {
+      const entryType = entryTypeMap.get(path)
+      if (!entryType) {
+        return null
+      }
+
+      return {
+        path,
+        entryType,
+      }
+    })
+    .filter((entry): entry is ExplorerEntryPayload => Boolean(entry))
+
+  if (explorerClipboardEntries.value.length === 0) {
+    showToast('warning', '没有可复制的条目')
+    return
+  }
+
+  showToast(
+    'success',
+    explorerClipboardEntries.value.length === 1
+      ? `已复制到剪贴板：${explorerClipboardEntries.value[0].path}`
+      : `已复制 ${explorerClipboardEntries.value.length} 个条目到剪贴板`,
+  )
+}
+
+async function handlePasteEntries(payload: ExplorerPasteEntriesPayload) {
+  if (!workspace.value) {
+    return
+  }
+
+  if (explorerClipboardEntries.value.length === 0) {
+    showToast('warning', '剪贴板当前为空，请先在资源管理器中复制条目')
+    return
+  }
+
+  const targetDirectory = normalizeWorkspaceRelativePath(payload.targetDirectory)
+  const workspaceEntries = workspace.value.structure?.files ?? []
+  const workspaceEntryMap = new Map(
+    workspaceEntries.map(entry => [normalizeWorkspaceRelativePath(entry.path), entry.type] as const),
+  )
+  if (targetDirectory && workspaceEntryMap.get(targetDirectory) !== 'directory') {
+    showToast('error', `目标目录不可用：${targetDirectory}`)
+    return
+  }
+
+  const occupiedPaths = new Set(workspaceEntries.map(entry => normalizeWorkspaceRelativePath(entry.path)))
+  const reservedPaths = new Set<string>()
+  const pendingCopies: Array<{ from: string; to: string; entryType: 'file' | 'directory' }> = []
+  const skippedSources = new Set<string>()
+
+  for (const entry of explorerClipboardEntries.value) {
+    const sourcePath = normalizeWorkspaceRelativePath(entry.path)
+    if (!sourcePath) {
+      continue
+    }
+
+    if (entry.entryType === 'directory' && targetDirectory && isSameOrNestedPath(targetDirectory, sourcePath)) {
+      skippedSources.add(sourcePath)
+      continue
+    }
+
+    const nextPath = buildWorkspaceCopyTargetPath(
+      sourcePath,
+      entry.entryType,
+      targetDirectory,
+      occupiedPaths,
+      reservedPaths,
+    )
+    if (!nextPath) {
+      skippedSources.add(sourcePath)
+      continue
+    }
+
+    reservedPaths.add(nextPath)
+    pendingCopies.push({
+      from: sourcePath,
+      to: nextPath,
+      entryType: entry.entryType,
+    })
+  }
+
+  if (pendingCopies.length === 0) {
+    showToast(
+      'warning',
+      skippedSources.size > 0 ? '剪贴板中的条目无法粘贴到当前目录' : '没有可粘贴的条目',
+    )
+    return
+  }
+
+  const successfulCopies: Array<{ path: string; entryType: 'file' | 'directory' }> = []
+  const failedSources: string[] = []
+
+  for (const pendingCopy of pendingCopies) {
+    const copied = await copyWorkspaceEntry(workspace.value, pendingCopy.from, pendingCopy.to)
+    if (!copied) {
+      failedSources.push(pendingCopy.from)
+      continue
+    }
+
+    occupiedPaths.add(pendingCopy.to)
+    successfulCopies.push({
+      path: pendingCopy.to,
+      entryType: pendingCopy.entryType,
+    })
+  }
+
+  if (successfulCopies.length > 0) {
+    await refreshWorkspaceState({ silent: true })
+    if (successfulCopies.length === 1 && successfulCopies[0].entryType === 'file') {
+      await openFile(successfulCopies[0].path)
+    }
+  }
+
+  if (failedSources.length === 0 && skippedSources.size === 0) {
+    showToast(
+      'success',
+      successfulCopies.length === 1
+        ? `已粘贴：${successfulCopies[0].path}`
+        : `已粘贴 ${successfulCopies.length} 个条目`,
+    )
+    return
+  }
+
+  if (successfulCopies.length === 0) {
+    showToast(
+      'error',
+      failedSources.length > 0
+        ? `粘贴失败：${failedSources[0]}`
+        : '剪贴板中的条目无法粘贴到当前目录',
+    )
+    return
+  }
+
+  const summaryParts = [`已粘贴 ${successfulCopies.length} 个条目`]
+  if (skippedSources.size > 0) {
+    summaryParts.push(`跳过 ${skippedSources.size} 个`)
+  }
+  if (failedSources.length > 0) {
+    summaryParts.push(`失败 ${failedSources.length} 个`)
+  }
+  showToast('warning', summaryParts.join('，'))
+}
+
+async function handleRenameEntry(payload: { from: string; to: string; entryType: 'file' | 'directory' }) {
+  await handleRenameEntries({ entries: [payload] })
+}
+
+async function handleRenameEntries(payload: ExplorerRenameEntriesPayload) {
+  if (!workspace.value) {
+    return
+  }
+
+  const normalizedEntries = payload.entries
+    .map(entry => ({
+      from: normalizeWorkspaceRelativePath(entry.from),
+      to: normalizeWorkspaceRelativePath(entry.to),
+      entryType: entry.entryType,
+    }))
+    .filter(entry => entry.from && entry.to && entry.from !== entry.to)
+
+  if (normalizedEntries.length === 0) {
+    return
+  }
+
+  const seenSourcePaths = new Set<string>()
+  const renameEntries = normalizedEntries.filter(entry => {
+    if (seenSourcePaths.has(entry.from)) {
+      return false
+    }
+
+    seenSourcePaths.add(entry.from)
+    return true
+  })
+  if (renameEntries.length === 0) {
+    return
+  }
+
+  const targetPathCounts = new Map<string, number>()
+  for (const entry of renameEntries) {
+    targetPathCounts.set(entry.to, (targetPathCounts.get(entry.to) || 0) + 1)
+  }
+  const duplicatedTargetPath = Array.from(targetPathCounts.entries()).find(([, count]) => count > 1)?.[0]
+  if (duplicatedTargetPath) {
+    showToast('error', `批量重命名存在冲突目标：${duplicatedTargetPath}`)
+    return
+  }
+
+  const movingFromPaths = new Set(renameEntries.map(entry => entry.from))
+  for (const entry of renameEntries) {
+    const targetExists = await workspaceFileExists(workspace.value, entry.to)
+    if (targetExists && !movingFromPaths.has(entry.to)) {
+      showToast('warning', `${entry.entryType === 'directory' ? '目录' : '文件'}已存在：${entry.to}`)
+      return
+    }
+  }
+
+  const occupiedPaths = new Set(
+    (workspace.value.structure?.files ?? []).map(entry => normalizeWorkspaceRelativePath(entry.path)),
+  )
+  const reservedTempPaths = new Set<string>()
+  const stagedEntries: Array<{ from: string; to: string; temp: string; entryType: 'file' | 'directory' }> = []
+
+  for (const entry of renameEntries) {
+    const tempPath = await buildWorkspaceRenameTempPath(workspace.value, entry.from, occupiedPaths, reservedTempPaths)
+    if (!tempPath) {
+      showToast('error', `无法为 ${entry.from} 分配临时重命名路径`)
+      return
+    }
+
+    stagedEntries.push({
+      ...entry,
+      temp: tempPath,
+    })
+  }
+
+  const stagedTempPaths: Array<{ from: string; temp: string }> = []
+  for (const entry of stagedEntries) {
+    const staged = await renameWorkspaceEntry(workspace.value, entry.from, entry.temp)
+    if (!staged) {
+      for (const rollbackEntry of [...stagedTempPaths].reverse()) {
+        await renameWorkspaceEntry(workspace.value, rollbackEntry.temp, rollbackEntry.from)
+      }
+
+      showToast('error', `重命名预处理失败：${entry.from}`)
+      return
+    }
+
+    stagedTempPaths.push({
+      from: entry.from,
+      temp: entry.temp,
+    })
+  }
+
+  const completedEntries: Array<{ from: string; to: string; temp: string }> = []
+  for (const entry of stagedEntries) {
+    const finalized = await renameWorkspaceEntry(workspace.value, entry.temp, entry.to)
+    if (!finalized) {
+      for (const rollbackEntry of [...completedEntries].reverse()) {
+        await renameWorkspaceEntry(workspace.value, rollbackEntry.to, rollbackEntry.from)
+      }
+      for (const rollbackEntry of [...stagedEntries].reverse()) {
+        if (completedEntries.some(item => item.temp === rollbackEntry.temp)) {
+          continue
+        }
+        await renameWorkspaceEntry(workspace.value, rollbackEntry.temp, rollbackEntry.from)
+      }
+
+      showToast('error', `重命名提交失败：${entry.from}`)
+      return
+    }
+
+    completedEntries.push({
+      from: entry.from,
+      to: entry.to,
+      temp: entry.temp,
+    })
+  }
+
+  for (const entry of stagedEntries) {
+    remapOpenTabsAfterRename(entry.from, entry.to)
+  }
+
+  await refreshWorkspaceState({ silent: true })
+  showToast(
+    'success',
+    stagedEntries.length === 1
+      ? `已重命名为：${stagedEntries[0].to}`
+      : `已批量重命名 ${stagedEntries.length} 个条目`,
+  )
+}
+
+async function handleDeleteEntry(payload: { path: string; entryType: 'file' | 'directory' }) {
+  await handleDeleteEntries({ entries: [payload] })
+}
+
+async function handleDeleteEntries(payload: ExplorerDeleteEntriesPayload) {
+  if (!workspace.value) {
+    return
+  }
+
+  const entryTypeMap = new Map<string, 'file' | 'directory'>()
+  for (const entry of payload.entries) {
+    const normalizedPath = normalizeWorkspaceRelativePath(entry.path)
+    if (!normalizedPath) {
+      continue
+    }
+    entryTypeMap.set(normalizedPath, entry.entryType)
+  }
+
+  const targetPaths = normalizeTopLevelWorkspacePaths(Array.from(entryTypeMap.keys()))
+  if (targetPaths.length === 0) {
+    return
+  }
+
+  const affectedDirtyTabs = getDirtyTabsForPaths(targetPaths)
+  if (
+    affectedDirtyTabs.length > 0
+    && !window.confirm(`即将删除的条目中包含 ${affectedDirtyTabs.length} 个未保存文件，确认继续删除？`)
+  ) {
+    return
+  }
+
+  let successCount = 0
+  const failedPaths: string[] = []
+
+  for (const targetPath of targetPaths) {
+    const deleted = await deleteWorkspaceEntry(workspace.value, targetPath)
+    if (!deleted) {
+      failedPaths.push(targetPath)
+      continue
+    }
+
+    closeTabsForDeletedEntry(targetPath)
+    successCount += 1
+  }
+
+  if (successCount > 0) {
+    await refreshWorkspaceState({ silent: true })
+  }
+
+  if (failedPaths.length === 0) {
+    const entryType = targetPaths.length === 1 ? entryTypeMap.get(targetPaths[0]) : null
+    if (targetPaths.length === 1 && entryType) {
+      showToast('success', `${entryType === 'directory' ? '目录' : '文件'}已删除：${targetPaths[0]}`)
+      return
+    }
+
+    showToast('success', `已删除 ${successCount} 个条目`)
+    return
+  }
+
+  if (successCount === 0) {
+    showToast('error', `删除失败：${failedPaths[0]}`)
+    return
+  }
+
+  showToast('warning', `已删除 ${successCount} 个条目，另有 ${failedPaths.length} 个删除失败`)
+}
+
+async function handleMoveEntries(payload: ExplorerMoveEntriesPayload) {
+  if (!workspace.value) {
+    return
+  }
+
+  const targetDirectory = normalizeWorkspaceRelativePath(payload.targetDirectory)
+  const sourcePaths = normalizeTopLevelWorkspacePaths(payload.sources)
+  if (sourcePaths.length === 0) {
+    return
+  }
+
+  const pendingMoves: Array<{ from: string; to: string }> = []
+  const skippedSources = new Set<string>()
+  const seenTargetPaths = new Set<string>()
+
+  for (const sourcePath of sourcePaths) {
+    if (targetDirectory && isSameOrNestedPath(targetDirectory, sourcePath)) {
+      skippedSources.add(sourcePath)
+      continue
+    }
+
+    const nextPath = buildWorkspaceTargetPath(targetDirectory, sourcePath)
+    if (!nextPath || nextPath === sourcePath || seenTargetPaths.has(nextPath)) {
+      skippedSources.add(sourcePath)
+      continue
+    }
+
+    if (await workspaceFileExists(workspace.value, nextPath)) {
+      skippedSources.add(sourcePath)
+      continue
+    }
+
+    seenTargetPaths.add(nextPath)
+    pendingMoves.push({ from: sourcePath, to: nextPath })
+  }
+
+  if (pendingMoves.length === 0) {
+    showToast('warning', skippedSources.size > 0 ? '选中条目无法移动到目标目录' : '没有可移动的条目')
+    return
+  }
+
+  let successCount = 0
+  const failedMoves: string[] = []
+
+  // 这里先逐条执行 rename，再统一刷新结构，避免批量移动时把已打开标签路径映射丢到半成品状态。
+  for (const move of pendingMoves) {
+    const moved = await renameWorkspaceEntry(workspace.value, move.from, move.to)
+    if (!moved) {
+      failedMoves.push(move.from)
+      continue
+    }
+
+    remapOpenTabsAfterRename(move.from, move.to)
+    successCount += 1
+  }
+
+  if (successCount > 0) {
+    await refreshWorkspaceState({ silent: true })
+  }
+
+  if (failedMoves.length === 0 && skippedSources.size === 0) {
+    showToast('success', `已移动 ${successCount} 个条目`)
+    return
+  }
+
+  if (successCount === 0) {
+    showToast('error', failedMoves.length > 0 ? `移动失败：${failedMoves[0]}` : '选中条目无法移动到目标目录')
+    return
+  }
+
+  const detailParts = [`已移动 ${successCount} 个条目`]
+  if (skippedSources.size > 0) {
+    detailParts.push(`跳过 ${skippedSources.size} 个`)
+  }
+  if (failedMoves.length > 0) {
+    detailParts.push(`失败 ${failedMoves.length} 个`)
+  }
+  showToast('warning', detailParts.join('，'))
 }
 
 async function createGeneratedPlanDraft(payload: { goal: string; overview: string; techStack: string[] }) {
@@ -453,6 +1212,38 @@ async function createPlanDraft(payload: { goal: string; overview: string; techSt
   showToast('success', '项目计划草案已创建')
 }
 
+async function handleSyncPlanBaseline(planId: string) {
+  if (!workspace.value) {
+    return
+  }
+
+  const targetPlan = workspacePlans.value.find(plan => plan.id === planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可同步基线的项目计划')
+    return
+  }
+
+  syncingPlanBaseline.value = true
+  try {
+    const drift = await syncPlanWorkspaceBaseline(workspace.value, targetPlan.id, {
+      reason: 'manual-baseline-sync',
+      content: `已为计划“${targetPlan.goal}”同步最新工作区基线，后续漂移判断将以本次状态为准。`,
+    })
+
+    if (!drift) {
+      showToast('error', '同步计划基线失败，请稍后重试')
+      return
+    }
+
+    selectedPlanDrift.value = drift
+    showToast('success', `已同步计划基线：${targetPlan.goal}`)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '同步计划基线失败')
+  } finally {
+    syncingPlanBaseline.value = false
+  }
+}
+
 async function handleReplanPlan(planId: string) {
   if (!workspace.value) {
     return
@@ -483,6 +1274,7 @@ async function handleReplanPlan(planId: string) {
     }
 
     selectedPlanId.value = result.plan.id
+    await refreshSelectedPlanDrift({ silent: true })
     const changedCount = result.diff.added.length + result.diff.modified.length + result.diff.removed.length
     showToast(
       'success',

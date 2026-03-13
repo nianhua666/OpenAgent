@@ -536,6 +536,7 @@ export interface ProjectFile {
 
 export type IDETerminalStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type IDETerminalStream = 'stdout' | 'stderr' | 'system'
+export type IDETerminalSessionMode = 'command' | 'shell'
 
 export interface IDETerminalRunRequest {
   command: string
@@ -549,11 +550,39 @@ export interface IDETerminalRunResult {
   startedAt: number
 }
 
+export interface IDETerminalSessionCreateRequest {
+  cwd: string
+  title?: string
+}
+
+export interface IDETerminalSessionInfo {
+  sessionId: string
+  cwd: string
+  title: string
+  mode: IDETerminalSessionMode
+  shell: string
+  startedAt: number
+}
+
+export interface IDETerminalInputRequest {
+  sessionId: string
+  input: string
+}
+
+export interface IDETerminalResizeRequest {
+  sessionId: string
+  cols: number
+  rows: number
+}
+
 export interface IDETerminalEvent {
   sessionId: string
   type: 'start' | 'data' | 'exit' | 'error'
   command: string
   cwd: string
+  mode?: IDETerminalSessionMode
+  title?: string
+  shell?: string
   timestamp: number
   stream?: IDETerminalStream
   chunk?: string
@@ -605,6 +634,24 @@ export interface ProjectTask {
   assignedAgent?: string
   output?: string
   order: number
+}
+
+export interface ProjectPlanWorkspaceDiff {
+  added: string[]
+  removed: string[]
+  modified: string[]
+  baselineMissing: boolean
+}
+
+export interface ProjectPlanDriftSummary {
+  planId: string
+  changed: boolean
+  totalChanges: number
+  totalFiles: number
+  baselineCreatedAt: number | null
+  checkedAt: number
+  samplePaths: string[]
+  diff: ProjectPlanWorkspaceDiff
 }
 
 export interface DevLogEntry {

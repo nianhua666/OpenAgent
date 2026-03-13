@@ -7,9 +7,11 @@ import type {
   DevLogEntry,
   IDEWorkspace,
   ProjectPhase,
+  ProjectPlanDriftSummary,
   ProjectPlan,
   ProjectTask,
   ProjectTaskStatus,
+  ProjectPlanWorkspaceDiff,
 } from '@/types'
 import { useAIStore } from '@/stores/ai'
 import { readWorkspaceFile, refreshWorkspaceStructure, workspaceFileExists } from '@/utils/aiIDEWorkspace'
@@ -58,13 +60,6 @@ type PlanWorkspaceSnapshot = {
   files: PlanWorkspaceSnapshotFile[]
 }
 
-type PlanWorkspaceDiff = {
-  added: string[]
-  removed: string[]
-  modified: string[]
-  baselineMissing: boolean
-}
-
 type ReplanProjectOptions = {
   reason?: string
   taskId?: string
@@ -75,7 +70,7 @@ type ReplanProjectOptions = {
 
 type ReplanProjectResult = {
   plan: ProjectPlan
-  diff: PlanWorkspaceDiff
+  diff: ProjectPlanWorkspaceDiff
   snapshot: PlanWorkspaceSnapshot
   summary: string
   createdTasks: string[]
@@ -273,6 +268,57 @@ export async function recordPlanWorkspaceSnapshot(
     },
   })
   return snapshot
+}
+
+export async function inspectPlanWorkspaceDrift(
+  workspace: IDEWorkspace,
+  planId: string,
+): Promise<ProjectPlanDriftSummary | null> {
+  const aiStore = useAIStore()
+  const plan = aiStore.getProjectPlan(planId)
+  if (!plan || plan.workspaceId !== workspace.id) {
+    return null
+  }
+
+  const previousSnapshot = getLatestPlanWorkspaceSnapshot(plan)
+  const currentSnapshot = await capturePlanWorkspaceSnapshot(workspace, plan)
+  const diff = diffPlanWorkspaceSnapshots(previousSnapshot, currentSnapshot)
+
+  return createPlanDriftSummary(planId, diff, currentSnapshot, previousSnapshot)
+}
+
+export async function syncPlanWorkspaceBaseline(
+  workspace: IDEWorkspace,
+  planId: string,
+  options: SnapshotLogOptions = {},
+): Promise<ProjectPlanDriftSummary | null> {
+  const aiStore = useAIStore()
+  const snapshot = await recordPlanWorkspaceSnapshot(workspace, planId, {
+    reason: options.reason || 'baseline-sync',
+    title: options.title || '同步计划工作区基线',
+    content: options.content,
+  })
+
+  if (!snapshot) {
+    return null
+  }
+
+  const updatedPlan = aiStore.getProjectPlan(planId)
+  if (updatedPlan) {
+    await flushPlanToWorkspace(workspace, updatedPlan)
+  }
+
+  return createPlanDriftSummary(
+    planId,
+    {
+      added: [],
+      removed: [],
+      modified: [],
+      baselineMissing: false,
+    },
+    snapshot,
+    snapshot,
+  )
 }
 
 export async function replanProjectPlan(
@@ -825,7 +871,7 @@ function getLatestPlanWorkspaceSnapshot(plan: ProjectPlan): PlanWorkspaceSnapsho
 function diffPlanWorkspaceSnapshots(
   previous: PlanWorkspaceSnapshot | null,
   current: PlanWorkspaceSnapshot,
-): PlanWorkspaceDiff {
+): ProjectPlanWorkspaceDiff {
   if (!previous) {
     return {
       added: [],
@@ -869,9 +915,34 @@ function diffPlanWorkspaceSnapshots(
   }
 }
 
+function createPlanDriftSummary(
+  planId: string,
+  diff: ProjectPlanWorkspaceDiff,
+  currentSnapshot: PlanWorkspaceSnapshot,
+  previousSnapshot: PlanWorkspaceSnapshot | null,
+): ProjectPlanDriftSummary {
+  const samplePaths = uniquePaths([
+    ...diff.modified,
+    ...diff.added,
+    ...diff.removed,
+  ], 6)
+  const totalChanges = diff.added.length + diff.modified.length + diff.removed.length
+
+  return {
+    planId,
+    changed: diff.baselineMissing || totalChanges > 0,
+    totalChanges,
+    totalFiles: currentSnapshot.totalFiles,
+    baselineCreatedAt: previousSnapshot?.createdAt ?? null,
+    checkedAt: currentSnapshot.createdAt,
+    samplePaths,
+    diff,
+  }
+}
+
 function buildReplannedPhases(
   plan: ProjectPlan,
-  diff: PlanWorkspaceDiff,
+  diff: ProjectPlanWorkspaceDiff,
   options: ReplanProjectOptions,
 ): ProjectPhase[] {
   const phases = plan.phases.map(phase => ({
@@ -1040,7 +1111,7 @@ function resolveReplanContextSummary(options: ReplanProjectOptions) {
 
 function buildReplanSummary(
   plan: ProjectPlan,
-  diff: PlanWorkspaceDiff,
+  diff: ProjectPlanWorkspaceDiff,
   options: ReplanProjectOptions,
 ) {
   const focusedTask = getFocusedTask(plan, options.taskId)
@@ -1070,7 +1141,7 @@ function buildReplanSummary(
 }
 
 function buildReplanPhaseDescription(
-  diff: PlanWorkspaceDiff,
+  diff: ProjectPlanWorkspaceDiff,
   options: ReplanProjectOptions,
   focusedTask: ProjectTask | null,
 ) {
@@ -1088,7 +1159,7 @@ function buildReplanPhaseDescription(
 }
 
 function buildReplanFixTaskDescription(
-  diff: PlanWorkspaceDiff,
+  diff: ProjectPlanWorkspaceDiff,
   options: ReplanProjectOptions,
   focusedTask: ProjectTask | null,
   nextTask: ProjectTask | null,
@@ -1108,7 +1179,7 @@ function buildReplanFixTaskDescription(
   return [anchor, diffSummary, failure].filter(Boolean).join(' ')
 }
 
-function buildReplanDiffTaskDescription(diff: PlanWorkspaceDiff, untrackedPaths: string[]) {
+function buildReplanDiffTaskDescription(diff: ProjectPlanWorkspaceDiff, untrackedPaths: string[]) {
   if (diff.baselineMissing) {
     return '当前计划之前没有差异基线，需要先把最新工作区结构纳入计划，再确认新增文件、移除文件和实际依赖关系。'
   }
@@ -1125,7 +1196,7 @@ function buildReplanDiffTaskDescription(diff: PlanWorkspaceDiff, untrackedPaths:
 }
 
 function buildReplanValidationTaskDescription(
-  diff: PlanWorkspaceDiff,
+  diff: ProjectPlanWorkspaceDiff,
   options: ReplanProjectOptions,
 ) {
   const parts = [

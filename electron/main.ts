@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, net, scre
 import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { registerAzureTTSHandlers } from './azureSpeech'
 import { ensureLive2DDirs, listLive2DLibraryItems, migrateLive2DStorageData, registerLive2DHandlers, registerLive2DProtocol, setLive2DDebugLogger, setLive2DStorageDirResolver } from './live2d'
@@ -12,7 +12,7 @@ import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSyst
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import { createSub2ApiDesktopManager } from './sub2apiDesktop'
-import type { AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
+import type { AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -41,6 +41,7 @@ import {
 type NodePtyProcess = {
   pid: number
   write(data: string): void
+  resize(cols: number, rows: number): void
   onData(listener: (data: string) => void): void
   onExit(listener: (event: { exitCode: number; signal: number }) => void): void
   kill(signal?: string): void
@@ -732,6 +733,47 @@ function stopIdeTerminalSession(sessionId: string) {
 
   try {
     entry.child.kill('SIGTERM')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function interruptIdeTerminalSession(sessionId: string) {
+  const entry = ideTerminalProcesses.get(sessionId)
+  if (!entry || entry.mode !== 'shell') {
+    return false
+  }
+
+  if (entry.pty) {
+    try {
+      entry.pty.write('\u0003')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  if (!entry.child?.stdin || entry.child.stdin.destroyed) {
+    return false
+  }
+
+  try {
+    entry.child.stdin.write('\u0003')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resizeIdeTerminalSession(sessionId: string, cols: number, rows: number) {
+  const entry = ideTerminalProcesses.get(sessionId)
+  if (!entry || entry.mode !== 'shell' || !entry.pty) {
+    return false
+  }
+
+  try {
+    entry.pty.resize(cols, rows)
     return true
   } catch {
     return false
@@ -2590,6 +2632,66 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('ide:renameEntry', (_event, fromPath: unknown, toPath: unknown) => {
+    const from = sanitizeIdePath(fromPath)
+    const to = sanitizeIdePath(toPath)
+    if (!from || !to || !existsSync(from) || existsSync(to) || from === to) {
+      return false
+    }
+
+    try {
+      ensureDirectoryExists(dirname(to))
+      renameSync(from, to)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('ide:copyEntry', (_event, fromPath: unknown, toPath: unknown) => {
+    const from = sanitizeIdePath(fromPath)
+    const to = sanitizeIdePath(toPath)
+    if (!from || !to || !existsSync(from) || existsSync(to) || from === to) {
+      return false
+    }
+
+    try {
+      const sourceStat = statSync(from)
+      if (sourceStat.isDirectory() && isNestedDirectory(from, to)) {
+        return false
+      }
+
+      ensureDirectoryExists(dirname(to))
+      cpSync(from, to, {
+        recursive: sourceStat.isDirectory(),
+        force: false,
+        errorOnExist: true,
+      })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.handle('ide:deleteEntry', (_event, entryPath: unknown) => {
+    const p = sanitizeIdePath(entryPath)
+    if (!p || !existsSync(p)) {
+      return false
+    }
+
+    try {
+      const targetStat = statSync(p)
+      if (targetStat.isDirectory()) {
+        rmSync(p, { recursive: true, force: false })
+      } else {
+        rmSync(p, { force: false })
+      }
+      return true
+    } catch {
+      return false
+    }
+  })
+
   ipcMain.handle('ide:createTerminalSession', async (event, payload?: Partial<IDETerminalSessionCreateRequest>) => {
     ensureIdeTerminalOwnerCleanup(event.sender)
 
@@ -2686,6 +2788,24 @@ app.whenReady().then(() => {
     return true
   })
 
+  ipcMain.handle('ide:resizeTerminalSession', (event, payload?: Partial<IDETerminalResizeRequest>) => {
+    const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
+    const rawCols = typeof payload?.cols === 'number' && Number.isFinite(payload.cols) ? payload.cols : 0
+    const rawRows = typeof payload?.rows === 'number' && Number.isFinite(payload.rows) ? payload.rows : 0
+    const cols = Math.max(20, Math.min(400, Math.floor(rawCols)))
+    const rows = Math.max(8, Math.min(200, Math.floor(rawRows)))
+    if (!sessionId || !cols || !rows) {
+      return false
+    }
+
+    const entry = ideTerminalProcesses.get(sessionId)
+    if (!entry || entry.owner.id !== event.sender.id || entry.mode !== 'shell') {
+      return false
+    }
+
+    return resizeIdeTerminalSession(sessionId, cols, rows)
+  })
+
   ipcMain.handle('ide:closeTerminalSession', (event, sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim()) {
       return false
@@ -2697,6 +2817,19 @@ app.whenReady().then(() => {
     }
 
     return stopIdeTerminalSession(sessionId)
+  })
+
+  ipcMain.handle('ide:interruptTerminalSession', (event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return false
+    }
+
+    const entry = ideTerminalProcesses.get(sessionId)
+    if (!entry || entry.owner.id !== event.sender.id || entry.mode !== 'shell') {
+      return false
+    }
+
+    return interruptIdeTerminalSession(sessionId)
   })
 
   ipcMain.handle('ide:runCommand', (event, payload?: Partial<IDETerminalRunRequest>) => {
