@@ -59,22 +59,6 @@ type WindowRectInfo = {
   window?: WindowMatchInfo | null
 }
 
-// 命令黑名单，防止危险操作
-const COMMAND_BLACKLIST = [
-  /\b(?:powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?)\b/i,
-  /\b(?:invoke-expression|iex)\b/i,
-  /-encodedcommand\b/i,
-  /\b(?:remove-item|del|erase|rd|rmdir)\b/i,
-  /rm\s+-rf\s+(?:[\/\\]|[a-z]:)/i,
-  /format\s+[a-z]:/i,
-  /\b(?:diskpart|clear-disk|cipher\s+\/w|bcdedit|bootcfg)\b/i,
-  /\b(?:shutdown|stop-computer|restart-computer|reboot)\b/i,
-  /\b(?:reg(?:\.exe)?\s+(?:add|delete|import|restore)|schtasks(?:\.exe)?\s+\/(?:create|delete|change|run)|sc(?:\.exe)?\s+(?:config|create|delete|start|stop))\b/i,
-  /\b(?:takeown|icacls|wevtutil|vssadmin|mountvol)\b/i,
-  /\b(?:taskkill)\b[\s\S]*\b(?:explorer|winlogon|csrss|lsass|services|svchost)(?:\.exe)?\b/i,
-  /\b(?:copy-item|move-item|rename-item|set-content|add-content|clear-content|copy|move|ren)\b[\s\S]*(?:[a-z]:\\(?:windows|program files|programdata|users\\default)|%windir%|%systemroot%)/i
-]
-
 function ensureTempDir() {
   const tempDir = join(app.getPath('userData'), 'temp')
   if (!existsSync(tempDir)) {
@@ -144,10 +128,6 @@ async function captureDisplayRegionToFile(filePath: string, rect: { x: number; y
     width: image.getSize().width,
     height: image.getSize().height
   }
-}
-
-function isCommandSafe(command: string): boolean {
-  return !COMMAND_BLACKLIST.some(pattern => pattern.test(command))
 }
 
 function tryParseJson<T>(text: string): T | null {
@@ -390,10 +370,6 @@ export function executeCommand(command: string): Promise<MCPExecutionResult> {
   // 原始命令只允许单行执行，复杂脚本走内部脚本执行器，避免注入与转义歧义。
   if (/[\r\n]/.test(normalizedCommand)) {
     return Promise.resolve({ success: false, output: '', error: '原始命令仅支持单行 PowerShell 语句' })
-  }
-
-  if (!isCommandSafe(normalizedCommand)) {
-    return Promise.resolve({ success: false, output: '', error: '该命令被安全策略拦截' })
   }
 
   return runPowerShellScript(normalizedCommand)

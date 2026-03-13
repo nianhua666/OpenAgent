@@ -49,40 +49,7 @@ const IDE_COMMAND_DEFAULT_IDLE_TIMEOUT_MS = 12_000
 const IDE_COMMAND_MAX_IDLE_TIMEOUT_MS = 30_000
 const IDE_COMMAND_OUTPUT_LIMIT = 16_000
 const IDE_COMMAND_CAPTURE_BUFFER_LIMIT = IDE_COMMAND_OUTPUT_LIMIT * 6
-
-const IDE_COMMAND_DANGEROUS_RULES: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /\b(?:rm\s+-rf|del\s+\/[fqsa]+|erase|rd\s+\/s|rmdir\s+\/s|remove-item\b|clear-disk|format\s+[a-z]:)\b/i, reason: '包含删除、格式化或清盘类危险操作' },
-  { pattern: /\b(?:shutdown|restart-computer|stop-computer|reboot|diskpart|bcdedit|bootrec|vssadmin|mountvol)\b/i, reason: '包含系统级破坏或启动项修改操作' },
-  { pattern: /\b(?:reg(?:\.exe)?\s+(?:add|delete|import|restore)|schtasks(?:\.exe)?\s+\/(?:create|delete|change|run)|sc(?:\.exe)?\s+(?:config|create|delete|start|stop))\b/i, reason: '包含注册表、计划任务或服务改写操作' },
-  { pattern: /\b(?:takeown|icacls|attrib\s+[+-][rhs])\b/i, reason: '包含权限或系统属性篡改操作' },
-  { pattern: /\b(?:taskkill)\b[\s\S]*\b(?:explorer|winlogon|csrss|lsass|services|svchost)(?:\.exe)?\b/i, reason: '尝试终止系统关键进程' },
-  { pattern: /\b(?:copy-item|move-item|rename-item|set-content|add-content|clear-content|copy|move|ren)\b[\s\S]*(?:[a-z]:\\(?:windows|program files|programdata|users\\default)|%windir%|%systemroot%|\/etc\/|\/usr\/|\/bin\/|\/System\/)/i, reason: '尝试改写系统目录或工作区外敏感路径' },
-]
-
-const IDE_COMMAND_INTERACTIVE_RULES: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|watch)\b/i, reason: '这是长驻开发服务器或 watch 命令，不适合由 AI 的一次性命令工具执行' },
-  { pattern: /\b(?:vite|webpack(?:-dev-server)?|next|nuxt|astro)\b[\s\S]*\b(?:dev|serve|preview|watch)\b/i, reason: '这是会持续占用终端的前端开发命令' },
-  { pattern: /\b(?:tail\s+-f|watch\s+|top\b|htop\b|less\b|more\b|man\b|ssh\b|sftp\b|ftp\b|tmux\b|screen\b)\b/i, reason: '这是交互式或持续输出命令，容易让 AI 命令链路卡住' },
-  { pattern: /\b(?:cmd|powershell|pwsh|bash|sh|zsh|python|node)\b(?:\s*$|\s+-i\b)/i, reason: '这是会进入交互式 shell 或 REPL 的命令' },
-  { pattern: /\bgit\s+commit\b(?![\s\S]*\s-m\b)(?![\s\S]*\s--message\b)/i, reason: 'git commit 未携带提交信息，通常会进入交互式编辑器' },
-  { pattern: /\bgit\s+rebase\s+-i\b/i, reason: 'git rebase -i 会进入交互式编辑流程' },
-  { pattern: /\b(?:npm|pnpm|yarn)\s+login\b/i, reason: '登录命令会等待凭据输入' },
-]
-
 const IDE_COMMAND_INTERACTIVE_OUTPUT_PATTERN = /(y\/n|yes\/no|password|passphrase|press any key|select an option|choose one|continue\?|are you sure|请输入|确认是否|是否继续|输入密码)/i
-const MCP_COMMAND_DANGEROUS_RULES: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /[\r\n]/, reason: 'Windows MCP 原始命令仅支持单行语句' },
-  { pattern: /\b(?:powershell(?:\.exe)?|pwsh(?:\.exe)?|cmd(?:\.exe)?)\b/i, reason: '不允许通过 Windows MCP 再次启动嵌套 shell' },
-  { pattern: /\b(?:remove-item|del|erase|rd|rmdir|rm\s+-rf|clear-disk|format\s+[a-z]:)\b/i, reason: '包含删除、格式化或清盘类危险操作' },
-  { pattern: /\b(?:shutdown|stop-computer|restart-computer|reboot|diskpart|bcdedit|bootcfg|vssadmin|mountvol)\b/i, reason: '包含系统级破坏或启动项修改操作' },
-  { pattern: /\b(?:reg(?:\.exe)?\s+(?:add|delete|import|restore)|schtasks(?:\.exe)?\s+\/(?:create|delete|change|run)|sc(?:\.exe)?\s+(?:config|create|delete|start|stop))\b/i, reason: '包含注册表、计划任务或服务改写操作' },
-  { pattern: /\b(?:takeown|icacls|wevtutil)\b/i, reason: '包含系统权限或审计日志改写操作' },
-]
-const MCP_COMMAND_INTERACTIVE_RULES: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /\b(?:read-host|pause|out-gridview|more)\b/i, reason: '命令会等待人工输入或进入交互式界面' },
-  { pattern: /\b(?:ssh|sftp|ftp|runas)\b/i, reason: '命令会发起交互式远程连接或凭据流程' },
-  { pattern: /\b(?:npm|pnpm|yarn)\s+login\b/i, reason: '登录命令会等待凭据输入' },
-]
 
 function jsonOutput(payload: Record<string, unknown>) {
   return JSON.stringify(payload, null, 2)
@@ -1574,61 +1541,19 @@ function normalizeCommandDuration(value: unknown, fallback: number, max: number)
   return Math.min(Math.max(numericValue, 3_000), max)
 }
 
-function getDangerousIdeCommandReason(command: string) {
-  const normalizedCommand = command.trim()
-  const matchedRule = IDE_COMMAND_DANGEROUS_RULES.find(rule => rule.pattern.test(normalizedCommand))
-  return matchedRule?.reason || ''
-}
-
-function getInteractiveIdeCommandReason(command: string) {
-  const normalizedCommand = command.trim()
-  const matchedRule = IDE_COMMAND_INTERACTIVE_RULES.find(rule => rule.pattern.test(normalizedCommand))
-  return matchedRule?.reason || ''
-}
-
-function getDangerousMcpCommandReason(command: string) {
-  const normalizedCommand = command.trim()
-  const matchedRule = MCP_COMMAND_DANGEROUS_RULES.find(rule => rule.pattern.test(normalizedCommand))
-  return matchedRule?.reason || ''
-}
-
-function getInteractiveMcpCommandReason(command: string) {
-  const normalizedCommand = command.trim()
-  const matchedRule = MCP_COMMAND_INTERACTIVE_RULES.find(rule => rule.pattern.test(normalizedCommand))
-  return matchedRule?.reason || ''
-}
-
-function normalizeComparableFsPath(filePath: string) {
-  return filePath.replace(/\//g, '\\').replace(/[\\/]+$/, '').toLowerCase()
-}
-
-function isPathInsideWorkspace(workspaceRoot: string, targetPath: string) {
-  const normalizedRoot = normalizeComparableFsPath(workspaceRoot)
-  const normalizedTarget = normalizeComparableFsPath(targetPath)
-  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}\\`)
-}
-
 function resolveWorkspaceRelativePath(workspace: IDEWorkspace, inputPath: string) {
   const normalizedInput = inputPath.replace(/\\/g, '/').trim()
   if (!normalizedInput) {
     return workspace.rootPath
   }
 
-  const rootPath = workspace.rootPath.replace(/[\\/]+$/, '')
   if (/^[a-z]:[\\/]/i.test(normalizedInput) || normalizedInput.startsWith('/')) {
-    const absolutePath = normalizedInput.replace(/\//g, '\\')
-    if (!isPathInsideWorkspace(rootPath, absolutePath)) {
-      throw new Error('终端工作目录必须位于当前工作区内')
-    }
-    return absolutePath
+    return normalizedInput.replace(/\//g, '\\')
   }
 
-  const segments = normalizedInput.split('/').filter(Boolean)
-  if (segments.some(segment => segment === '..')) {
-    throw new Error('终端工作目录不能超出当前工作区')
-  }
-
-  return `${rootPath}\\${segments.join('\\')}`
+  const rootPath = workspace.rootPath.replace(/[\\/]+$/, '')
+  const normalizedRelativePath = normalizedInput.replace(/\//g, '\\')
+  return `${rootPath}\\${normalizedRelativePath}`
 }
 
 async function resolveIdeCommandCwd(workspace: IDEWorkspace, requestedCwd: string) {
@@ -1889,24 +1814,6 @@ async function ideRunCommandTool(args: Record<string, unknown>): Promise<ToolExe
 
   if (!window.electronAPI?.ideRunCommand) {
     return errorResult('当前环境不支持 IDE 命令执行能力')
-  }
-
-  const dangerousReason = getDangerousIdeCommandReason(command)
-  if (dangerousReason) {
-    return errorResult('命令被终端安全策略拦截', {
-      command,
-      reason: dangerousReason,
-      suggestion: '涉及文件删除或敏感改写时，请改用 IDE 文件工具，并避免触碰系统目录、服务、注册表或磁盘级操作。',
-    })
-  }
-
-  const interactiveReason = getInteractiveIdeCommandReason(command)
-  if (interactiveReason) {
-    return errorResult('当前命令疑似交互式或长驻命令，不适合由 AI 的一次性命令工具执行', {
-      command,
-      reason: interactiveReason,
-      suggestion: '请改用非交互参数，或在可见终端手动运行这类需要持续占用终端的命令。',
-    })
   }
 
   let cwd = workspace.rootPath
@@ -2354,24 +2261,6 @@ async function executeMcpCommand(args: Record<string, unknown>): Promise<ToolExe
   }
   if (!window.electronAPI?.mcpExecuteCommand) {
     return errorResult('MCP 环境不可用')
-  }
-
-  const dangerousReason = getDangerousMcpCommandReason(command)
-  if (dangerousReason) {
-    return errorResult('Windows MCP 命令被安全策略拦截', {
-      command,
-      reason: dangerousReason,
-      suggestion: '请改用 OpenAgent 内置工具、IDE 文件工具或更受控的应用级能力，不要通过 MCP 原始命令直接改写系统。',
-    })
-  }
-
-  const interactiveReason = getInteractiveMcpCommandReason(command)
-  if (interactiveReason) {
-    return errorResult('Windows MCP 原始命令不适合执行交互式流程', {
-      command,
-      reason: interactiveReason,
-      suggestion: '请改用非交互参数，或在用户可见的终端中手动执行这类需要持续输入的命令。',
-    })
   }
 
   const result = await window.electronAPI.mcpExecuteCommand(command)
