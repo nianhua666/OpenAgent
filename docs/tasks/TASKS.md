@@ -88,6 +88,7 @@
 
 ## 当前剩余缺口
 
+- IDE 计划链路已经补齐“先生成详细计划、等待用户确认、切换计划状态、输出 `.openagent/PLAN.md` / `.openagent/TASKS.md` / `.openagent/SUBAGENTS.md` / `.openagent/SUPERVISOR.md`、再由主代理按 ready task 监督并发”的执行协议；`.openagent/TASKS.md` 也已从“只看当前队列”升级为“全量任务树 + 当前 ready / blocked 队列”，`IDEPlanPanel` 同时支持直接查看并复制主代理监督提示词和子代理提示词。当前剩余工作更多集中在“把这套协议进一步收口成真正持续自动运行的调度器”，而不是计划表达或分工协议缺失。
 - `IDETerminal` 已支持多标签、持久 shell、stdin 持续输入、`xterm` 渲染、按键直通与 resize 同步，`vim` / `top` 这类全屏命令也具备前端承载条件；当前剩余风险主要是缺少这类 TUI 场景的人工回归，以及长时间运行命令下的稳定性观察。
 - IDE 项目计划已支持基于真实工作区快照、diff、失败反馈和上下文摘要的动态重规划，并在 `IDEPlanPanel` 中补齐了“计划漂移可见性 + 手动同步基线”能力：用户现在能直接看到当前计划与工作区之间的新增 / 修改 / 删除差异，区分“需要重规划”还是“仅需确认基线”；剩余工作是继续观察复杂冲突、跨阶段返工与多次连续重规划场景下的计划稳定性。
 - `IDEExplorer` 已补齐资源管理器的高频交互闭环：支持 Ctrl/Cmd 多选、Shift 连选、根目录拖放区、目录拖拽移动、批量删除、剪贴板式复制/粘贴与批量重命名；复制会在目标目录中自动规避重名，并在目录自拷贝到子目录这类危险路径上做前置跳过，批量重命名会保留文件扩展名并在提交前预览冲突。当前剩余工作更多偏增量体验优化，例如跨工作区复制提示、更细的复制冲突策略和批量重命名模板增强，不再属于交付阻断项。
@@ -171,3 +172,5 @@
 | 2026-03-13 | build | Phase 8 编辑会话恢复接入后 `npm.cmd run build` 通过 |
 | 2026-03-13 | code | Phase 8 编辑器交互补全：`IDEEditor.vue` 接入行号 gutter、实时光标状态、Ctrl/Cmd+F 查找、Ctrl/Cmd+H 替换、匹配跳转与替换当前 / 全部替换；`IDEStatusBar.vue` 增加 Ln/Col 与选区信息展示，`IDEView.vue` / `stores/ai.ts` / `types/index.ts` 同步持久化每个标签的光标范围，保证切页恢复后编辑现场连续 |
 | 2026-03-13 | build | Phase 8 编辑器交互补全接入后 `npm.cmd run build` 通过 |
+| 2026-03-13 | code | Phase 8 计划执行协议补全：`types/index.ts` 新增执行编排类型，`aiPlanEngine.ts` / `aiTools.ts` / `ai.ts` / `aiPrompts.ts` 补齐计划状态流转、ready / blocked 执行包、`.openagent/TASKS.md` 全量任务树、`.openagent/SUBAGENTS.md` / `.openagent/SUPERVISOR.md` 输出与 `ide_update_plan_status` 工具，`IDEPlanPanel.vue` / `IDEView.vue` 接入计划确认、执行编排展示与主代理 / 子代理提示词复制 |
+| 2026-03-13 | test | Phase 8 计划执行协议验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 路由烟测仍可用 |

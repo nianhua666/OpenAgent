@@ -2,7 +2,7 @@
  * AI 工具执行器
  * 接收AI返回的工具调用，路由到对应的实际操作
  */
-import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, ProjectTaskStatus } from '@/types'
+import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
 import { useAccountStore } from '@/stores/account'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAIStore } from '@/stores/ai'
@@ -18,6 +18,7 @@ import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
 import {
   advanceTask,
+  buildPlanExecutionPacket,
   renderPlanToMarkdown,
   flushPlanToWorkspace,
   generateInitialPlanPhases,
@@ -247,6 +248,8 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
       return ideSearchFilesTool(args)
     case 'ide_create_plan':
       return ideCreatePlanToolV2(args)
+    case 'ide_update_plan_status':
+      return ideUpdatePlanStatusTool(args)
     case 'ide_advance_task':
       return ideAdvanceTaskTool(args, context)
     case 'ide_replan_plan':
@@ -1151,6 +1154,14 @@ const ALLOWED_PROJECT_TASK_STATUSES: ProjectTaskStatus[] = [
   'skipped',
 ]
 
+const ALLOWED_PLAN_STATUSES: PlanStatus[] = [
+  'drafting',
+  'approved',
+  'in-progress',
+  'completed',
+  'paused',
+]
+
 function getActiveWorkspace() {
   const aiStore = useAIStore()
   if (aiStore.agentMode !== 'ide') {
@@ -1304,6 +1315,7 @@ async function ideCreatePlanToolV2(args: Record<string, unknown>): Promise<ToolE
   return successResult(generationError ? '项目计划草稿已创建，自动任务生成已回退' : '项目计划已创建', {
     plan: currentPlan,
     markdown: renderPlanToMarkdown(currentPlan),
+    execution: buildPlanExecutionPacket(currentPlan),
     ...(generationError ? { generationError } : {}),
   })
 }
@@ -1336,6 +1348,53 @@ async function ideCreatePlanTool(args: Record<string, unknown>): Promise<ToolExe
   return successResult('项目计划已创建', {
     plan,
     markdown: renderPlanToMarkdown(plan),
+    execution: buildPlanExecutionPacket(plan),
+  })
+}
+
+async function ideUpdatePlanStatusTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const planId = normalizeTextValue(args.planId)
+  const statusValue = normalizeTextValue(args.status)
+  const note = normalizeTextValue(args.note)
+  const { workspace, plan } = planId ? getPlanInActiveWorkspace(planId) : { workspace: null, plan: null }
+
+  if (!workspace || !planId || !statusValue) {
+    return errorResult('更新计划状态需要 planId、status，并且已打开工作区')
+  }
+
+  if (!ALLOWED_PLAN_STATUSES.includes(statusValue as PlanStatus)) {
+    return errorResult(`无效计划状态: ${statusValue}`)
+  }
+
+  if (!plan) {
+    return errorResult('未找到当前工作区下的项目计划', { planId })
+  }
+
+  const status = statusValue as PlanStatus
+  const previousStatus = plan.status
+  aiStore.updateProjectPlanStatus(planId, status)
+  const updatedPlan = aiStore.getProjectPlan(planId)
+  if (!updatedPlan || updatedPlan.workspaceId !== workspace.id) {
+    return errorResult('更新后未找到当前工作区下的项目计划', { planId })
+  }
+
+  aiStore.addDevLog(planId, {
+    type: 'decision',
+    title: `计划状态更新为 ${status}`,
+    content: note || `主代理已将计划状态切换为 ${status}。`,
+    metadata: {
+      previousStatus,
+      nextStatus: status,
+    },
+  })
+
+  await flushPlanToWorkspace(workspace, updatedPlan)
+
+  return successResult('项目计划状态已更新', {
+    plan: updatedPlan,
+    markdown: renderPlanToMarkdown(updatedPlan),
+    execution: buildPlanExecutionPacket(updatedPlan),
   })
 }
 
@@ -1389,6 +1448,7 @@ async function ideAdvanceTaskTool(
     taskId,
     status,
     progress: effectivePlan.progress,
+    execution: buildPlanExecutionPacket(effectivePlan),
     ...(replan
       ? {
           replan: {
@@ -1435,6 +1495,7 @@ async function ideReplanPlanTool(
   return successResult('项目计划已完成动态重规划', {
     plan: result.plan,
     markdown: renderPlanToMarkdown(result.plan),
+    execution: buildPlanExecutionPacket(result.plan),
     diff: result.diff,
     summary: result.summary,
     createdTasks: result.createdTasks,
@@ -1455,6 +1516,7 @@ async function ideGetPlanTool(args: Record<string, unknown>): Promise<ToolExecut
   return successResult('已获取项目计划', {
     plan,
     markdown: renderPlanToMarkdown(plan),
+    execution: buildPlanExecutionPacket(plan),
   })
 }
 

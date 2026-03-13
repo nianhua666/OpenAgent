@@ -9,13 +9,17 @@ import type {
   ProjectPhase,
   ProjectPlanDriftSummary,
   ProjectPlan,
+  ProjectPlanExecutionPacket,
   ProjectTask,
+  ProjectTaskBlocker,
+  ProjectTaskExecutionBrief,
   ProjectTaskStatus,
   ProjectPlanWorkspaceDiff,
 } from '@/types'
 import { useAIStore } from '@/stores/ai'
 import { readWorkspaceFile, refreshWorkspaceStructure, workspaceFileExists } from '@/utils/aiIDEWorkspace'
 import { genId } from '@/utils/helpers'
+import { SUB_AGENT_TEMPLATES, buildSubAgentPrompt } from '@/utils/aiPrompts'
 
 type PlanSeed = {
   goal: string
@@ -430,6 +434,186 @@ export function getParallelExecutableTasks(plan: ProjectPlan): ProjectTask[] {
   return ready
 }
 
+export function buildPlanExecutionPacket(plan: ProjectPlan): ProjectPlanExecutionPacket {
+  const readyTasks = getParallelExecutableTasks(plan)
+  const currentPhase = getCurrentExecutionPhase(plan)
+  const blockedTasks = currentPhase
+    ? currentPhase.tasks
+      .filter(task => task.status === 'pending' && !readyTasks.some(readyTask => readyTask.id === task.id))
+      .map(task => buildTaskBlocker(plan, currentPhase, task))
+    : []
+
+  const readyTaskBriefs = readyTasks.map(task => buildTaskExecutionBrief(plan, task))
+  const nextTask = readyTasks[0] ?? getNextExecutableTask(plan)
+
+  return {
+    planId: plan.id,
+    status: plan.status,
+    progress: plan.progress,
+    readyTaskCount: readyTaskBriefs.length,
+    blockedTaskCount: blockedTasks.length,
+    nextTaskId: nextTask?.id ?? null,
+    nextTaskTitle: nextTask?.title ?? null,
+    readyTasks: readyTaskBriefs,
+    blockedTasks,
+    supervisorPrompt: buildSupervisorPrompt(plan, readyTaskBriefs, blockedTasks),
+  }
+}
+
+export function renderExecutionTasksToMarkdown(
+  plan: ProjectPlan,
+  packet: ProjectPlanExecutionPacket = buildPlanExecutionPacket(plan),
+): string {
+  const lines: string[] = []
+
+  lines.push('# 执行任务清单')
+  lines.push('')
+  lines.push(`- **计划**: ${plan.goal}`)
+  lines.push(`- **状态**: ${formatPlanStatus(plan.status)} (${plan.progress}%)`)
+  lines.push(`- **当前可立即执行任务**: ${packet.readyTaskCount}`)
+  lines.push(`- **当前阻塞任务**: ${packet.blockedTaskCount}`)
+  lines.push(`- **下一优先任务**: ${packet.nextTaskTitle || '暂无'}`)
+  lines.push('')
+
+  lines.push('## 主代理执行纪律')
+  lines.push('')
+  lines.push('- 用户确认计划后，再将状态切换到“已批准 / 进行中”，避免未确认即开始改代码。')
+  lines.push('- 先判断任务是否真正独立；独立任务并行分发给子代理，共享文件或共享状态的任务保持串行。')
+  lines.push('- 每个任务开始前标记 in-progress，完成后标记 completed；失败时附带失败输出并触发动态重规划。')
+  lines.push('- 每完成一轮任务后刷新 `.openagent/PLAN.md`、`.openagent/TASKS.md`、`.openagent/SUBAGENTS.md`、`.openagent/SUPERVISOR.md` 和 `dev-log.md`。')
+  lines.push('- 除非用户打断或出现真实阻塞，否则持续推进直到计划完成。')
+  lines.push('')
+
+  lines.push('## 执行概览')
+  lines.push('')
+  lines.push(`- **主代理监督提示词**: 见 \`.openagent/SUPERVISOR.md\``)
+  lines.push(`- **子代理分工提示词**: 见 \`.openagent/SUBAGENTS.md\``)
+  lines.push('')
+
+  lines.push('## 全量任务树')
+  lines.push('')
+  for (const phase of [...plan.phases].sort((left, right) => left.order - right.order)) {
+    lines.push(`### ${phase.order}. ${phase.name}`)
+    lines.push('')
+    if (phase.description) {
+      lines.push(phase.description)
+      lines.push('')
+    }
+
+    if (phase.tasks.length === 0) {
+      lines.push('当前阶段尚未拆出具体任务。')
+      lines.push('')
+      continue
+    }
+
+    lines.push('| # | 任务 | 状态 | 类型 | 依赖 | 推荐代理 | 关键文件 |')
+    lines.push('|---|------|------|------|------|----------|----------|')
+    for (const task of [...phase.tasks].sort((left, right) => left.order - right.order)) {
+      const dependencyTitles = task.dependencies
+        .map(dependencyId => findTaskById(plan, dependencyId)?.title)
+        .filter((title): title is string => Boolean(title))
+      const template = SUB_AGENT_TEMPLATES[recommendSubAgentTemplateId(task)]
+      const files = task.files.length > 0 ? task.files.map(file => `\`${file}\``).join(', ') : '-'
+      lines.push(
+        `| ${task.order} | ${task.title} | ${formatTaskStatusLabel(task.status)} | ${formatTaskTypeLabel(task.type)} | ${dependencyTitles.join('、') || '-'} | ${template?.name || '通用执行代理'} | ${files} |`,
+      )
+    }
+    lines.push('')
+  }
+
+  lines.push('## 当前 Ready Queue')
+  lines.push('')
+  if (packet.readyTasks.length === 0) {
+    lines.push('当前没有可立即执行的任务。')
+    lines.push('')
+  } else {
+    lines.push('| # | 任务 | 推荐子代理 | 类型 | 关键文件 |')
+    lines.push('|---|------|------------|------|----------|')
+    packet.readyTasks.forEach((task, index) => {
+      const files = task.files.length > 0 ? task.files.map(file => `\`${file}\``).join(', ') : '-'
+      lines.push(`| ${index + 1} | ${task.taskTitle} | ${task.recommendedAgentName} | ${formatTaskTypeLabel(task.taskType)} | ${files} |`)
+    })
+    lines.push('')
+  }
+
+  lines.push('## 当前 Blocked Queue')
+  lines.push('')
+  if (packet.blockedTasks.length === 0) {
+    lines.push('当前没有因依赖阻塞的待执行任务。')
+    lines.push('')
+  } else {
+    for (const blocker of packet.blockedTasks) {
+      lines.push(`- **${blocker.taskTitle}**（${blocker.phaseName}）: 依赖 ${blocker.dependencyTitles.join('、') || '无'} 尚未完成。`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+export function renderSubAgentGuideToMarkdown(
+  plan: ProjectPlan,
+  packet: ProjectPlanExecutionPacket = buildPlanExecutionPacket(plan),
+): string {
+  const lines: string[] = []
+
+  lines.push('# 子代理分工指南')
+  lines.push('')
+  lines.push(`> 项目：${plan.goal}`)
+  lines.push('')
+
+  if (packet.readyTasks.length === 0) {
+    lines.push('当前没有可立即分发给子代理的任务。')
+    lines.push('')
+    return lines.join('\n')
+  }
+
+  for (const brief of packet.readyTasks) {
+    lines.push(`## ${brief.phaseName} / ${brief.taskTitle}`)
+    lines.push('')
+    lines.push(`- **推荐子代理**: ${brief.recommendedAgentName}`)
+    lines.push(`- **角色定位**: ${brief.recommendedRole}`)
+    lines.push(`- **任务类型**: ${formatTaskTypeLabel(brief.taskType)}`)
+    if (brief.files.length > 0) {
+      lines.push(`- **关键文件**: ${brief.files.map(file => `\`${file}\``).join(', ')}`)
+    }
+    if (brief.dependencyTitles.length > 0) {
+      lines.push(`- **前置依赖**: ${brief.dependencyTitles.join('、')}`)
+    }
+    lines.push('')
+    lines.push('### 主代理监督要点')
+    lines.push('')
+    brief.supervisionNotes.forEach(note => {
+      lines.push(`- ${note}`)
+    })
+    lines.push('')
+    lines.push('### 推荐系统提示词')
+    lines.push('')
+    lines.push('```text')
+    lines.push(brief.executionPrompt)
+    lines.push('```')
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+export function renderSupervisorPromptToMarkdown(
+  plan: ProjectPlan,
+  packet: ProjectPlanExecutionPacket = buildPlanExecutionPacket(plan),
+): string {
+  return [
+    '# 主代理监督提示词',
+    '',
+    `> 项目：${plan.goal}`,
+    '',
+    '```text',
+    packet.supervisorPrompt,
+    '```',
+    '',
+  ].join('\n')
+}
+
 /** 推进任务状态并同步 store 与日志 */
 export function advanceTask(
   planId: string,
@@ -557,6 +741,164 @@ export function generatePhaseReport(plan: ProjectPlan, phaseId: string): string 
   return lines.join('\n')
 }
 
+function getCurrentExecutionPhase(plan: ProjectPlan): ProjectPhase | null {
+  return [...plan.phases]
+    .sort((left, right) => left.order - right.order)
+    .find(phase => phase.status !== 'completed') ?? null
+}
+
+function buildTaskExecutionBrief(plan: ProjectPlan, task: ProjectTask): ProjectTaskExecutionBrief {
+  const phase = plan.phases.find(item => item.id === task.phaseId)
+  const templateId = recommendSubAgentTemplateId(task)
+  const template = SUB_AGENT_TEMPLATES[templateId]
+  const dependencyTitles = task.dependencies
+    .map(dependencyId => findTaskById(plan, dependencyId)?.title)
+    .filter((title): title is string => Boolean(title))
+  const files = uniquePaths(task.files.map(file => file.replace(/\\/g, '/')), 10)
+  const taskInstruction = [
+    `任务标题：${task.title}`,
+    `任务类型：${formatTaskTypeLabel(task.type)}`,
+    `任务说明：${task.description}`,
+    files.length > 0 ? `优先处理文件：${files.join('、')}` : '优先处理文件：由你先定位最相关实现点',
+    dependencyTitles.length > 0 ? `前置依赖：${dependencyTitles.join('、')}` : '前置依赖：无',
+    '执行要求：先阅读现状和依赖，再实现代码或文档改动；完成后总结改动、验证结果、残留风险，并给主代理返回可直接汇总的结果。',
+  ].join('\n')
+
+  const parentContext = [
+    `项目目标：${plan.goal}`,
+    `项目概述：${plan.overview || '暂无概述'}`,
+    `计划状态：${formatPlanStatus(plan.status)}，整体进度 ${plan.progress}%`,
+    `所属阶段：${phase ? `${phase.order}. ${phase.name}` : '未归属阶段'}`,
+    '主代理职责：监督任务顺序、更新任务状态、处理阻塞和失败反馈，并在必要时触发动态重规划。',
+  ].join('\n')
+
+  return {
+    planId: plan.id,
+    phaseId: task.phaseId,
+    phaseName: phase?.name || '未归属阶段',
+    taskId: task.id,
+    taskTitle: task.title,
+    taskType: task.type,
+    recommendedTemplateId: templateId,
+    recommendedAgentName: template?.name || '通用执行代理',
+    recommendedRole: template?.role || '通用开发执行',
+    dependencyTitles,
+    files,
+    executionPrompt: buildSubAgentPrompt(templateId, taskInstruction, parentContext),
+    supervisionNotes: [
+      '主代理先确认该任务与其它 ready task 是否共享关键文件；如有共享则不要并行分发。',
+      '子代理开始前，先由主代理把该任务更新为 in-progress，并说明当前范围和交付物。',
+      '子代理返回后，主代理负责复核结果、推进任务状态，并把摘要同步进 dev-log 与 .openagent 文档。',
+      '如果任务失败或返回结果显示计划已漂移，主代理应立即记录失败输出并触发动态重规划。',
+    ],
+  }
+}
+
+function buildTaskBlocker(plan: ProjectPlan, phase: ProjectPhase, task: ProjectTask): ProjectTaskBlocker {
+  return {
+    taskId: task.id,
+    phaseId: phase.id,
+    phaseName: phase.name,
+    taskTitle: task.title,
+    dependencyTitles: task.dependencies
+      .map(dependencyId => findTaskById(plan, dependencyId)?.title)
+      .filter((title): title is string => Boolean(title)),
+  }
+}
+
+function recommendSubAgentTemplateId(task: ProjectTask): string {
+  const signals = `${task.title} ${task.description} ${task.files.join(' ')}`.toLowerCase()
+
+  if (task.type === 'test' || /(test|spec|playwright|vitest|jest|cypress|回归|验证)/i.test(signals)) {
+    return 'tester'
+  }
+
+  if (/(审查|review|巡检|audit|质量|风险|回看)/i.test(signals) || task.type === 'refactor') {
+    return 'reviewer'
+  }
+
+  if (/(架构|设计|方案|规划|plan|文档|交接|说明)/i.test(signals) || task.type === 'docs') {
+    return 'architect'
+  }
+
+  if (task.type === 'config' || /(docker|k8s|deploy|release|workflow|ci|cd|nginx|infra|ops|部署|发布)/i.test(signals)) {
+    return 'devops'
+  }
+
+  if (/(src\/components|src\/views|ui|layout|style|css|scss|页面|交互|frontend|router)/i.test(signals)) {
+    return 'frontend-dev'
+  }
+
+  if (/(electron|main\.ts|preload|ipc|api|server|backend|database|db|redis|store|service)/i.test(signals)) {
+    return 'backend-dev'
+  }
+
+  if (task.type === 'create' || task.type === 'modify') {
+    return 'frontend-dev'
+  }
+
+  return 'code-analyst'
+}
+
+function buildSupervisorPrompt(
+  plan: ProjectPlan,
+  readyTasks: ProjectTaskExecutionBrief[],
+  blockedTasks: ProjectTaskBlocker[],
+): string {
+  const readyTaskLines = readyTasks.length > 0
+    ? readyTasks.map((task, index) => `${index + 1}. ${task.taskTitle} -> ${task.recommendedAgentName}（${task.recommendedRole}）`).join('\n')
+    : '当前没有 ready task，需要先检查是否应同步基线、重规划或等待阻塞解除。'
+  const blockedTaskLines = blockedTasks.length > 0
+    ? blockedTasks.map(task => `- ${task.taskTitle}：等待 ${task.dependencyTitles.join('、') || '前置任务'} 完成`).join('\n')
+    : '- 当前没有依赖阻塞的任务。'
+
+  return [
+    '你是当前工作区的主代理监督者，需要持续推进整个计划直到完成，除非用户明确打断或出现真实阻塞。',
+    `项目目标：${plan.goal}`,
+    `项目概述：${plan.overview || '暂无概述'}`,
+    `当前计划状态：${formatPlanStatus(plan.status)}，整体进度 ${plan.progress}%`,
+    '',
+    '执行原则：',
+    '1. 先确认用户是否已经认可当前详细计划；未确认时停留在 drafting / approved，不直接开始连续改代码。',
+    '2. 计划确认后，把计划状态切换到 in-progress，并优先推进 ready task；同一轮中仅把真正独立的任务并行派发给子代理。',
+    '3. 你负责给每个子代理补充上下文、文件范围、验收标准和验证命令；子代理默认提示词只是底座，不能裸用。',
+    '4. 每个任务开始前标记 in-progress，完成后标记 completed；失败时必须附带 failureOutput 并立即触发 ide_replan_plan。',
+    '5. 每完成一轮任务后刷新 PLAN.md、TASKS.md、SUBAGENTS.md、SUPERVISOR.md 与 dev-log.md，保持工作区内文档与真实执行进度一致。',
+    '6. 若 ready task 全部耗尽但计划未完成，优先检查阻塞依赖、真实代码 diff、失败反馈和是否需要动态重规划。',
+    '',
+    '当前 ready task：',
+    readyTaskLines,
+    '',
+    '当前 blocked task：',
+    blockedTaskLines,
+  ].join('\n')
+}
+
+function formatTaskTypeLabel(type: ProjectTask['type']) {
+  const map: Record<ProjectTask['type'], string> = {
+    create: '新建',
+    modify: '修改',
+    refactor: '重构',
+    test: '测试',
+    config: '配置',
+    docs: '文档',
+  }
+
+  return map[type] || type
+}
+
+function formatTaskStatusLabel(status: ProjectTaskStatus) {
+  const map: Record<ProjectTaskStatus, string> = {
+    pending: '待执行',
+    'in-progress': '执行中',
+    completed: '已完成',
+    failed: '失败',
+    skipped: '跳过',
+  }
+
+  return map[status] || status
+}
+
 /** 将 Plan 和日志写入工作区文件 */
 export async function flushPlanToWorkspace(
   workspace: IDEWorkspace,
@@ -565,10 +907,20 @@ export async function flushPlanToWorkspace(
   const api = window.electronAPI
   if (!api?.ideWriteFile) return
 
+  const executionPacket = buildPlanExecutionPacket(plan)
   const planMd = renderPlanToMarkdown(plan)
+  const tasksMd = renderExecutionTasksToMarkdown(plan, executionPacket)
+  const subAgentsMd = renderSubAgentGuideToMarkdown(plan, executionPacket)
+  const supervisorMd = renderSupervisorPromptToMarkdown(plan, executionPacket)
   const planPath = workspace.rootPath + '/.openagent/PLAN.md'
+  const tasksPath = workspace.rootPath + '/.openagent/TASKS.md'
+  const subAgentsPath = workspace.rootPath + '/.openagent/SUBAGENTS.md'
+  const supervisorPath = workspace.rootPath + '/.openagent/SUPERVISOR.md'
   await api.ideCreateDirectory(workspace.rootPath + '/.openagent')
   await api.ideWriteFile(planPath, planMd)
+  await api.ideWriteFile(tasksPath, tasksMd)
+  await api.ideWriteFile(subAgentsPath, subAgentsMd)
+  await api.ideWriteFile(supervisorPath, supervisorMd)
 
   if (plan.devLog.length > 0) {
     const logMd = renderDevLogToMarkdown(plan.devLog)

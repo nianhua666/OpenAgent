@@ -80,9 +80,12 @@
             :selected-plan-id="selectedPlanId"
             :replanning="replanningPlan"
             :syncing-baseline="syncingPlanBaseline"
+            :updating-plan-status="updatingPlanStatus"
             :selected-plan-drift="selectedPlanDrift"
+            :execution-packet="selectedPlanExecutionPacket"
             @select-plan="selectedPlanId = $event"
             @create-plan="createGeneratedPlanDraft"
+            @update-plan-status="handleUpdatePlanStatus"
             @replan-plan="handleReplanPlan"
             @sync-plan-baseline="handleSyncPlanBaseline"
           />
@@ -118,9 +121,9 @@ import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
-import type { IDEEditorSession, ProjectPlanDriftSummary } from '@/types'
+import type { IDEEditorSession, PlanStatus, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
 import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
-import { flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
+import { buildPlanExecutionPacket, flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
 
 interface EditorTabState {
@@ -178,6 +181,7 @@ const selectedPlanId = ref('')
 const refreshingWorkspace = ref(false)
 const replanningPlan = ref(false)
 const syncingPlanBaseline = ref(false)
+const updatingPlanStatus = ref(false)
 const selectedPlanDrift = ref<ProjectPlanDriftSummary | null>(null)
 let selectedPlanDriftRequestId = 0
 let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
@@ -195,6 +199,13 @@ const workspacePlans = computed(() => {
 })
 const selectedPlan = computed(() => {
   return workspacePlans.value.find(plan => plan.id === selectedPlanId.value) ?? workspacePlans.value[0] ?? null
+})
+const selectedPlanExecutionPacket = computed<ProjectPlanExecutionPacket | null>(() => {
+  if (!selectedPlan.value) {
+    return null
+  }
+
+  return buildPlanExecutionPacket(selectedPlan.value)
 })
 const openTabPaths = computed(() => editorTabs.value.map(tab => tab.path))
 const clipboardCount = computed(() => explorerClipboardEntries.value.length)
@@ -1446,6 +1457,68 @@ async function createPlanDraft(payload: { goal: string; overview: string; techSt
   await flushPlanToWorkspace(workspace.value, plan)
   selectedPlanId.value = plan.id
   showToast('success', '项目计划草案已创建')
+}
+
+function formatPlanStatusLabel(status: PlanStatus) {
+  const map: Record<PlanStatus, string> = {
+    drafting: '草稿中',
+    approved: '已确认',
+    'in-progress': '进行中',
+    completed: '已完成',
+    paused: '已暂停',
+  }
+
+  return map[status] || status
+}
+
+async function handleUpdatePlanStatus(payload: { planId: string; status: PlanStatus }) {
+  if (!workspace.value) {
+    return
+  }
+
+  const targetPlan = workspacePlans.value.find(plan => plan.id === payload.planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可更新状态的项目计划')
+    return
+  }
+
+  if (payload.status === 'completed' && targetPlan.progress < 100) {
+    const shouldContinue = window.confirm(`当前计划进度只有 ${targetPlan.progress}%，仍要手动标记为已完成吗？`)
+    if (!shouldContinue) {
+      return
+    }
+  }
+
+  updatingPlanStatus.value = true
+  try {
+    aiStore.updateProjectPlanStatus(targetPlan.id, payload.status)
+    aiStore.addDevLog(targetPlan.id, {
+      type: 'decision',
+      title: `计划状态切换为${formatPlanStatusLabel(payload.status)}`,
+      content: [
+        `计划「${targetPlan.goal}」的执行状态已切换为 ${formatPlanStatusLabel(payload.status)}。`,
+        payload.status === 'approved' ? '当前阶段进入用户确认后的可执行状态，主代理可开始整理执行队列与子代理分工。' : '',
+        payload.status === 'in-progress' ? '主代理现在应按 `.openagent/TASKS.md` 和 `.openagent/SUBAGENTS.md` 持续推进任务，并在必要时并行派发子代理。' : '',
+        payload.status === 'paused' ? '执行已暂停，后续恢复前应先确认当前阻塞、上下文变化和待处理风险。' : '',
+        payload.status === 'completed' ? '计划已进入完成态，建议同步最终报告、验证结论与交付说明。' : '',
+      ].filter(Boolean).join(''),
+      metadata: {
+        workspaceId: workspace.value.id,
+        status: payload.status,
+      },
+    })
+
+    const updatedPlan = aiStore.getProjectPlan(targetPlan.id)
+    if (updatedPlan) {
+      await flushPlanToWorkspace(workspace.value, updatedPlan)
+    }
+    await refreshSelectedPlanDrift({ silent: true })
+    showToast('success', `计划状态已更新为${formatPlanStatusLabel(payload.status)}`)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '更新计划状态失败')
+  } finally {
+    updatingPlanStatus.value = false
+  }
 }
 
 async function handleSyncPlanBaseline(planId: string) {

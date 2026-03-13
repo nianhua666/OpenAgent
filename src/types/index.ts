@@ -652,6 +652,43 @@ export interface ProjectTask {
   order: number
 }
 
+export interface ProjectTaskExecutionBrief {
+  planId: string
+  phaseId: string
+  phaseName: string
+  taskId: string
+  taskTitle: string
+  taskType: ProjectTaskType
+  recommendedTemplateId: string
+  recommendedAgentName: string
+  recommendedRole: string
+  dependencyTitles: string[]
+  files: string[]
+  executionPrompt: string
+  supervisionNotes: string[]
+}
+
+export interface ProjectTaskBlocker {
+  taskId: string
+  phaseId: string
+  phaseName: string
+  taskTitle: string
+  dependencyTitles: string[]
+}
+
+export interface ProjectPlanExecutionPacket {
+  planId: string
+  status: PlanStatus
+  progress: number
+  readyTaskCount: number
+  blockedTaskCount: number
+  nextTaskId: string | null
+  nextTaskTitle: string | null
+  readyTasks: ProjectTaskExecutionBrief[]
+  blockedTasks: ProjectTaskBlocker[]
+  supervisorPrompt: string
+}
+
 export interface ProjectPlanWorkspaceDiff {
   added: string[]
   removed: string[]

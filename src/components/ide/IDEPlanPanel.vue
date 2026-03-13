@@ -16,6 +16,16 @@
     </div>
 
     <div v-if="selectedPlan" class="plan-actions">
+      <button
+        v-for="action in planStatusActions"
+        :key="action.status"
+        class="btn btn-ghost btn-sm"
+        :disabled="replanning || syncingBaseline || updatingPlanStatus"
+        type="button"
+        @click="emit('update-plan-status', { planId: selectedPlan.id, status: action.status })"
+      >
+        {{ action.label }}
+      </button>
       <button class="btn btn-ghost btn-sm" :disabled="replanning || syncingBaseline" type="button" @click="emit('sync-plan-baseline', selectedPlan.id)">
         {{ syncingBaseline ? '同步中...' : '同步基线' }}
       </button>
@@ -55,6 +65,55 @@
           <span>{{ statusLabel(selectedPlan.status) }}</span>
           <span>{{ selectedPlan.progress }}%</span>
           <span>{{ selectedPlan.techStack.join(' / ') || '未填写技术栈' }}</span>
+        </div>
+      </div>
+
+      <div v-if="executionPacket" class="execution-panel">
+        <div class="execution-head">
+          <strong>执行编排</strong>
+          <div class="execution-head-actions">
+            <button class="btn btn-ghost btn-sm" type="button" @click="copyPrompt(executionPacket.supervisorPrompt, '主代理监督提示词')">
+              复制主代理提示词
+            </button>
+            <span class="execution-badge">{{ executionPacket.readyTaskCount }} 个 ready task</span>
+          </div>
+        </div>
+        <p class="execution-summary">
+          {{ executionSummary }}
+        </p>
+        <details class="execution-details">
+          <summary>查看主代理监督提示词</summary>
+          <pre>{{ executionPacket.supervisorPrompt }}</pre>
+        </details>
+
+        <div v-if="executionPacket.readyTasks.length > 0" class="execution-task-list">
+          <article v-for="task in executionPacket.readyTasks" :key="task.taskId" class="execution-task-card">
+            <div class="execution-task-head">
+              <strong>{{ task.phaseName }} / {{ task.taskTitle }}</strong>
+              <div class="execution-task-actions">
+                <span>{{ task.recommendedAgentName }}</span>
+                <button class="btn btn-ghost btn-sm" type="button" @click="copyPrompt(task.executionPrompt, `${task.taskTitle} 子代理提示词`)">
+                  复制提示词
+                </button>
+              </div>
+            </div>
+            <p class="execution-task-role">{{ task.recommendedRole }}</p>
+            <div v-if="task.files.length > 0" class="execution-chip-row">
+              <span v-for="file in task.files" :key="file" class="execution-chip">{{ file }}</span>
+            </div>
+            <details class="execution-details">
+              <summary>查看子代理提示词</summary>
+              <pre>{{ task.executionPrompt }}</pre>
+            </details>
+          </article>
+        </div>
+
+        <div v-if="executionPacket.blockedTasks.length > 0" class="execution-blockers">
+          <strong>当前阻塞</strong>
+          <div v-for="task in executionPacket.blockedTasks" :key="task.taskId" class="execution-blocker-item">
+            <span>{{ task.phaseName }} / {{ task.taskTitle }}</span>
+            <small>等待 {{ task.dependencyTitles.join('、') || '前置任务' }}</small>
+          </div>
         </div>
       </div>
 
@@ -98,14 +157,17 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ProjectPlan, ProjectPlanDriftSummary } from '@/types'
+import type { PlanStatus, ProjectPlan, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
+import { showToast } from '@/utils/toast'
 
 const props = defineProps<{
   plans: ProjectPlan[]
   selectedPlanId: string
   replanning?: boolean
   syncingBaseline?: boolean
+  updatingPlanStatus?: boolean
   selectedPlanDrift?: ProjectPlanDriftSummary | null
+  executionPacket?: ProjectPlanExecutionPacket | null
 }>()
 
 const emit = defineEmits<{
@@ -113,6 +175,7 @@ const emit = defineEmits<{
   (event: 'create-plan', payload: { goal: string; overview: string; techStack: string[] }): void
   (event: 'replan-plan', planId: string): void
   (event: 'sync-plan-baseline', planId: string): void
+  (event: 'update-plan-status', payload: { planId: string; status: PlanStatus }): void
 }>()
 
 const goal = ref('')
@@ -123,7 +186,49 @@ const selectedPlan = computed(() => props.plans.find(plan => plan.id === props.s
 const canCreatePlan = computed(() => goal.value.length > 0 && overview.value.length > 0 && techStack.value.length > 0)
 const replanning = computed(() => props.replanning === true)
 const syncingBaseline = computed(() => props.syncingBaseline === true)
+const updatingPlanStatus = computed(() => props.updatingPlanStatus === true)
 const selectedPlanDrift = computed(() => props.selectedPlanDrift ?? null)
+const executionPacket = computed(() => props.executionPacket ?? null)
+const planStatusActions = computed<Array<{ status: PlanStatus; label: string }>>(() => {
+  if (!selectedPlan.value) {
+    return []
+  }
+
+  if (selectedPlan.value.status === 'drafting') {
+    return [{ status: 'approved', label: '确认计划' }]
+  }
+
+  if (selectedPlan.value.status === 'approved') {
+    return [{ status: 'in-progress', label: '开始执行' }]
+  }
+
+  if (selectedPlan.value.status === 'in-progress') {
+    return [
+      { status: 'paused', label: '暂停执行' },
+      ...(selectedPlan.value.progress >= 100 ? [{ status: 'completed' as PlanStatus, label: '标记完成' }] : []),
+    ]
+  }
+
+  if (selectedPlan.value.status === 'paused') {
+    return [{ status: 'in-progress', label: '恢复执行' }]
+  }
+
+  return []
+})
+const executionSummary = computed(() => {
+  if (!executionPacket.value) {
+    return ''
+  }
+
+  if (executionPacket.value.readyTaskCount === 0) {
+    return executionPacket.value.blockedTaskCount > 0
+      ? '当前没有可立即执行的任务，主代理应优先处理依赖阻塞、基线同步或动态重规划。'
+      : '当前没有 ready task，可先复核计划状态、最近变更与是否需要继续拆分任务。'
+  }
+
+  const nextTaskLabel = executionPacket.value.nextTaskTitle ? `下一优先任务是「${executionPacket.value.nextTaskTitle}」` : '下一优先任务已生成'
+  return `${nextTaskLabel}。当前可立即执行 ${executionPacket.value.readyTaskCount} 个任务，主代理可根据共享文件与状态耦合度决定串行或并行派发。`
+})
 const driftHeadline = computed(() => {
   if (!selectedPlanDrift.value) {
     return ''
@@ -218,6 +323,25 @@ function submitPlan() {
   overview.value = ''
   techStack.value = ''
 }
+
+async function copyPrompt(text: string, label: string) {
+  if (!text.trim()) {
+    showToast('error', `${label}为空`)
+    return
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    showToast('error', '当前环境不支持剪贴板写入')
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast('success', `${label}已复制`)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : `${label}复制失败`)
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -265,6 +389,7 @@ function submitPlan() {
 
 .plan-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: $spacing-sm;
 }
@@ -358,6 +483,97 @@ function submitPlan() {
   justify-content: flex-start;
   color: var(--text-muted);
   font-size: $font-xs;
+}
+
+.execution-panel {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-sm;
+  border: 1px solid rgba(var(--primary-rgb, 232 120 154), 0.12);
+  border-radius: $border-radius-sm;
+  background: rgba(var(--primary-rgb, 232 120 154), 0.06);
+}
+
+.execution-head,
+.execution-task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.execution-head-actions,
+.execution-task-actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.execution-badge,
+.execution-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
+  font-size: $font-xs;
+  font-weight: 700;
+}
+
+.execution-summary,
+.execution-task-role {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.execution-task-list,
+.execution-blockers {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.execution-task-card,
+.execution-blocker-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: $spacing-sm;
+  border-radius: $border-radius-sm;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.execution-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.execution-details {
+  summary {
+    cursor: pointer;
+    color: var(--primary);
+    font-size: $font-xs;
+    font-weight: 700;
+  }
+
+  pre {
+    margin-top: $spacing-sm;
+    padding: $spacing-sm;
+    border-radius: $border-radius-sm;
+    background: rgba(14, 25, 42, 0.06);
+    color: var(--text-primary);
+    font-family: 'Cascadia Code', 'Consolas', 'SFMono-Regular', monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 .phase-list {

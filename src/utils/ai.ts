@@ -2958,6 +2958,22 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
       {
         type: 'function',
         function: {
+          name: 'ide_update_plan_status',
+          description: '更新当前项目计划的执行状态。适用于用户确认计划后切换到 approved / in-progress，也适用于暂停或完成时同步状态与文档。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' },
+              status: { type: 'string', enum: ['drafting', 'approved', 'in-progress', 'completed', 'paused'], description: '目标计划状态' },
+              note: { type: 'string', description: '可选：状态变更说明，将写入开发日志' }
+            },
+            required: ['planId', 'status']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
           name: 'ide_advance_task',
           description: '更新项目计划中某个任务的状态。自动同步阶段进度和开发日志；若任务失败，会结合失败反馈和当前上下文自动触发动态重规划。',
           parameters: {
