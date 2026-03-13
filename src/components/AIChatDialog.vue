@@ -32,6 +32,9 @@
         </svg>
         <p>请先在<strong>主窗口 → 设置 → AI 设置</strong>中配置服务地址、模型和鉴权信息；如果使用本地 Ollama，API Key 可留空</p>
         <button class="btn btn-primary btn-sm" @click="openSettings">前往设置</button>
+        <div class="sub2api-bridge-wrap">
+          <Sub2ApiAgentBridge compact settings-mode="emit" @open-settings="openSettings" />
+        </div>
       </div>
 
       <!-- 对话区域 -->
@@ -41,7 +44,7 @@
             <div class="manager-head">
               <div class="manager-copy">
                 <strong>会话管理</strong>
-                <span>Live2D 会话会同步显示到主窗口 AI 助手。</span>
+                <span>Live2D 会话会同步显示到主窗口 Agent。</span>
               </div>
               <button class="panel-icon-btn" title="主窗口查看" @click="openMainView">
                 <svg width="14" height="14"><use href="#icon-menu"/></svg>
@@ -117,6 +120,8 @@
               </div>
 
               <div v-if="modelLoadError" class="model-load-error">{{ modelLoadError }}</div>
+
+              <Sub2ApiAgentBridge compact settings-mode="emit" @open-settings="openSettings" />
             </div>
 
             <div class="chat-messages" ref="messagesRef">
@@ -311,6 +316,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
+import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
@@ -325,6 +331,8 @@ const props = defineProps<{
   scope?: AIConversationScope
   title?: string
   subtitle?: string
+  nativeWindowDrag?: boolean
+  showSessionManager?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -352,9 +360,9 @@ const autoPlayedMessageId = ref('')
 const defaultLive2DSessionTitle = 'Live2D'
 
 const chatScope = computed(() => props.scope || 'main')
-const showSessionManager = computed(() => chatScope.value === 'live2d')
-const useNativeWindowDrag = computed(() => chatScope.value === 'live2d')
-const dialogTitle = computed(() => props.title || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'AI 助手'))
+const showSessionManager = computed(() => typeof props.showSessionManager === 'boolean' ? props.showSessionManager : chatScope.value === 'live2d')
+const useNativeWindowDrag = computed(() => typeof props.nativeWindowDrag === 'boolean' ? props.nativeWindowDrag : chatScope.value === 'live2d')
+const dialogTitle = computed(() => props.title || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'Agent'))
 const dialogSubtitle = computed(() => props.subtitle || (chatScope.value === 'live2d' ? '独立记忆与自动语音' : '主窗口文本对话'))
 const emptyHint = computed(() => chatScope.value === 'live2d'
   ? '这是 Live2D 的独立对话空间，会单独保存长期记忆，并默认自动播报助手回复。'
@@ -419,6 +427,8 @@ const currentModelMeta = computed(() => {
 const currentModelBadges = computed(() => {
   const gatewayBadges = aiConfig.value.connectionTemplate === 'sub2api-antigravity'
     ? ['Sub2API', 'Antigravity']
+    : aiConfig.value.connectionTemplate === 'sub2api-gemini'
+      ? ['Sub2API', 'Gemini']
     : aiConfig.value.connectionTemplate === 'sub2api-openai'
       ? ['Sub2API', 'Responses']
       : aiConfig.value.connectionTemplate === 'sub2api-claude'
@@ -1274,6 +1284,10 @@ onBeforeUnmount(() => {
     color: var(--text-secondary);
     line-height: 1.6;
   }
+}
+
+.sub2api-bridge-wrap {
+  width: 100%;
 }
 
 .chat-top-panel {

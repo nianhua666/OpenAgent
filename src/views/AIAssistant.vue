@@ -1,7 +1,7 @@
 <template>
   <div class="ai-page">
     <div class="ai-page-head">
-      <h2 class="page-title">AI 助手</h2>
+      <h2 class="page-title">Agent</h2>
 
       <div class="tab-bar">
         <button class="tab-btn" :class="{ active: activeTab === 'chat' }" @click="activeTab = 'chat'">
@@ -74,6 +74,9 @@
             </svg>
             <p>当前还没有可用的 AI 服务配置。请先在设置页填写服务地址、模型和鉴权信息。</p>
             <button class="btn btn-primary btn-sm" @click="openSettingsPage">前往 AI 设置</button>
+            <div class="sub2api-bridge-wrap">
+              <Sub2ApiAgentBridge />
+            </div>
           </div>
 
           <template v-else>
@@ -106,6 +109,10 @@
                 </div>
                 <span v-if="modelLoadError" class="control-error">{{ modelLoadError }}</span>
               </div>
+            </div>
+
+            <div class="sub2api-bridge-wrap">
+              <Sub2ApiAgentBridge />
             </div>
 
             <div ref="messagesRef" class="chat-panel-scroll">
@@ -320,7 +327,7 @@
           </div>
 
           <div class="memory-description">
-            <p>长期记忆帮助 AI 助手记住你的偏好、重要信息和上下文。这些记忆会自动注入每次对话的系统提示中。</p>
+            <p>长期记忆帮助 Agent 记住你的偏好、重要信息和上下文。这些记忆会自动注入每次对话的系统提示中。</p>
           </div>
 
           <!-- 添加记忆表单 -->
@@ -394,6 +401,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
+import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
@@ -503,6 +511,8 @@ const currentModelMeta = computed(() => {
 const currentModelBadges = computed(() => {
   const gatewayBadges = aiConfig.value.connectionTemplate === 'sub2api-antigravity'
     ? ['Sub2API', 'Antigravity']
+    : aiConfig.value.connectionTemplate === 'sub2api-gemini'
+      ? ['Sub2API', 'Gemini']
     : aiConfig.value.connectionTemplate === 'sub2api-openai'
       ? ['Sub2API', 'Responses']
       : aiConfig.value.connectionTemplate === 'sub2api-claude'
@@ -1648,6 +1658,10 @@ onBeforeUnmount(() => {
 .chat-unconfigured {
   flex: 1;
   justify-content: center;
+}
+
+.sub2api-bridge-wrap {
+  width: min(100%, 820px);
 }
 
 .panel-empty {

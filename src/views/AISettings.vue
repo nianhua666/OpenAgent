@@ -6,7 +6,8 @@
         <p>统一管理模型连接、上下文策略、Windows MCP 开关，以及托管 MCP 与 skills 的扩展能力。</p>
       </div>
       <div class="hero-actions">
-        <button class="btn btn-primary btn-sm" @click="openAIAssistantPage">打开 AI 助手</button>
+        <button class="btn btn-primary btn-sm" @click="openAIAssistantPage">打开 Agent</button>
+        <button class="btn btn-secondary btn-sm" @click="openAIOverlayWindow">打开 AI 悬浮窗</button>
         <button class="btn btn-secondary btn-sm" @click="openGeneralSettingsPage">返回通用设置</button>
       </div>
     </section>
@@ -74,8 +75,8 @@
         <div class="sub2api-panel-head">
           <div class="sub2api-panel-copy">
             <span class="provider-card-tag">Sub2API</span>
-            <strong>内嵌 Sub2API</strong>
-            <p>Sub2API 现在不只是外部兼容入口，而是可以由 OpenAgent 本机直接管理的内嵌桌面网关。这里保留快捷切路由，完整运行时、模型目录和 Codex 模板统一放到独立 Sub2API 页面维护。</p>
+            <strong>Sub2API 轻量接入</strong>
+            <p>这里聚焦账号池、模型路由、API Key 与 AI 绑定。OpenAgent 仍可直接管理本地 Sub2API 运行时，但复杂初始化和原始后台被收口到独立页面，主设置页只保留最常用接入动作。</p>
           </div>
           <div class="sub2api-panel-status">
             <strong>{{ usingSub2ApiTemplate ? activeSub2ApiPreset?.title : '未启用模板' }}</strong>
@@ -93,7 +94,7 @@
         <div class="sub2api-root-row">
           <div class="setting-label">
             <div class="label-main">{{ sub2ApiGatewayInputLocked ? '本地网关地址' : '网关根地址' }}</div>
-            <div class="label-desc">{{ sub2ApiGatewayInputLocked ? '桌面模式下由 Sub2API 页面统一管理主机、端口和运行时；这里仅展示当前本地地址。' : '填写 Sub2API 服务器根地址，不要带 /v1、/messages、/chat/completions 或 /antigravity/v1。' }}</div>
+            <div class="label-desc">{{ sub2ApiGatewayInputLocked ? '桌面模式下由 Sub2API 页面统一管理主机、端口和运行时；这里仅展示当前本地地址。' : '填写 Sub2API 服务器根地址，不要带 /v1、/v1beta、/messages、/chat/completions、:generateContent，或 /antigravity/v1。' }}</div>
           </div>
           <div class="ai-input-stack">
             <input
@@ -103,7 +104,7 @@
               :readonly="sub2ApiGatewayInputLocked"
               @input="handleSub2ApiGatewayRootInput(($event.target as HTMLInputElement).value)"
             />
-            <span class="field-tip">{{ activeSub2ApiPreset ? activeSub2ApiPreset.routeHint.replace('{gateway}', sub2ApiEffectiveGatewayRoot || sub2ApiGatewayRoot || SUB2API_GATEWAY_PLACEHOLDER) : '选择下方任一路由后，会自动生成可用的 Base URL。' }}</span>
+            <span class="field-tip">{{ sub2ApiRouteHint }}</span>
           </div>
         </div>
 
@@ -143,7 +144,7 @@
                 </button>
               </div>
             </div>
-            <span class="field-tip">检查会发送极小请求，用于验证当前 API Key、模型与网关路由是否真的可用。{{ sub2ApiDesktopModeEnabled ? '桌面模式下请先确保本地网关已经启动；若是首次运行，可以先打开后台完成 setup。' : 'OpenAI 路由会额外验证 Responses，专门检查 Codex 额度路径。' }}</span>
+            <span class="field-tip">检查会发送极小请求，用于验证当前 API Key、模型与网关路由是否真的可用。{{ sub2ApiDesktopModeEnabled ? '桌面模式下请先确保本地网关已经启动；若是首次运行，可以先打开后台完成 setup。' : 'OpenAI 路由会优先验证 /responses；如果服务端仍保留 legacy 兼容层，会额外检查 /chat/completions。' }}</span>
             <div v-if="sub2ApiCheckItems.length" class="sub2api-check-list">
               <div v-for="item in sub2ApiCheckItems" :key="item.id" class="sub2api-check-item" :class="`is-${item.state}`">
                 <div class="sub2api-check-copy">
@@ -345,7 +346,7 @@
           <div class="label-main">系统提示词</div>
           <div class="label-desc">这里适合写全局角色约束；具体稳定规则更建议写成下方的统一 Skills。</div>
         </div>
-        <textarea class="setting-textarea" :value="aiConfig.systemPrompt" rows="6" placeholder="定义 AI 助手的角色和行为..." @change="updateAIConfig('systemPrompt', ($event.target as HTMLTextAreaElement).value)" />
+        <textarea class="setting-textarea" :value="aiConfig.systemPrompt" rows="6" placeholder="定义 Agent 的角色和行为..." @change="updateAIConfig('systemPrompt', ($event.target as HTMLTextAreaElement).value)" />
       </div>
     </section>
 
@@ -394,7 +395,7 @@
       <div class="setting-row">
         <div class="setting-label">
           <div class="label-main">Live2D 自动播报</div>
-          <div class="label-desc">开启后，悬浮窗里的 AI 助手回复会在生成完成后自动朗读；适合把 Live2D 当作陪伴式聊天入口。</div>
+          <div class="label-desc">开启后，悬浮窗里的 Agent 回复会在生成完成后自动朗读；适合把 Live2D 当作陪伴式聊天入口。</div>
         </div>
         <div class="ai-toggle-group">
           <span class="ai-inline-status" :class="{ 'is-enabled': settings.ttsAutoPlayLive2D, 'is-disabled': !settings.ttsAutoPlayLive2D }">
@@ -678,8 +679,9 @@ import {
   buildSub2ApiBaseUrl,
   createSub2ApiCodexAuthJson,
   createSub2ApiCodexConfigToml,
-  getSub2ApiPreferredModel
-  ,normalizeSub2ApiGatewayRoot,
+  getSub2ApiPreferredModel,
+  getSub2ApiRuntimePresentation,
+  normalizeSub2ApiGatewayRoot,
   resolveSub2ApiMode,
   type Sub2ApiCheckItem,
   type Sub2ApiMode
@@ -802,6 +804,20 @@ const AI_PROTOCOL_PRESETS: Record<AIProtocol, AIProtocolPreset> = {
     modelPlaceholder: 'claude-3-7-sonnet-latest',
     supportsModelFetch: true
   },
+  gemini: {
+    label: 'Gemini 原生',
+    tag: 'Google',
+    description: '走 Gemini v1beta 原生 REST',
+    protocolDescription: 'Gemini 原生协议，自动走 /v1beta/models 与 :generateContent / :streamGenerateContent。适合 Google AI Studio、Gemini CLI 和兼容 Gemini REST 的第三方网关。',
+    apiKeyDescription: 'Gemini API Key 或兼容网关签发的密钥。客户端会优先放到 x-goog-api-key，并附带 Bearer 头以兼容部分代理。',
+    baseUrlDescription: '填写 Gemini 服务的 v1beta 根地址，不要锁死到具体 models/{model}:generateContent 接口。',
+    modelDescription: '指定 Gemini 模型，例如 gemini-2.5-flash、gemini-2.5-pro。',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    model: 'gemini-2.5-flash',
+    baseUrlPlaceholder: 'https://generativelanguage.googleapis.com/v1beta',
+    modelPlaceholder: 'gemini-2.5-flash',
+    supportsModelFetch: true
+  },
   'ollama-local': {
     label: 'Ollama 本地',
     tag: '本机',
@@ -834,9 +850,9 @@ const AI_PROTOCOL_PRESETS: Record<AIProtocol, AIProtocolPreset> = {
     label: '自定义',
     tag: '自定义',
     description: '给自建网关或第三方 API 用',
-    protocolDescription: '自定义协议入口，由你自行提供兼容地址与模型名',
+    protocolDescription: '自定义协议入口。客户端会根据 Base URL 和模型名自动识别 OpenAI / Anthropic / Gemini 风格；如果不想自动识别，也可以直接切到上方明确协议。',
     apiKeyDescription: '按你的服务要求填写认证密钥',
-    baseUrlDescription: '填写完整的 API 基础地址或直接填到具体聊天接口',
+    baseUrlDescription: '填写 API 基础地址。若地址里已经带 /messages、/v1beta、/responses 等特征路径，客户端会自动归类到底层协议。',
     modelDescription: '填写服务端实际识别的模型名称',
     baseUrl: '',
     model: '',
@@ -860,32 +876,27 @@ const usingSub2ApiTemplate = computed(() => activeSub2ApiPreset.value !== null)
 const sub2ApiModeOptions = Object.values(SUB2API_MODE_PRESETS)
 const sub2ApiDesktopModeEnabled = computed(() => sub2ApiStore.desktopModeEnabled)
 const sub2ApiRuntimeState = computed(() => sub2ApiStore.runtimeState)
+const sub2ApiRuntimePresentation = computed(() => getSub2ApiRuntimePresentation(sub2ApiRuntimeState.value, sub2ApiStore.config.gatewayMode))
 const sub2ApiEffectiveGatewayRoot = computed(() => sub2ApiStore.effectiveGatewayRoot || sub2ApiGatewayRoot.value)
 const sub2ApiGatewayInputLocked = computed(() => sub2ApiDesktopModeEnabled.value)
 const sub2ApiGatewayAdminUrl = computed(() => normalizeSub2ApiGatewayRoot(sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value))
 const sub2ApiOpenAIBaseUrl = computed(() => buildSub2ApiBaseUrl(sub2ApiGatewayAdminUrl.value, 'openai'))
+const sub2ApiRouteHint = computed(() => {
+  if (!activeSub2ApiPreset.value) {
+    return '选择下方任一路由后，会自动生成可用的 Base URL。'
+  }
+
+  const gateway = sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value || SUB2API_GATEWAY_PLACEHOLDER
+  const model = aiConfig.value.model.trim() || activeSub2ApiPreset.value.recommendedModel
+  return activeSub2ApiPreset.value.routeHint
+    .replace('{gateway}', gateway)
+    .replace('{model}', model)
+})
 const sub2ApiResolvedRoute = computed(() => {
-  const mode = activeSub2ApiMode.value || 'claude'
+  const mode = activeSub2ApiMode.value || (aiConfig.value.protocol === 'gemini' ? 'gemini' : aiConfig.value.protocol === 'openai' ? 'openai' : 'claude')
   return buildSub2ApiBaseUrl(sub2ApiEffectiveGatewayRoot.value || sub2ApiGatewayRoot.value, mode)
 })
-const sub2ApiRuntimeStatusLabel = computed(() => {
-  switch (sub2ApiRuntimeState.value.status) {
-    case 'running':
-      return sub2ApiRuntimeState.value.healthy ? '本地网关运行中' : '本地服务已启动'
-    case 'starting':
-      return '本地网关启动中'
-    case 'stopping':
-      return '本地网关停止中'
-    case 'error':
-      return '本地网关异常'
-    case 'unavailable':
-      return '本地网关不可用'
-    case 'missing-binary':
-      return '缺少本地二进制'
-    default:
-      return '本地网关未启动'
-  }
-})
+const sub2ApiRuntimeStatusLabel = computed(() => sub2ApiRuntimePresentation.value.label)
 const displayedAiModels = computed(() => {
   if (!usingSub2ApiTemplate.value) {
     return availableAiModels.value
@@ -897,11 +908,11 @@ const displayedAiModels = computed(() => {
 })
 const sub2ApiQuickModels = computed(() => displayedAiModels.value.slice(0, 6))
 const sub2ApiPreferredAiModel = computed(() => getSub2ApiPreferredModel(sub2ApiStore.config, activeSub2ApiMode.value || sub2ApiStore.config.activeMode))
-const sub2ApiCodexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai')))
+const sub2ApiCodexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai'), sub2ApiRuntimeState.value))
 const sub2ApiCodexAuthJson = computed(() => createSub2ApiCodexAuthJson(aiConfig.value.apiKey.trim() || sub2ApiStore.config.apiKey.trim()))
 const sub2ApiCheckSummary = computed(() => {
   if (checkingSub2ApiCapabilities.value) {
-    return '检查中，会发送极小请求验证模型列表、当前路由和 Codex / Responses 路径。'
+    return '检查中，会发送极小请求验证模型列表、当前主路由和 Codex / Responses 路径。'
   }
 
   if (sub2ApiCheckItems.value.length === 0) {
@@ -970,6 +981,10 @@ const aiBaseUrlHint = computed(() => {
     return '当前默认使用官方云端网关 https://ollama.com/api。'
   }
 
+  if (aiConfig.value.protocol === 'gemini') {
+    return '建议填写 v1beta 根地址，不要把 Base URL 锁死到 models/{model}:generateContent。'
+  }
+
   return '建议填写基础地址，不要把路径锁死到单个接口。'
 })
 const aiConnectionHint = computed(() => {
@@ -989,11 +1004,15 @@ const aiConnectionHint = computed(() => {
     return '使用 Claude 官方 Messages API；模型列表提供常用官方型号。'
   }
 
-  if (aiConfig.value.protocol === 'custom') {
-    return '自定义模式假设你的服务兼容常见模型枚举接口；如不兼容，可手动输入模型名。'
+  if (aiConfig.value.protocol === 'gemini') {
+    return 'Gemini 原生模式会调用 /v1beta/models 与 :generateContent / :streamGenerateContent，并优先使用 x-goog-api-key 鉴权。'
   }
 
-  return 'OpenAI 兼容模式支持常见 /models 接口。'
+  if (aiConfig.value.protocol === 'custom') {
+    return '自定义模式会根据地址和模型名自动识别 OpenAI / Anthropic / Gemini 风格；如果服务端是 Responses-only 或仍保留 chat/completions，客户端也会自动兼容回退。'
+  }
+
+  return 'OpenAI 兼容模式支持常见 /models 接口，并会在 /responses 与 /chat/completions 之间自动兼容回退。'
 })
 const aiModelSelectPlaceholder = computed(() => canFetchAIModels.value ? '先读取可用模型，或继续手动输入' : '当前地址不可读取模型列表')
 const aiModelStatusMessage = computed(() => aiModelStatus.value)
@@ -1252,6 +1271,7 @@ const showRuntimeSection = computed(() => !normalizedSearchQuery.value || matche
   'Sub2API',
   'Antigravity',
   'Claude',
+  'Gemini',
   'OpenAI',
   'API Key',
   'Base URL',
@@ -1433,7 +1453,6 @@ async function applySub2ApiMode(mode: Sub2ApiMode) {
     apiKey: nextApiKey,
     activeMode: mode
   }
-  const nextBaseUrl = buildSub2ApiBaseUrl(normalizedRoot, mode)
   const shouldReplaceModel = !aiConfig.value.model.trim()
     || aiConfig.value.connectionTemplate !== preset.connectionTemplate
     || aiConfig.value.model === currentPreset.model
@@ -1453,10 +1472,10 @@ async function applySub2ApiMode(mode: Sub2ApiMode) {
   })
 
   await aiStore.updateConfig({
-    ...buildSub2ApiAiPatch(nextConfig, mode),
+    ...buildSub2ApiAiPatch(nextConfig, mode, sub2ApiRuntimeState.value),
     protocol: preset.protocol,
     connectionTemplate: preset.connectionTemplate,
-    baseUrl: nextBaseUrl,
+    baseUrl: buildSub2ApiBaseUrl(sub2ApiGatewayAdminUrl.value || normalizedRoot, mode),
     ...(shouldReplaceModel ? { model: getSub2ApiPreferredModel(nextConfig, mode) } : {})
   })
 }
@@ -1559,7 +1578,7 @@ async function runSub2ApiCapabilityCheck() {
     return
   }
 
-  const currentMode = activeSub2ApiMode.value || (aiConfig.value.protocol === 'openai' ? 'openai' : 'claude')
+  const currentMode = activeSub2ApiMode.value || (aiConfig.value.protocol === 'gemini' ? 'gemini' : aiConfig.value.protocol === 'openai' ? 'openai' : 'claude')
   checkingSub2ApiCapabilities.value = true
   sub2ApiCheckItems.value = []
 
@@ -1698,6 +1717,15 @@ function applyOfficialPreset() {
 }
 
 function openAIAssistantPage() {
+  void router.push('/ai')
+}
+
+function openAIOverlayWindow() {
+  if (window.electronAPI?.showAIOverlayWindow) {
+    window.electronAPI.showAIOverlayWindow()
+    return
+  }
+
   void router.push('/ai')
 }
 

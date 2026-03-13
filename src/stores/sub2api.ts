@@ -44,7 +44,35 @@ type Sub2ApiDesktopSetupPatch = {
 
 type Sub2ApiDesktopManagedPatch = Partial<Sub2ApiStoredConfig['desktopManaged']>
 
+type Sub2ApiSetupDependencyState = {
+  checkedAt: number
+  success: boolean | null
+  message: string
+  details: string
+}
+
+type Sub2ApiSetupDependencyRegistry = {
+  database: Sub2ApiSetupDependencyState
+  redis: Sub2ApiSetupDependencyState
+}
+
 let electronSub2ApiSyncBound = false
+
+function createEmptySetupDependencyState(label: string): Sub2ApiSetupDependencyState {
+  return {
+    checkedAt: 0,
+    success: null,
+    message: `${label} 未测试`,
+    details: ''
+  }
+}
+
+function createEmptySetupDependencyRegistry(): Sub2ApiSetupDependencyRegistry {
+  return {
+    database: createEmptySetupDependencyState('PostgreSQL'),
+    redis: createEmptySetupDependencyState('Redis')
+  }
+}
 
 function cloneSerializable<T>(data: T): T {
   return JSON.parse(JSON.stringify(data)) as T
@@ -56,6 +84,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
   const checkRegistry = ref<Sub2ApiCheckRegistry>(createEmptySub2ApiCheckRegistry())
   const runtimeState = ref(createDefaultSub2ApiRuntimeState())
   const setupDiagnostics = ref(createEmptySub2ApiSetupDiagnostics())
+  const setupDependencies = ref<Sub2ApiSetupDependencyRegistry>(createEmptySetupDependencyRegistry())
   const loaded = ref(false)
   const loadingMode = ref<Sub2ApiMode | null>(null)
   const checkingMode = ref<Sub2ApiMode | null>(null)
@@ -80,6 +109,25 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
 
   function applySetupDiagnosticsSnapshot(snapshot: Partial<typeof setupDiagnostics.value> | null | undefined) {
     setupDiagnostics.value = normalizeSub2ApiSetupDiagnostics(snapshot)
+  }
+
+  function resetSetupDependency(key: keyof Sub2ApiSetupDependencyRegistry) {
+    setupDependencies.value = {
+      ...setupDependencies.value,
+      [key]: createEmptySetupDependencyState(key === 'database' ? 'PostgreSQL' : 'Redis')
+    }
+  }
+
+  function applySetupDependencyResult(key: keyof Sub2ApiSetupDependencyRegistry, result: Sub2ApiSetupActionResult) {
+    setupDependencies.value = {
+      ...setupDependencies.value,
+      [key]: {
+        checkedAt: Date.now(),
+        success: result.success,
+        message: result.message,
+        details: result.details
+      }
+    }
   }
 
   function bindElectronStoreSync() {
@@ -253,6 +301,14 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
         }
       })
     })
+
+    if (partial.database) {
+      resetSetupDependency('database')
+    }
+
+    if (partial.redis) {
+      resetSetupDependency('redis')
+    }
   }
 
   async function setPreferredModel(mode: Sub2ApiMode, model: string) {
@@ -276,7 +332,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     loadingMode.value = mode
 
     try {
-      const models = await fetchSub2ApiModels(config.value, mode, signal)
+      const models = await fetchSub2ApiModels(config.value, mode, signal, runtimeState.value)
       modelRegistry.value = {
         ...modelRegistry.value,
         [mode]: {
@@ -320,7 +376,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     checkingMode.value = mode
 
     try {
-      const items = await runSub2ApiCapabilityCheck(config.value, mode, modelOverride)
+      const items = await runSub2ApiCapabilityCheck(config.value, mode, modelOverride, runtimeState.value)
       checkRegistry.value = {
         ...checkRegistry.value,
         [mode]: items
@@ -469,12 +525,32 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     }
   }
 
+  async function runSetupDatabaseCheck() {
+    if (!window.electronAPI?.sub2ApiTestSetupDatabase) {
+      throw new Error('桌面初始化向导仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiTestSetupDatabase(toSetupDatabasePayload(), toRuntimePayload())
+    applySetupDependencyResult('database', result)
+    return result
+  }
+
+  async function runSetupRedisCheck() {
+    if (!window.electronAPI?.sub2ApiTestSetupRedis) {
+      throw new Error('桌面初始化向导仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiTestSetupRedis(toSetupRedisPayload(), toRuntimePayload())
+    applySetupDependencyResult('redis', result)
+    return result
+  }
+
   async function testDesktopSetupDatabase() {
     setupAction.value = 'test-db'
 
     try {
       await ensureDesktopSetupRuntime()
-      const result = await window.electronAPI.sub2ApiTestSetupDatabase(toSetupDatabasePayload(), toRuntimePayload())
+      const result = await runSetupDatabaseCheck()
       await inspectDesktopSetup().catch(() => setupDiagnostics.value)
       return result
     } finally {
@@ -487,7 +563,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
 
     try {
       await ensureDesktopSetupRuntime()
-      const result = await window.electronAPI.sub2ApiTestSetupRedis(toSetupRedisPayload(), toRuntimePayload())
+      const result = await runSetupRedisCheck()
       await inspectDesktopSetup().catch(() => setupDiagnostics.value)
       return result
     } finally {
@@ -505,6 +581,18 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
       }
 
       await ensureDesktopSetupRuntime()
+      const databaseResult = await runSetupDatabaseCheck()
+      const redisResult = await runSetupRedisCheck()
+      const dependencyFailures = [
+        !databaseResult.success ? `PostgreSQL：${databaseResult.details || databaseResult.message}` : '',
+        !redisResult.success ? `Redis：${redisResult.details || redisResult.message}` : ''
+      ].filter(Boolean)
+
+      if (dependencyFailures.length > 0) {
+        await inspectDesktopSetup().catch(() => setupDiagnostics.value)
+        throw new Error(`初始化前置依赖未通过：${dependencyFailures.join('；')}`)
+      }
+
       const result = await window.electronAPI.sub2ApiInstallSetup(toSetupProfilePayload(), toRuntimePayload(), toManagedPayload())
       await refreshRuntimeState(config.value.desktopRuntime)
       await inspectDesktopSetup().catch(() => setupDiagnostics.value)
@@ -558,6 +646,17 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
   const setupNeedsInstall = computed(() => setupDiagnostics.value.status.needsSetup === true)
   const setupFormIssues = computed(() => buildSub2ApiSetupFormIssues(config.value.desktopSetup))
   const setupBlockingIssue = computed(() => setupFormIssues.value.find(item => item.level === 'error') ?? null)
+  const setupDependencyBlockingIssue = computed(() => {
+    if (setupDependencies.value.database.success === false) {
+      return `PostgreSQL 未通过：${setupDependencies.value.database.details || setupDependencies.value.database.message}`
+    }
+
+    if (setupDependencies.value.redis.success === false) {
+      return `Redis 未通过：${setupDependencies.value.redis.details || setupDependencies.value.redis.message}`
+    }
+
+    return ''
+  })
 
   return {
     config,
@@ -565,6 +664,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     checkRegistry,
     runtimeState,
     setupDiagnostics,
+    setupDependencies,
     loaded,
     loadingMode,
     checkingMode,
@@ -584,6 +684,7 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     setupNeedsInstall,
     setupFormIssues,
     setupBlockingIssue,
+    setupDependencyBlockingIssue,
     init,
     updateConfig,
     setGatewayMode,

@@ -88,6 +88,7 @@
 
 ## 当前剩余缺口
 
+- Sub2API 的核心接入能力已经不再局限于独立工作台：`/ai` 主页面与悬浮对话窗现在都补上了可复用的桥接面板，用户可以在 Agent 主链路里直接看到本地 / 外部网关状态、一键切换当前 Sub2API 路由、读取模型、同步本地专属 Key 并执行快速体检。当前剩余工作不再是“有没有入口”，而是继续把账号池状态、路由选择与自治执行器里的任务上下文做更深的一体化联动。
 - IDE 自治执行链路已经从 `.openagent/CONTEXT.md` handoff 升级到真正的 `.openagent/RUN.md` 自治调度状态机：当前会持久化自治运行状态、权限画像、建议并行度、任务领取映射、最近心跳，并在计划文档刷新时同步收口到工作区。当前剩余工作不再是“有没有调度器”，而是继续把它从“高质量状态机 + 恢复锚点”推进到“真正后台连续运行的 worker / 任务循环”。
 - 主代理委派子代理时已经会自动拉取当前接口支持的模型列表并执行子代理模型路由，落盘记录选型方式、可用模型数量和选型理由；`spawn_sub_agent` 现在也支持把 `planId` / `taskId` 显式挂到任务领取状态，便于自治调度器追踪 ready task -> 子代理 -> 结果回传的链路。当前剩余缺口是把这套模型治理继续扩展到“按 Skill / MCP / 工具权限 / 成本预算”统一调度的强约束执行层，以及支持更长生命周期的多轮子代理执行。
 - IDE 计划链路已经补齐“先生成详细计划、等待用户确认、切换计划状态、输出 `.openagent/PLAN.md` / `.openagent/TASKS.md` / `.openagent/CONTEXT.md` / `.openagent/RUN.md` / `.openagent/SUBAGENTS.md` / `.openagent/SUPERVISOR.md`、再由主代理按 ready task 监督并发”的执行协议；`IDEPlanPanel` 现在也会直接展示自治调度状态、权限统计、当前领取任务和最近心跳。当前剩余工作主要集中在把这套协议进一步收口成“可脱离前台页面持续运行”的执行器，而不是计划表达、任务树或监督提示词缺失。
@@ -182,3 +183,5 @@
 | 2026-03-13 | code | Phase 8 自治调度器状态机：`types/index.ts` / `stores/ai.ts` 新增自治运行状态、权限规则、任务领取与心跳持久化；`aiAutonomyScheduler.ts` 负责汇总 Skill / MCP / 内置工具权限画像、建议并行度与 ready task 领取状态，并在计划刷新时同步生成 `.openagent/RUN.md` |
 | 2026-03-13 | code | Phase 8 自治调度 UI/工具闭环：`IDEPlanPanel.vue` / `IDEView.vue` 新增自治调度状态卡片、运行/暂停/同步入口；`ai.ts` / `aiTools.ts` 新增 `ide_get_autonomy_run` / `ide_sync_autonomy_run`，并为 `spawn_sub_agent` 增加 `planId` / `taskId` 映射，打通任务 -> 子代理 -> 调度状态机链路 |
 | 2026-03-13 | test | Phase 8 自治调度器状态机验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 RUN.md 落盘、IDE 调度面板和自治工具链未破坏 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路 |
+| 2026-03-13 | code | Phase 8 Sub2API 主链路集成：新增 `Sub2ApiAgentBridge.vue`，把本地 / 外部网关状态、一键接管 Agent、模型读取、快速体检与本地专属 Key 同步直接下沉到 `/ai` 与悬浮对话窗；同时 `sub2api.ts` / `stores/sub2api.ts` / `AISettings.vue` / `Sub2ApiSettings.vue` 改为优先使用真实 `runtimeState` 推导 Base URL、模型读取、能力检查和 Codex 配置模板，避免桌面网关场景下的静态地址错位 |
+| 2026-03-13 | test | Phase 8 Sub2API 主链路集成验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 Agent 页面、悬浮对话窗与 `/sub2api` 工作台在新增桥接面板后仍保持关键路由可达 |

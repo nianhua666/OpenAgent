@@ -13,7 +13,7 @@ import type {
 } from '@/types'
 import { fetchAvailableModels } from '@/utils/ai'
 
-export type Sub2ApiMode = 'claude' | 'openai' | 'antigravity'
+export type Sub2ApiMode = 'claude' | 'openai' | 'gemini' | 'antigravity'
 
 export type Sub2ApiCheckState = 'success' | 'error' | 'pending'
 
@@ -59,6 +59,8 @@ export type Sub2ApiModelRegistry = Record<Sub2ApiMode, Sub2ApiModelCatalog>
 
 export type Sub2ApiCheckRegistry = Record<Sub2ApiMode, Sub2ApiCheckItem[]>
 
+export type Sub2ApiRuntimePresentationTone = 'success' | 'info' | 'warning' | 'danger'
+
 export const SUB2API_GATEWAY_PLACEHOLDER = 'https://your-sub2api.example.com'
 export const SUB2API_DESKTOP_DEFAULT_HOST = '127.0.0.1'
 export const SUB2API_DESKTOP_DEFAULT_PORT = 38080
@@ -83,14 +85,26 @@ export const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
   openai: {
     value: 'openai',
     title: 'OpenAI 路由',
-    tag: 'Chat / Responses',
-    description: '走 /v1/chat/completions 与 /v1/responses，适合 GPT、o 系列和兼容上游。',
+    tag: 'Responses 优先',
+    description: '主走 /v1/responses；如果服务端仍保留 legacy 兼容层，也可额外兼容 /v1/chat/completions。',
     protocol: 'openai',
     connectionTemplate: 'sub2api-openai',
     routeSuffix: '/v1',
     recommendedModel: 'gpt-5.4',
     connectionHint: '通过 Sub2API 的 OpenAI 路由接入，桌面端会优先走原生 Responses，适合 GPT、o 系列和 Codex 风格客户端。',
-    routeHint: '会自动映射到 {gateway}/v1/chat/completions、{gateway}/v1/responses 与 {gateway}/v1/models。'
+    routeHint: '会自动映射到 {gateway}/v1/responses 与 {gateway}/v1/models；如果服务端保留 legacy 兼容层，也可访问 {gateway}/v1/chat/completions。'
+  },
+  gemini: {
+    value: 'gemini',
+    title: 'Gemini 路由',
+    tag: 'v1beta',
+    description: '走 /v1beta/models 与 :generateContent / :streamGenerateContent，适合 Gemini 原生 REST 客户端。',
+    protocol: 'gemini',
+    connectionTemplate: 'sub2api-gemini',
+    routeSuffix: '/v1beta',
+    recommendedModel: 'gemini-2.5-flash',
+    connectionHint: '通过 Sub2API 的 Gemini 原生路由接入，适合 Google AI Studio / Gemini CLI 风格客户端与 Gemini 账号池。',
+    routeHint: '会自动映射到 {gateway}/v1beta/models，以及 {gateway}/v1beta/models/{model}:generateContent / :streamGenerateContent。'
   },
   antigravity: {
     value: 'antigravity',
@@ -476,6 +490,18 @@ export function buildSub2ApiHeaders(apiKey: string, protocol: AIProtocol) {
     }
   }
 
+  if (protocol === 'gemini') {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    }
+
+    if (apiKey.trim()) {
+      headers['x-goog-api-key'] = apiKey.trim()
+    }
+
+    return headers
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   }
@@ -495,6 +521,28 @@ export async function readSub2ApiErrorText(response: Response) {
   }
 }
 
+function isResponsesOnlyCompatibilityError(status: number, message: string) {
+  if (status < 400 || status >= 500) {
+    return false
+  }
+
+  const normalizedMessage = message.toLowerCase()
+  return normalizedMessage.includes('unsupported legacy protocol')
+    || normalizedMessage.includes('please use /v1/responses')
+    || (normalizedMessage.includes('/v1/chat/completions') && normalizedMessage.includes('not supported'))
+    || (normalizedMessage.includes('legacy protocol') && normalizedMessage.includes('/v1/responses'))
+}
+
+function normalizeGeminiModelName(model: string) {
+  return model.trim().replace(/^models\//i, '')
+}
+
+function buildGeminiGenerateContentEndpoint(baseUrl: string, model: string, stream = false) {
+  const normalizedModel = normalizeGeminiModelName(model)
+  const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
+  return `${baseUrl}/models/${encodeURIComponent(normalizedModel)}:${action}`
+}
+
 export function resolveSub2ApiMode(template: AIGatewayTemplate): Sub2ApiMode | null {
   if (template === 'sub2api-claude') {
     return 'claude'
@@ -502,6 +550,10 @@ export function resolveSub2ApiMode(template: AIGatewayTemplate): Sub2ApiMode | n
 
   if (template === 'sub2api-openai') {
     return 'openai'
+  }
+
+  if (template === 'sub2api-gemini') {
+    return 'gemini'
   }
 
   if (template === 'sub2api-antigravity') {
@@ -520,6 +572,7 @@ export function createDefaultSub2ApiConfig(): Sub2ApiStoredConfig {
     preferredModels: {
       claude: SUB2API_MODE_PRESETS.claude.recommendedModel,
       openai: SUB2API_MODE_PRESETS.openai.recommendedModel,
+      gemini: SUB2API_MODE_PRESETS.gemini.recommendedModel,
       antigravity: SUB2API_MODE_PRESETS.antigravity.recommendedModel
     },
     desktopRuntime: createDefaultSub2ApiDesktopRuntimeConfig(),
@@ -530,6 +583,10 @@ export function createDefaultSub2ApiConfig(): Sub2ApiStoredConfig {
 
 export function normalizeSub2ApiConfig(saved: Partial<Sub2ApiStoredConfig> | null | undefined): Sub2ApiStoredConfig {
   const defaults = createDefaultSub2ApiConfig()
+  const legacyPreferredModels = saved?.preferredModels as Record<string, string> | undefined
+  const legacyAntigravityGeminiModel = typeof legacyPreferredModels?.['antigravity-gemini'] === 'string'
+    ? legacyPreferredModels['antigravity-gemini'].trim()
+    : ''
   const preferredModels = {
     ...defaults.preferredModels,
     ...(saved?.preferredModels ?? {})
@@ -540,8 +597,14 @@ export function normalizeSub2ApiConfig(saved: Partial<Sub2ApiStoredConfig> | nul
       ? 'external'
       : defaults.gatewayMode
 
-  const activeMode = saved?.activeMode === 'claude' || saved?.activeMode === 'openai' || saved?.activeMode === 'antigravity'
-    ? saved.activeMode
+  const savedActiveMode = saved?.activeMode as string | undefined
+  const activeMode = savedActiveMode === 'claude'
+    || savedActiveMode === 'openai'
+    || savedActiveMode === 'gemini'
+    || savedActiveMode === 'antigravity'
+    ? savedActiveMode
+    : savedActiveMode === 'antigravity-gemini'
+      ? 'antigravity'
     : defaults.activeMode
 
   return {
@@ -552,7 +615,8 @@ export function normalizeSub2ApiConfig(saved: Partial<Sub2ApiStoredConfig> | nul
     preferredModels: {
       claude: preferredModels.claude?.trim() || defaults.preferredModels.claude,
       openai: preferredModels.openai?.trim() || defaults.preferredModels.openai,
-      antigravity: preferredModels.antigravity?.trim() || defaults.preferredModels.antigravity
+      gemini: preferredModels.gemini?.trim() || defaults.preferredModels.gemini,
+      antigravity: preferredModels.antigravity?.trim() || legacyAntigravityGeminiModel || defaults.preferredModels.antigravity
     },
     desktopRuntime: normalizeSub2ApiDesktopRuntimeConfig(saved?.desktopRuntime),
     desktopManaged: normalizeSub2ApiDesktopManagedConfig(saved?.desktopManaged),
@@ -572,10 +636,85 @@ export function resolveSub2ApiGatewayRoot(config: Sub2ApiStoredConfig, runtimeSt
   return normalizeSub2ApiGatewayRoot(config.gatewayRoot)
 }
 
+export function hasSub2ApiSignal(config: Partial<Sub2ApiStoredConfig> | null | undefined, runtimeState?: Partial<Sub2ApiRuntimeState> | null) {
+  return Boolean(
+    config?.apiKey?.trim()
+    || config?.gatewayRoot?.trim()
+    || runtimeState?.status && runtimeState.status !== 'stopped'
+    || runtimeState?.managedApiKeyDetected
+    || runtimeState?.healthy
+    || runtimeState?.logs?.length
+  )
+}
+
+export function getSub2ApiRuntimePresentation(runtimeState: Partial<Sub2ApiRuntimeState> | null | undefined, gatewayMode: Sub2ApiGatewayMode = 'desktop') {
+  if (gatewayMode === 'external') {
+    return {
+      label: runtimeState?.healthy ? '外部网关可用' : '外部网关待验证',
+      detail: runtimeState?.healthMessage?.trim() || '当前通过外部 Sub2API 网关接入，可在 Agent 内直接执行模型读取与能力检查。',
+      tone: runtimeState?.healthy ? 'success' : 'info'
+    } satisfies {
+      label: string
+      detail: string
+      tone: Sub2ApiRuntimePresentationTone
+    }
+  }
+
+  switch (runtimeState?.status) {
+    case 'running':
+      return {
+        label: runtimeState.healthy ? '本地网关运行中' : '本地服务已启动',
+        detail: runtimeState.healthMessage?.trim() || (runtimeState.healthy ? '本地 Sub2API 网关已经就绪，可直接用于 Agent 与 Codex 路由。' : '进程已启动，但健康检查还没有完全通过。'),
+        tone: runtimeState.healthy ? 'success' : 'info'
+      } satisfies {
+        label: string
+        detail: string
+        tone: Sub2ApiRuntimePresentationTone
+      }
+    case 'starting':
+      return {
+        label: '本地网关启动中',
+        detail: runtimeState.healthMessage?.trim() || '正在拉起本地 Sub2API 网关，稍后即可读取模型与接管 Agent。',
+        tone: 'info'
+      }
+    case 'stopping':
+      return {
+        label: '本地网关停止中',
+        detail: runtimeState.healthMessage?.trim() || '当前正在停止本地 Sub2API 网关。',
+        tone: 'info'
+      }
+    case 'missing-binary':
+      return {
+        label: '缺少本地二进制',
+        detail: runtimeState.lastError?.trim() || '尚未找到 Sub2API 运行时二进制，请先在 Sub2API 页面完成运行时准备。',
+        tone: 'warning'
+      }
+    case 'unavailable':
+      return {
+        label: '当前环境不可用',
+        detail: runtimeState.lastError?.trim() || '当前环境无法直接托管本地 Sub2API 运行时，请改用外部网关。',
+        tone: 'warning'
+      }
+    case 'error':
+      return {
+        label: '本地网关异常',
+        detail: runtimeState.lastError?.trim() || runtimeState.healthMessage?.trim() || '本地 Sub2API 网关启动失败或运行过程中退出。',
+        tone: 'danger'
+      }
+    default:
+      return {
+        label: '本地网关未启动',
+        detail: runtimeState?.healthMessage?.trim() || '尚未启动本地 Sub2API 网关，当前无法直接读取账号池模型或执行能力检查。',
+        tone: 'warning'
+      }
+  }
+}
+
 export function createEmptySub2ApiModelRegistry(): Sub2ApiModelRegistry {
   return {
     claude: { models: [], updatedAt: 0, error: '' },
     openai: { models: [], updatedAt: 0, error: '' },
+    gemini: { models: [], updatedAt: 0, error: '' },
     antigravity: { models: [], updatedAt: 0, error: '' }
   }
 }
@@ -595,6 +734,11 @@ export function normalizeSub2ApiModelRegistry(saved: Partial<Sub2ApiModelRegistr
       updatedAt: Number.isFinite(registry.openai?.updatedAt) ? Number(registry.openai.updatedAt) : 0,
       error: typeof registry.openai?.error === 'string' ? registry.openai.error : ''
     },
+    gemini: {
+      models: Array.isArray(registry.gemini?.models) ? registry.gemini.models : [],
+      updatedAt: Number.isFinite(registry.gemini?.updatedAt) ? Number(registry.gemini.updatedAt) : 0,
+      error: typeof registry.gemini?.error === 'string' ? registry.gemini.error : ''
+    },
     antigravity: {
       models: Array.isArray(registry.antigravity?.models) ? registry.antigravity.models : [],
       updatedAt: Number.isFinite(registry.antigravity?.updatedAt) ? Number(registry.antigravity.updatedAt) : 0,
@@ -607,6 +751,7 @@ export function createEmptySub2ApiCheckRegistry(): Sub2ApiCheckRegistry {
   return {
     claude: [],
     openai: [],
+    gemini: [],
     antigravity: []
   }
 }
@@ -618,6 +763,7 @@ export function normalizeSub2ApiCheckRegistry(saved: Partial<Sub2ApiCheckRegistr
   return {
     claude: Array.isArray(registry.claude) ? registry.claude : [],
     openai: Array.isArray(registry.openai) ? registry.openai : [],
+    gemini: Array.isArray(registry.gemini) ? registry.gemini : [],
     antigravity: Array.isArray(registry.antigravity) ? registry.antigravity : []
   }
 }
@@ -626,21 +772,21 @@ export function getSub2ApiPreferredModel(config: Sub2ApiStoredConfig, mode: Sub2
   return config.preferredModels[mode]?.trim() || SUB2API_MODE_PRESETS[mode].recommendedModel
 }
 
-export function buildSub2ApiAiPatch(config: Sub2ApiStoredConfig, mode: Sub2ApiMode): Partial<AIConfig> {
+export function buildSub2ApiAiPatch(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, runtimeState?: Partial<Sub2ApiRuntimeState> | null): Partial<AIConfig> {
   const preset = SUB2API_MODE_PRESETS[mode]
   return {
     protocol: preset.protocol,
     connectionTemplate: preset.connectionTemplate,
     apiKey: config.apiKey.trim(),
-    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), mode),
+    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config, runtimeState), mode),
     model: getSub2ApiPreferredModel(config, mode)
   }
 }
 
-export function buildSub2ApiAiConfig(config: Sub2ApiStoredConfig, mode: Sub2ApiMode): AIConfig {
+export function buildSub2ApiAiConfig(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, runtimeState?: Partial<Sub2ApiRuntimeState> | null): AIConfig {
   return {
     apiKey: config.apiKey.trim(),
-    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), mode),
+    baseUrl: buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config, runtimeState), mode),
     model: getSub2ApiPreferredModel(config, mode),
     protocol: SUB2API_MODE_PRESETS[mode].protocol,
     connectionTemplate: SUB2API_MODE_PRESETS[mode].connectionTemplate,
@@ -651,13 +797,13 @@ export function buildSub2ApiAiConfig(config: Sub2ApiStoredConfig, mode: Sub2ApiM
   }
 }
 
-export async function fetchSub2ApiModels(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, signal?: AbortSignal) {
-  return fetchAvailableModels(buildSub2ApiAiConfig(config, mode), signal)
+export async function fetchSub2ApiModels(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, signal?: AbortSignal, runtimeState?: Partial<Sub2ApiRuntimeState> | null) {
+  return fetchAvailableModels(buildSub2ApiAiConfig(config, mode, runtimeState), signal)
 }
 
-export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, modelOverride?: string) {
+export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mode: Sub2ApiMode, modelOverride?: string, runtimeState?: Partial<Sub2ApiRuntimeState> | null) {
   const normalizedConfig = normalizeSub2ApiConfig(config)
-  const gatewayRoot = resolveSub2ApiGatewayRoot(normalizedConfig)
+  const gatewayRoot = resolveSub2ApiGatewayRoot(normalizedConfig, runtimeState)
   const currentPreset = SUB2API_MODE_PRESETS[mode]
 
   if (!gatewayRoot) {
@@ -746,6 +892,52 @@ export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mod
     return checks
   }
 
+  if (currentPreset.protocol === 'gemini') {
+    const generateContentUrl = buildGeminiGenerateContentEndpoint(currentBaseUrl, currentModel)
+    const generateContentResponse = await fetch(generateContentUrl, {
+      method: 'POST',
+      headers: currentHeaders,
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: 'ping' }]
+        }],
+        generationConfig: {
+          maxOutputTokens: 1,
+          temperature: 0
+        }
+      })
+    })
+
+    if (!generateContentResponse.ok) {
+      checks.push({
+        id: 'gemini-generate-content',
+        label: `${currentPreset.title} 请求`,
+        endpoint: generateContentUrl,
+        state: 'error',
+        message: `请求失败 (${generateContentResponse.status})：${await readSub2ApiErrorText(generateContentResponse) || '未返回更多信息'}`
+      })
+    } else {
+      checks.push({
+        id: 'gemini-generate-content',
+        label: `${currentPreset.title} 请求`,
+        endpoint: generateContentUrl,
+        state: 'success',
+        message: `模型 ${normalizeGeminiModelName(currentModel)} 已可正常响应。`
+      })
+    }
+
+    checks.push({
+      id: 'codex-ready',
+      label: 'Codex / Responses 路径',
+      endpoint: `${buildSub2ApiBaseUrl(gatewayRoot, 'openai')}/responses`,
+      state: 'pending',
+      message: '当前不在 OpenAI 路由。要验证 Codex / Responses 能力，请切换到「OpenAI 路由」后重新检查。'
+    })
+
+    return checks
+  }
+
   const chatUrl = `${currentBaseUrl}/chat/completions`
   const chatResponse = await fetch(chatUrl, {
     method: 'POST',
@@ -758,21 +950,27 @@ export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mod
     })
   })
 
+  let usesResponsesOnlyCompatibility = false
   if (!chatResponse.ok) {
+    const chatErrorText = await readSub2ApiErrorText(chatResponse)
+    usesResponsesOnlyCompatibility = isResponsesOnlyCompatibilityError(chatResponse.status, chatErrorText)
+
     checks.push({
       id: 'chat-completions',
-      label: 'Chat Completions 路径',
+      label: 'Legacy Chat Completions 兼容层',
       endpoint: chatUrl,
-      state: 'error',
-      message: `请求失败 (${chatResponse.status})：${await readSub2ApiErrorText(chatResponse) || '未返回更多信息'}`
+      state: usesResponsesOnlyCompatibility ? 'pending' : 'error',
+      message: usesResponsesOnlyCompatibility
+        ? '服务端已明确关闭 legacy /v1/chat/completions，仅保留 /v1/responses。这不会影响当前 OpenAgent 与 Codex 主链路。'
+        : `请求失败 (${chatResponse.status})：${chatErrorText || '未返回更多信息'}`
     })
   } else {
     checks.push({
       id: 'chat-completions',
-      label: 'Chat Completions 路径',
+      label: 'Legacy Chat Completions 兼容层',
       endpoint: chatUrl,
       state: 'success',
-      message: `模型 ${currentModel} 已可通过 OpenAI 兼容路由访问。`
+      message: `服务端仍兼容 /v1/chat/completions，旧版 OpenAI 客户端也可通过这条路径访问模型 ${currentModel}。`
     })
   }
 
@@ -802,14 +1000,16 @@ export async function runSub2ApiCapabilityCheck(config: Sub2ApiStoredConfig, mod
       label: 'Codex / Responses 路径',
       endpoint: responsesUrl,
       state: 'success',
-      message: 'Responses API 已可用。若服务端分组绑定的是 OpenAI OAuth / Codex 登录账号，这条路径就能消耗 Codex 额度。'
+      message: usesResponsesOnlyCompatibility
+        ? 'Responses API 已可用。当前服务端属于 Responses-only 模式，OpenAgent 会继续优先走这条主路径；若分组绑定的是 OpenAI OAuth / Codex 登录账号，这条路径也能消耗 Codex 额度。'
+        : 'Responses API 已可用。当前桌面助手会优先走这条主路径；若服务端分组绑定的是 OpenAI OAuth / Codex 登录账号，这条路径也能消耗 Codex 额度。'
     })
   }
 
   return checks
 }
 
-export function createSub2ApiCodexConfigToml(config: Sub2ApiStoredConfig, model = 'gpt-5.4') {
+export function createSub2ApiCodexConfigToml(config: Sub2ApiStoredConfig, model = 'gpt-5.4', runtimeState?: Partial<Sub2ApiRuntimeState> | null) {
   return `model_provider = "OpenAI"
 model = "${model}"
 review_model = "${model}"
@@ -822,7 +1022,7 @@ model_auto_compact_token_limit = 900000
 
 [model_providers.OpenAI]
 name = "OpenAI"
-base_url = "${buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config), 'openai') || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
+base_url = "${buildSub2ApiBaseUrl(resolveSub2ApiGatewayRoot(config, runtimeState), 'openai') || `${SUB2API_GATEWAY_PLACEHOLDER}/v1`}"
 wire_api = "responses"
 supports_websockets = true
 requires_openai_auth = true

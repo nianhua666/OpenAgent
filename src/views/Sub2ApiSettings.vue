@@ -3,8 +3,8 @@
     <section v-if="showHeroSection" class="page-hero glass-panel">
       <div class="hero-copy">
         <span class="hero-tag">Sub2API</span>
-        <h2 class="page-title">Sub2API 本地网关工作台</h2>
-        <p>这里不再只是外部网关配置页，而是 OpenAgent 的 Sub2API 桌面控制台。你可以在这里切换本地桌面网关和外部备用网关，统一管理内嵌运行时、API Key、路由模式、模型目录、Codex 模板，以及同步到 AI 助手的入口。</p>
+        <h2 class="page-title">Sub2API 账号池与 API 工作台</h2>
+        <p>这里优先服务账号池接入、模型同步、API Key 复用和 Agent 绑定。OpenAgent 仍然支持本机托管 Sub2API 运行时，但主界面只保留必要控制，避免把完整后台系统长期塞进工作流里。</p>
       </div>
       <div class="hero-metrics">
         <div class="hero-metric">
@@ -27,15 +27,15 @@
         <div>
           <h3 class="section-title">
             <svg width="18" height="18"><use href="#icon-gateway"/></svg>
-            网关接入与运行时
+            账号池接入与运行时
           </h3>
-          <p class="section-desc">默认推荐桌面模式：OpenAgent 本机直接托管 Sub2API 二进制运行时，不依赖 Docker。若你已经有稳定的外部网关，也可以切回外部模式作为备用入口。</p>
+          <p class="section-desc">默认推荐桌面模式：OpenAgent 本机直接托管 Sub2API 二进制运行时。这里优先保留账号池、模型、API Key 与 AI 绑定所需操作；外部网关继续作为备用入口。</p>
         </div>
         <div class="hero-actions">
           <button class="btn btn-secondary btn-sm" @click="openAISettingsPage">打开 AI 设置</button>
-          <button class="btn btn-secondary btn-sm" :disabled="!desktopModeEnabled" @click="openSub2ApiConsolePage">打开内嵌后台</button>
-          <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.adminUrl" @click="openSub2ApiAdmin">打开后台</button>
-          <button class="btn btn-primary btn-sm" :disabled="!canApplyToAI" @click="applyToAI()">同步到 AI 助手</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!desktopModeEnabled" @click="openSub2ApiConsolePage">打开嵌入面板</button>
+          <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.adminUrl" @click="openSub2ApiAdmin">打开原始后台</button>
+          <button class="btn btn-primary btn-sm" :disabled="!canApplyToAI" @click="applyToAI()">同步到 Agent</button>
         </div>
       </div>
 
@@ -76,29 +76,29 @@
             <div class="workflow-step-item">
               <span>1</span>
               <div>
-                <strong>启动本地网关</strong>
+                <strong>启动本地服务</strong>
                 <small>{{ runtimeStatusLabel }}，{{ runtimeHealthLabel }}</small>
               </div>
             </div>
             <div class="workflow-step-item">
               <span>2</span>
               <div>
-                <strong>登录后台并加入账号池</strong>
+                <strong>接入账号池</strong>
                 <small>{{ setupStatusLabel === '已完成初始化' ? '本地 setup 已完成，可以直接进入后台维护账号池。' : '首次运行先点“打开后台”，完成初始化后再登录并加入账号池。' }}</small>
               </div>
             </div>
             <div class="workflow-step-item">
               <span>3</span>
               <div>
-                <strong>刷新支持模型</strong>
+                <strong>同步模型目录</strong>
                 <small>当前路由已缓存 {{ activeModels.length }} 个模型，账号池变化后建议重新读取一次。</small>
               </div>
             </div>
             <div class="workflow-step-item">
               <span>4</span>
               <div>
-                <strong>同步到 AI 助手</strong>
-                <small>{{ currentAiModeLabel }}；点击“同步到 AI 助手”即可一键带上路由、Base URL 与默认模型。</small>
+                <strong>绑定到 Agent</strong>
+                <small>{{ currentAiModeLabel }}；点击“同步到 Agent”即可一键带上路由、Base URL 与默认模型。</small>
               </div>
             </div>
           </div>
@@ -147,7 +147,7 @@
               </svg>
             </button>
           </div>
-          <small>用于 OpenAgent 内嵌 Sub2API 路由与模型列表读取。同步到 AI 助手时会一并写入当前 AI 配置。</small>
+          <small>用于 OpenAgent 内嵌 Sub2API 路由与模型列表读取。同步到 Agent 时会一并写入当前 AI 配置。</small>
         </label>
 
         <label v-if="!desktopModeEnabled" class="config-field">
@@ -158,7 +158,7 @@
             :placeholder="SUB2API_GATEWAY_PLACEHOLDER"
             @input="gatewayRoot = normalizeSub2ApiGatewayRoot(($event.target as HTMLInputElement).value)"
           />
-          <small>只填根地址，不要带 /v1、/messages、/responses 或 /antigravity/v1。</small>
+          <small>只填根地址，不要带 /v1、/v1beta、/messages、/responses、:generateContent，或 /antigravity/v1。</small>
         </label>
 
         <label v-else class="config-field">
@@ -196,12 +196,12 @@
 
         <div class="runtime-note-grid">
           <div class="runtime-note-card">
-            <strong>默认最佳项</strong>
-            <p>OpenAgent 默认使用 127.0.0.1:38080、本地桌面运行时和 OpenAgentnh 作为初始化密码。首次启动后可以直接在内嵌后台完成 setup 与账号池维护。</p>
+            <strong>默认接入</strong>
+            <p>OpenAgent 默认使用 127.0.0.1:38080、本地桌面运行时和 OpenAgentnh 作为初始化密码。首次启动后只需要完成必要初始化，然后就能围绕账号池、模型和 API Key 继续接入。</p>
           </div>
           <div class="runtime-note-card">
-            <strong>专属 Key 自动接入</strong>
-            <p>初始化完成后，OpenAgent 会尝试使用当前管理员账号自动登录后台，并按「{{ managedApiKeyName }}」查找或创建专属 API Key，方便一键同步到 AI 设置。</p>
+            <strong>API Key 自动接入</strong>
+            <p>初始化完成后，OpenAgent 会尝试使用当前管理员账号自动登录后台，并按「{{ managedApiKeyName }}」查找或创建专属 API Key，方便一键同步到 AI 设置与日常调用。</p>
           </div>
         </div>
 
@@ -358,8 +358,8 @@
         <div class="desktop-setup-panel">
           <div class="desktop-runtime-head">
             <div>
-              <strong>页面内初始化</strong>
-              <p>首次部署时，这里保留页面内 setup 能力，但默认只暴露状态与一键初始化；数据库、Redis 和底层诊断收进高级区，避免打断主流程。</p>
+              <strong>首次接入诊断</strong>
+              <p>日常主要还是维护账号池、模型和 API Key；只有首次接入或更换 PostgreSQL / Redis 参数时才需要来这里。初始化按钮现在会先自动做依赖预检，不再把后端原始连接错误直接甩给你。</p>
             </div>
             <div class="hero-actions">
               <button class="btn btn-secondary btn-sm" :disabled="sub2ApiStore.runtimeBusy || setupBusy" @click="inspectDesktopSetup">
@@ -381,13 +381,27 @@
             <span class="status-chip" :class="{ 'is-accent': setupStatus.reachable }">setup 状态：{{ setupStatusLabel }}</span>
             <span class="status-chip">最近检查：{{ setupLastCheckedLabel }}</span>
             <span class="status-chip">缺失项：{{ setupFormIssues.length }} 项</span>
+            <span class="status-chip" :class="setupDatabaseStatusTone">PostgreSQL：{{ setupDatabaseStatusLabel }}</span>
+            <span class="status-chip" :class="setupRedisStatusTone">Redis：{{ setupRedisStatusLabel }}</span>
             <span class="status-chip">服务端：{{ setupStatus.endpoint || '等待诊断' }}</span>
           </div>
 
           <div v-if="setupBlockingIssue" class="inline-error">{{ setupBlockingIssue.message }}</div>
+          <div v-if="setupDependencyBlockingIssue" class="inline-error">{{ setupDependencyBlockingIssue }}</div>
+          <div class="inline-note">“{{ installSetupLabel }}” 会先自动测试 PostgreSQL 与 Redis；任一失败都会直接阻断安装，并把失败点转换成可操作的依赖提示。</div>
+
+          <div class="check-list">
+            <div v-for="item in setupDependencyCards" :key="item.id" class="check-item" :class="`is-${item.state}`">
+              <div class="check-copy">
+                <strong>{{ item.label }}</strong>
+                <small>{{ item.endpoint }}</small>
+              </div>
+              <span>{{ item.message }}</span>
+            </div>
+          </div>
 
           <details class="advanced-fold">
-            <summary>高级初始化参数与诊断</summary>
+            <summary>数据库 / Redis 参数与深度诊断</summary>
 
             <div v-if="setupFormIssues.length" class="setup-issue-grid advanced-fold-body">
               <div v-for="item in setupFormIssues" :key="item.id" class="setup-issue-card" :class="`is-${item.level}`">
@@ -424,7 +438,7 @@
               <label class="config-field config-field-span">
                 <span>PostgreSQL 密码</span>
                 <input class="setting-input" type="password" :value="setupDatabasePassword" placeholder="数据库密码" @input="setupDatabasePassword = ($event.target as HTMLInputElement).value" />
-                <small>仅用于当前安装流程测试与初始化，不会同步到 AI 助手配置。</small>
+                <small>仅用于当前安装流程测试与初始化，不会同步到 Agent 配置。</small>
               </label>
 
               <label class="config-field">
@@ -492,12 +506,12 @@
 
             <div class="runtime-note-grid">
               <div class="runtime-note-card">
-                <strong>启动诊断</strong>
-                <p>点击「{{ inspectSetupLabel }}」会先确认本地进程和 setup/status，再把缺失的 binary、config.yaml、.installed 和 setup 可达性全部列出来。</p>
+                <strong>预检链路</strong>
+                <p>点击「{{ inspectSetupLabel }}」会先确认本地进程和 setup/status；点击「{{ installSetupLabel }}」则会继续自动测试 PostgreSQL 与 Redis，只有全部通过后才真正执行 setup/install。</p>
               </div>
               <div class="runtime-note-card">
                 <strong>真实安装链路</strong>
-                <p>一键初始化不是前端伪造成功，而是直接调用 Sub2API 原生 setup/install：测试 PostgreSQL、测试 Redis、执行迁移、创建管理员、写 config.yaml，并在完成后尝试自动同步 OpenAgent 专属 API Key。</p>
+                <p>初始化不是前端伪造成功，而是直接调用 Sub2API 原生 setup/install：验证依赖、执行迁移、创建管理员、写 config.yaml，并在完成后尝试自动同步 OpenAgent 专属 API Key。</p>
               </div>
             </div>
 
@@ -559,7 +573,7 @@
             <svg width="18" height="18"><use href="#icon-ai"/></svg>
             模型目录
           </h3>
-          <p class="section-desc">按当前路由读取并缓存模型目录。选中的默认模型会在同步到 AI 助手时自动带上，也会被 AI 设置页直接复用。</p>
+          <p class="section-desc">按当前路由读取并缓存模型目录。选中的默认模型会在同步到 Agent 时自动带上，也会被 AI 设置页直接复用。</p>
         </div>
         <div class="hero-actions">
           <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.configured || sub2ApiStore.loadingMode === activeMode" @click="refreshActiveModels">
@@ -613,7 +627,7 @@
             <svg width="18" height="18"><use href="#icon-refresh"/></svg>
             核心能力检查
           </h3>
-          <p class="section-desc">最小化验证模型列表、聊天路径与 Responses / Codex 路径，确认当前内嵌 Sub2API 配置确实可用。</p>
+          <p class="section-desc">最小化验证模型列表、当前主路由与 Responses / Codex 路径；如果服务端仍保留 legacy 兼容层，也会补充检查 /chat/completions。</p>
         </div>
         <div class="hero-actions">
           <button class="btn btn-secondary btn-sm" :disabled="!sub2ApiStore.adminUrl" @click="openSub2ApiAdmin">打开后台</button>
@@ -709,10 +723,12 @@ const gatewayMode = computed(() => sub2ApiStore.gatewayMode)
 const desktopModeEnabled = computed(() => sub2ApiStore.desktopModeEnabled)
 const runtimeState = computed(() => sub2ApiStore.runtimeState)
 const setupDiagnostics = computed(() => sub2ApiStore.setupDiagnostics)
+const setupDependencies = computed(() => sub2ApiStore.setupDependencies)
 const setupStatus = computed(() => sub2ApiStore.setupStatus)
 const setupBusy = computed(() => sub2ApiStore.setupBusy)
 const setupFormIssues = computed(() => sub2ApiStore.setupFormIssues)
 const setupBlockingIssue = computed(() => sub2ApiStore.setupBlockingIssue)
+const setupDependencyBlockingIssue = computed(() => sub2ApiStore.setupDependencyBlockingIssue)
 const effectiveGatewayRoot = computed(() => sub2ApiStore.effectiveGatewayRoot)
 const gatewayRoot = computed({
   get: () => sub2ApiStore.config.gatewayRoot,
@@ -938,13 +954,70 @@ const inspectSetupLabel = computed(() => {
 
   return runtimeState.value.status === 'running' ? '刷新诊断' : '启动并诊断'
 })
-const testSetupDatabaseLabel = computed(() => sub2ApiStore.setupAction === 'test-db' ? '测试中...' : '测试 PostgreSQL')
-const testSetupRedisLabel = computed(() => sub2ApiStore.setupAction === 'test-redis' ? '测试中...' : '测试 Redis')
-const installSetupLabel = computed(() => sub2ApiStore.setupAction === 'install' ? '初始化中...' : '一键初始化')
+const testSetupDatabaseLabel = computed(() => sub2ApiStore.setupAction === 'test-db' ? '测试中...' : '测 PostgreSQL')
+const testSetupRedisLabel = computed(() => sub2ApiStore.setupAction === 'test-redis' ? '测试中...' : '测 Redis')
+const installSetupLabel = computed(() => sub2ApiStore.setupAction === 'install' ? '检查并初始化中...' : '检查依赖后初始化')
 const canTestSetupDatabase = computed(() => Boolean(setupDatabaseHost.value.trim()) && Boolean(setupDatabaseUser.value.trim()) && Boolean(setupDatabaseName.value.trim()) && !setupBusy.value)
 const canTestSetupRedis = computed(() => Boolean(setupRedisHost.value.trim()) && !setupBusy.value)
-const canInstallSetup = computed(() => !setupBusy.value && !sub2ApiStore.runtimeBusy && !setupBlockingIssue.value && setupStatus.value.needsSetup !== false)
+const canInstallSetup = computed(() => !setupBusy.value && !sub2ApiStore.runtimeBusy && !setupBlockingIssue.value && !setupDependencyBlockingIssue.value && setupStatus.value.needsSetup !== false)
 const setupConfigPreview = computed(() => createSub2ApiSetupConfigPreview(sub2ApiStore.config.desktopRuntime, sub2ApiStore.config.desktopSetup))
+const setupDatabaseStatusLabel = computed(() => {
+  if (setupDependencies.value.database.success === true) {
+    return '已通过'
+  }
+
+  if (setupDependencies.value.database.success === false) {
+    return '未通过'
+  }
+
+  return '待检查'
+})
+const setupRedisStatusLabel = computed(() => {
+  if (setupDependencies.value.redis.success === true) {
+    return '已通过'
+  }
+
+  if (setupDependencies.value.redis.success === false) {
+    return '未通过'
+  }
+
+  return '待检查'
+})
+const setupDatabaseStatusTone = computed(() => setupDependencies.value.database.success === true
+  ? 'is-accent'
+  : setupDependencies.value.database.success === false
+    ? 'is-error'
+    : 'is-warning')
+const setupRedisStatusTone = computed(() => setupDependencies.value.redis.success === true
+  ? 'is-accent'
+  : setupDependencies.value.redis.success === false
+    ? 'is-error'
+    : 'is-warning')
+const setupDependencyCards = computed(() => {
+  const databaseMessage = setupDependencies.value.database.checkedAt
+    ? setupDependencies.value.database.details || setupDependencies.value.database.message
+    : '还没有执行连接测试。点击“测 PostgreSQL”或“检查依赖后初始化”时会自动补跑。'
+  const redisMessage = setupDependencies.value.redis.checkedAt
+    ? setupDependencies.value.redis.details || setupDependencies.value.redis.message
+    : '还没有执行连接测试。点击“测 Redis”或“检查依赖后初始化”时会自动补跑。'
+
+  return [
+    {
+      id: 'database',
+      label: 'PostgreSQL 依赖',
+      endpoint: `${setupDatabaseHost.value}:${setupDatabasePort.value}/${setupDatabaseName.value || 'sub2api'}`,
+      state: setupDependencies.value.database.success === true ? 'success' : setupDependencies.value.database.success === false ? 'error' : 'pending',
+      message: databaseMessage
+    },
+    {
+      id: 'redis',
+      label: 'Redis 依赖',
+      endpoint: `${setupRedisHost.value}:${setupRedisPort.value}/db${setupRedisDb.value}`,
+      state: setupDependencies.value.redis.success === true ? 'success' : setupDependencies.value.redis.success === false ? 'error' : 'pending',
+      message: redisMessage
+    }
+  ]
+})
 const managedApiKeyStatusLabel = computed(() => {
   if (sub2ApiStore.config.apiKey.trim()) {
     return '已同步到工作台'
@@ -973,7 +1046,7 @@ const modelStatusLabel = computed(() => {
 })
 const checksSummary = computed(() => {
   if (sub2ApiStore.checkingMode === activeMode.value) {
-    return '检查中，会验证模型列表、当前路由和 Responses / Codex 能力。'
+    return '检查中，会验证模型列表、当前主路由和 Responses / Codex 能力。'
   }
 
   if (activeChecks.value.length === 0) {
@@ -1008,11 +1081,11 @@ const desktopFlowSummary = computed(() => {
   }
 
   if (runtimeState.value.status === 'running' && sub2ApiStore.config.apiKey.trim()) {
-    return '本地桌面网关已经启动，OpenAgent 专属 API Key 也已同步完成。接下来可以直接进入内嵌后台维护账号池，然后刷新模型目录并同步到 AI 助手。'
+    return '本地桌面网关已经启动，OpenAgent 专属 API Key 也已同步完成。接下来可以直接进入内嵌后台维护账号池，然后刷新模型目录并同步到 Agent。'
   }
 
   if (setupStatus.value.needsSetup === false) {
-    return '本地网关已经完成初始化。接下来只需要进入后台登录、维护账号池，再回到这里刷新支持模型并同步到 AI 助手。'
+    return '本地网关已经完成初始化。接下来只需要进入后台登录、维护账号池，再回到这里刷新支持模型并同步到 Agent。'
   }
 
   return 'OpenAgent 已默认帮你准备本地网关地址、管理员账号和自动接入参数。首次只需要启动本地网关，打开后台完成初始化、登录与账号池接入。'
@@ -1023,7 +1096,7 @@ const desktopNextActionLabel = computed(() => {
   }
 
   if (!sub2ApiStore.config.apiKey.trim()) {
-    return '下一步：完成初始化后点击“同步本地专属 Key”，然后就能把本地网关一键同步到 AI 助手。'
+    return '下一步：完成初始化后点击“同步本地专属 Key”，然后就能把本地网关一键同步到 Agent。'
   }
 
   if (setupStatus.value.needsSetup !== false) {
@@ -1035,12 +1108,12 @@ const desktopNextActionLabel = computed(() => {
   }
 
   if (currentAiMode.value === null) {
-    return '下一步：点击“同步到 AI 助手”，把当前 Sub2API 路由和默认模型一键带入 AI 设置。'
+    return '下一步：点击“同步到 Agent”，把当前 Sub2API 路由和默认模型一键带入 AI 设置。'
   }
 
   return '当前本地网关、模型目录和 AI 绑定已经就绪，可以直接开始使用。'
 })
-const codexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai')))
+const codexConfigToml = computed(() => createSub2ApiCodexConfigToml(sub2ApiStore.config, getSub2ApiPreferredModel(sub2ApiStore.config, 'openai'), sub2ApiStore.runtimeState))
 const codexAuthJson = computed(() => createSub2ApiCodexAuthJson(sub2ApiStore.config.apiKey || aiStore.config.apiKey))
 const filteredActiveModels = computed(() => activeModels.value.filter(model => matchesSearchQuery(
   normalizedSearchQuery.value,
@@ -1083,6 +1156,7 @@ const showConfigSection = computed(() => !normalizedSearchQuery.value || matches
   '路由',
   'Claude',
   'OpenAI',
+  'Gemini',
   'Antigravity',
   sub2ApiStore.config,
   activeBaseUrl.value
@@ -1309,8 +1383,8 @@ async function applyToAI(mode = activeMode.value) {
     return
   }
 
-  await aiStore.updateConfig(buildSub2ApiAiPatch(sub2ApiStore.config, mode))
-  showToast('success', `已把 ${SUB2API_MODE_PRESETS[mode].title} 同步到 AI 助手`)
+  await aiStore.updateConfig(buildSub2ApiAiPatch(sub2ApiStore.config, mode, sub2ApiStore.runtimeState))
+  showToast('success', `已把 ${SUB2API_MODE_PRESETS[mode].title} 同步到 Agent`)
 }
 
 async function refreshActiveModels() {
@@ -1996,11 +2070,30 @@ async function copyText(text: string, label: string) {
     color: #12555c;
     background: rgba(221, 243, 236, 0.88);
   }
+
+  &.is-warning {
+    color: #9a3412;
+    background: rgba(255, 247, 237, 0.9);
+    border-color: rgba(176, 107, 10, 0.16);
+  }
+
+  &.is-error {
+    color: #b42318;
+    background: rgba(254, 243, 242, 0.92);
+    border-color: rgba(180, 35, 24, 0.16);
+  }
 }
 
 .inline-error {
   margin-top: 12px;
   color: #b42318;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.inline-note {
+  margin-top: 12px;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.7;
 }
