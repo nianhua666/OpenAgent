@@ -18,6 +18,7 @@ import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
 import { fetchAvailableModels } from '@/utils/ai'
 import { buildSharedContext } from '@/utils/aiContextEngine'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
+import { syncAutonomyRunState } from '@/utils/aiAutonomyScheduler'
 import {
   advanceTask,
   buildPlanExecutionPacket,
@@ -335,6 +336,10 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
       return ideReplanPlanTool(args, context)
     case 'ide_get_plan':
       return ideGetPlanTool(args)
+    case 'ide_get_autonomy_run':
+      return ideGetAutonomyRunTool(args)
+    case 'ide_sync_autonomy_run':
+      return ideSyncAutonomyRunTool(args)
     case 'ide_log':
       return ideLogTool(args)
     default:
@@ -1139,6 +1144,8 @@ async function spawnSubAgentTool(
   const role = normalizeTextValue(args.role)
   const task = normalizeTextValue(args.task)
   const requestedModel = normalizeTextValue(args.model)
+  const planId = normalizeTextValue(args.planId)
+  const taskId = normalizeTextValue(args.taskId)
 
   if (!parentSessionId) {
     return errorResult('当前没有活动会话，无法生成子代理')
@@ -1192,6 +1199,8 @@ async function spawnSubAgentTool(
     name,
     role,
     task,
+    planId: planId || undefined,
+    taskId: taskId || undefined,
     contextFromParent: parentContext,
     model: delegatedModel,
     protocol: recommended?.protocol || aiStore.config.protocol,
@@ -1218,6 +1227,8 @@ async function spawnSubAgentTool(
       metadata: {
         subAgentName: name,
         subAgentRole: role,
+        planId: planId || undefined,
+        taskId: taskId || undefined,
         model: delegatedModel,
         selectionMode,
         availableModelCount: modelCatalog.models.length,
@@ -1667,6 +1678,71 @@ async function ideGetPlanTool(args: Record<string, unknown>): Promise<ToolExecut
     plan,
     markdown: renderPlanToMarkdown(plan),
     execution: buildPlanExecutionPacket(plan),
+  })
+}
+
+async function ideGetAutonomyRunTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const requestedPlanId = normalizeTextValue(args.planId)
+  const workspace = getActiveWorkspace()
+  if (!workspace) {
+    return errorResult('当前未打开工作区，无法读取自治调度状态')
+  }
+
+  const plan = requestedPlanId
+    ? aiStore.getProjectPlan(requestedPlanId)
+    : [...aiStore.projectPlans]
+      .filter(item => item.workspaceId === workspace.id)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0] || null
+
+  if (!plan || plan.workspaceId !== workspace.id) {
+    return errorResult('未找到当前工作区下的项目计划', { planId: requestedPlanId || null })
+  }
+
+  const execution = buildPlanExecutionPacket(plan)
+  const run = aiStore.getAutonomyRunByPlan(plan.id) || await syncAutonomyRunState(workspace, plan, execution, {
+    trigger: 'tool-read',
+  })
+  return successResult('已返回自治调度状态', {
+    planId: plan.id,
+    run,
+    execution,
+  })
+}
+
+async function ideSyncAutonomyRunTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const planId = normalizeTextValue(args.planId)
+  const note = normalizeTextValue(args.note)
+  const { workspace, plan } = planId ? getPlanInActiveWorkspace(planId) : { workspace: null, plan: null }
+
+  if (!workspace || !plan) {
+    return errorResult('同步自治调度状态需要有效的 planId 且当前已打开工作区')
+  }
+
+  const execution = buildPlanExecutionPacket(plan)
+  const run = await syncAutonomyRunState(workspace, plan, execution, {
+    trigger: 'tool-sync',
+    note,
+  })
+
+  if (note) {
+    aiStore.addDevLog(plan.id, {
+      type: 'milestone',
+      title: '自治调度状态同步',
+      content: `主代理已同步 RUN.md 与自治状态机。${note}`,
+      metadata: {
+        runId: run.id,
+        status: run.status,
+      },
+    })
+    await flushPlanToWorkspace(workspace, aiStore.getProjectPlan(plan.id) || plan)
+  }
+
+  return successResult('自治调度状态已同步', {
+    planId: plan.id,
+    run,
+    execution,
   })
 }
 

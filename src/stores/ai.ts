@@ -30,6 +30,11 @@ import type {
   ProjectTaskStatus,
   PhaseStatus,
   PlanStatus,
+  AutonomyRun,
+  AutonomyRunStatus,
+  AutonomyRunPermissionMode,
+  AutonomyRunResourceKind,
+  AutonomyRunTaskClaimStatus,
   DevLogEntry,
   ContextSnapshot
 } from '@/types'
@@ -357,6 +362,8 @@ function normalizeSubAgents(data: SubAgent[] | null | undefined) {
       name: typeof agent.name === 'string' ? agent.name.trim() : `子代理 ${index + 1}`,
       role: typeof agent.role === 'string' ? agent.role.trim() : 'general',
       task: typeof agent.task === 'string' ? agent.task.trim() : '',
+      planId: typeof agent.planId === 'string' ? agent.planId : undefined,
+      taskId: typeof agent.taskId === 'string' ? agent.taskId : undefined,
       systemPrompt: typeof agent.systemPrompt === 'string' ? agent.systemPrompt : '',
       model: typeof agent.model === 'string' ? agent.model : '',
       protocol: normalizeAIProtocol(agent.protocol, typeof agent.baseUrl === 'string' ? agent.baseUrl : '') as AIProtocol,
@@ -492,6 +499,124 @@ function normalizeProjectPlans(data: ProjectPlan[] | null | undefined) {
       updatedAt: Number(plan.updatedAt || Date.now()) || Date.now()
     }))
     .filter(plan => plan.workspaceId)
+}
+
+function normalizeAutonomyRunStatus(status: string | undefined): AutonomyRunStatus {
+  if (status === 'queued' || status === 'running' || status === 'paused' || status === 'blocked' || status === 'completed' || status === 'failed') {
+    return status
+  }
+
+  return 'queued'
+}
+
+function normalizeAutonomyPermissionMode(mode: string | undefined): AutonomyRunPermissionMode {
+  if (mode === 'allow' || mode === 'ask' || mode === 'deny') {
+    return mode
+  }
+
+  return 'deny'
+}
+
+function normalizeAutonomyResourceKind(kind: string | undefined): AutonomyRunResourceKind {
+  if (kind === 'builtin' || kind === 'skill' || kind === 'mcp') {
+    return kind
+  }
+
+  return 'builtin'
+}
+
+function normalizeAutonomyRunTaskClaimStatus(status: string | undefined): AutonomyRunTaskClaimStatus {
+  if (
+    status === 'ready'
+    || status === 'deferred'
+    || status === 'claimed'
+    || status === 'running'
+    || status === 'completed'
+    || status === 'failed'
+    || status === 'blocked'
+  ) {
+    return status
+  }
+
+  return 'ready'
+}
+
+function normalizeAutonomyRuns(data: AutonomyRun[] | null | undefined) {
+  if (!Array.isArray(data)) {
+    return []
+  }
+
+  return data
+    .filter(run => run && typeof run === 'object')
+    .map((run, index): AutonomyRun => ({
+      ...run,
+      id: typeof run.id === 'string' && run.id ? run.id : `autonomy-run-${index + 1}`,
+      workspaceId: typeof run.workspaceId === 'string' ? run.workspaceId : '',
+      planId: typeof run.planId === 'string' ? run.planId : '',
+      sessionId: typeof run.sessionId === 'string' ? run.sessionId : '',
+      status: normalizeAutonomyRunStatus(run.status),
+      mode: 'continuous',
+      maxParallelTasks: Math.max(1, Math.min(4, Number(run.maxParallelTasks || 1) || 1)),
+      subAgentBatchLimit: Math.max(1, Math.min(6, Number(run.subAgentBatchLimit || 1) || 1)),
+      heartbeatIntervalMs: Math.max(10_000, Number(run.heartbeatIntervalMs || 5 * 60 * 1000) || 5 * 60 * 1000),
+      summary: typeof run.summary === 'string' ? run.summary.trim() : '',
+      nextAction: typeof run.nextAction === 'string' ? run.nextAction.trim() : '',
+      permissions: Array.isArray(run.permissions)
+        ? run.permissions
+          .filter(rule => rule && typeof rule === 'object')
+          .map((rule, ruleIndex) => ({
+            id: typeof rule.id === 'string' && rule.id ? rule.id : `permission-${index + 1}-${ruleIndex + 1}`,
+            kind: normalizeAutonomyResourceKind(rule.kind),
+            name: typeof rule.name === 'string' && rule.name.trim() ? rule.name.trim() : `权限规则 ${ruleIndex + 1}`,
+            description: typeof rule.description === 'string' ? rule.description.trim() : '',
+            mode: normalizeAutonomyPermissionMode(rule.mode),
+            capabilities: Array.isArray(rule.capabilities) ? rule.capabilities.map(item => String(item).trim()).filter(Boolean) : [],
+          }))
+        : [],
+      queue: {
+        readyTaskIds: Array.isArray(run.queue?.readyTaskIds) ? run.queue.readyTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+        blockedTaskIds: Array.isArray(run.queue?.blockedTaskIds) ? run.queue.blockedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+        claimedTaskIds: Array.isArray(run.queue?.claimedTaskIds) ? run.queue.claimedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+      },
+      claims: Array.isArray(run.claims)
+        ? run.claims
+          .filter(claim => claim && typeof claim === 'object')
+          .map((claim, claimIndex) => ({
+            taskId: typeof claim.taskId === 'string' ? claim.taskId : `task-${claimIndex + 1}`,
+            phaseId: typeof claim.phaseId === 'string' ? claim.phaseId : '',
+            taskTitle: typeof claim.taskTitle === 'string' && claim.taskTitle.trim() ? claim.taskTitle.trim() : `任务 ${claimIndex + 1}`,
+            agentName: typeof claim.agentName === 'string' && claim.agentName.trim() ? claim.agentName.trim() : '通用执行代理',
+            agentRole: typeof claim.agentRole === 'string' && claim.agentRole.trim() ? claim.agentRole.trim() : '通用执行',
+            files: Array.isArray(claim.files) ? claim.files.map(item => String(item).trim()).filter(Boolean) : [],
+            status: normalizeAutonomyRunTaskClaimStatus(claim.status),
+            reason: typeof claim.reason === 'string' ? claim.reason.trim() : '',
+            assignedAgentId: typeof claim.assignedAgentId === 'string' ? claim.assignedAgentId : undefined,
+            model: typeof claim.model === 'string' ? claim.model : undefined,
+            modelReason: typeof claim.modelReason === 'string' ? claim.modelReason.trim() : undefined,
+            selectionMode: claim.selectionMode === 'manual' || claim.selectionMode === 'router' || claim.selectionMode === 'fallback'
+              ? claim.selectionMode
+              : undefined,
+            updatedAt: Number(claim.updatedAt || Date.now()) || Date.now(),
+          }))
+        : [],
+      lastHeartbeat: run.lastHeartbeat && typeof run.lastHeartbeat === 'object'
+        ? {
+            timestamp: Number(run.lastHeartbeat.timestamp || Date.now()) || Date.now(),
+            summary: typeof run.lastHeartbeat.summary === 'string' ? run.lastHeartbeat.summary.trim() : '',
+            nextAction: typeof run.lastHeartbeat.nextAction === 'string' ? run.lastHeartbeat.nextAction.trim() : '',
+            readyTaskIds: Array.isArray(run.lastHeartbeat.readyTaskIds) ? run.lastHeartbeat.readyTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+            blockedTaskIds: Array.isArray(run.lastHeartbeat.blockedTaskIds) ? run.lastHeartbeat.blockedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+            claimedTaskIds: Array.isArray(run.lastHeartbeat.claimedTaskIds) ? run.lastHeartbeat.claimedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
+          }
+        : undefined,
+      lastError: typeof run.lastError === 'string' ? run.lastError.trim() : undefined,
+      createdAt: Number(run.createdAt || Date.now()) || Date.now(),
+      updatedAt: Number(run.updatedAt || Date.now()) || Date.now(),
+      startedAt: Number(run.startedAt || 0) || undefined,
+      pausedAt: Number(run.pausedAt || 0) || undefined,
+      completedAt: Number(run.completedAt || 0) || undefined,
+    }))
+    .filter(run => run.workspaceId && run.planId)
 }
 
 function normalizeProjectFileEntry(entry: { path?: unknown; type?: unknown; language?: unknown; lines?: unknown; size?: unknown }, index: number) {
@@ -731,6 +856,7 @@ export const useAIStore = defineStore('ai', () => {
   const ideWorkspace = ref<IDEWorkspace | null>(null)
   const ideEditorSession = ref<IDEEditorSession | null>(null)
   const projectPlans = ref<ProjectPlan[]>([])
+  const autonomyRuns = ref<AutonomyRun[]>([])
   const contextSnapshots = ref<ContextSnapshot[]>([])
 
   function getSessions(scope: AIConversationScope = 'main') {
@@ -841,6 +967,10 @@ export const useAIStore = defineStore('ai', () => {
     projectPlans.value = normalizeProjectPlans(snapshot)
   }
 
+  function applyAutonomyRunsSnapshot(snapshot: AutonomyRun[] | null | undefined) {
+    autonomyRuns.value = normalizeAutonomyRuns(snapshot)
+  }
+
   function applyContextSnapshotsSnapshot(snapshot: ContextSnapshot[] | null | undefined) {
     contextSnapshots.value = normalizeContextSnapshots(snapshot)
   }
@@ -894,6 +1024,11 @@ export const useAIStore = defineStore('ai', () => {
 
       if (key === 'ai_project_plans') {
         applyProjectPlansSnapshot(data as ProjectPlan[])
+        return
+      }
+
+      if (key === 'ai_autonomy_runs') {
+        applyAutonomyRunsSnapshot(data as AutonomyRun[])
         return
       }
 
@@ -961,6 +1096,7 @@ export const useAIStore = defineStore('ai', () => {
     applyIDEWorkspaceSnapshot(await loadData<IDEWorkspace | null>('ai_ide_workspace', null))
     applyIDEEditorSessionSnapshot(await loadData<IDEEditorSession | null>('ai_ide_editor_session', null))
     applyProjectPlansSnapshot(await loadData<ProjectPlan[]>('ai_project_plans', []))
+    applyAutonomyRunsSnapshot(await loadData<AutonomyRun[]>('ai_autonomy_runs', []))
     applyContextSnapshotsSnapshot(await loadData<ContextSnapshot[]>('ai_context_snapshots', []))
 
     const recoveredAt = Date.now()
@@ -1668,6 +1804,8 @@ export const useAIStore = defineStore('ai', () => {
       name: request.name,
       role: request.role,
       task: request.task,
+      planId: request.planId,
+      taskId: request.taskId,
       systemPrompt: request.systemPrompt || '',
       model: request.model || config.value.model,
       protocol: request.protocol || config.value.protocol,
@@ -1843,6 +1981,65 @@ export const useAIStore = defineStore('ai', () => {
     scheduleSave('ai_project_plans', projectPlans.value)
   }
 
+  function getAutonomyRun(runId: string) {
+    return autonomyRuns.value.find(run => run.id === runId) ?? null
+  }
+
+  function getAutonomyRunByPlan(planId: string) {
+    return [...autonomyRuns.value]
+      .filter(run => run.planId === planId)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null
+  }
+
+  function upsertAutonomyRun(run: AutonomyRun) {
+    const normalized = normalizeAutonomyRuns([run])[0]
+    if (!normalized) {
+      return null
+    }
+
+    const existingIndex = autonomyRuns.value.findIndex(item => item.id === normalized.id || item.planId === normalized.planId)
+    if (existingIndex >= 0) {
+      autonomyRuns.value.splice(existingIndex, 1, normalized)
+    } else {
+      autonomyRuns.value.unshift(normalized)
+    }
+
+    scheduleSave('ai_autonomy_runs', autonomyRuns.value)
+    return normalized
+  }
+
+  function updateAutonomyRunStatus(runId: string, status: AutonomyRunStatus, patch?: Partial<AutonomyRun>) {
+    const currentRun = getAutonomyRun(runId)
+    if (!currentRun) {
+      return null
+    }
+
+    const now = Date.now()
+    const nextRun: AutonomyRun = {
+      ...currentRun,
+      ...patch,
+      id: currentRun.id,
+      planId: patch?.planId || currentRun.planId,
+      workspaceId: patch?.workspaceId || currentRun.workspaceId,
+      sessionId: patch?.sessionId ?? currentRun.sessionId,
+      status,
+      updatedAt: now,
+      startedAt: status === 'running' ? (currentRun.startedAt || now) : patch?.startedAt ?? currentRun.startedAt,
+      pausedAt: status === 'paused' ? now : patch?.pausedAt ?? currentRun.pausedAt,
+      completedAt: status === 'completed' ? now : patch?.completedAt ?? currentRun.completedAt,
+      lastError: status === 'failed'
+        ? (typeof patch?.lastError === 'string' && patch.lastError.trim() ? patch.lastError.trim() : currentRun.lastError)
+        : patch?.lastError ?? currentRun.lastError,
+    }
+
+    return upsertAutonomyRun(nextRun)
+  }
+
+  function clearAutonomyRunsForWorkspace(workspaceId: string) {
+    autonomyRuns.value = autonomyRuns.value.filter(run => run.workspaceId !== workspaceId)
+    scheduleSave('ai_autonomy_runs', autonomyRuns.value)
+  }
+
   // ==================== 开发日志 ====================
 
   function addDevLog(planId: string, entry: Omit<DevLogEntry, 'id' | 'timestamp'>) {
@@ -1954,6 +2151,7 @@ export const useAIStore = defineStore('ai', () => {
     ideWorkspace,
     ideEditorSession,
     projectPlans,
+    autonomyRuns,
     contextSnapshots,
     setAgentMode,
     spawnSubAgent,
@@ -1970,6 +2168,11 @@ export const useAIStore = defineStore('ai', () => {
     addProjectPhase,
     setProjectPlanPhases,
     updateProjectTaskStatus,
+    getAutonomyRun,
+    getAutonomyRunByPlan,
+    upsertAutonomyRun,
+    updateAutonomyRunStatus,
+    clearAutonomyRunsForWorkspace,
     addDevLog,
     getDevLog,
     saveContextSnapshot,

@@ -88,9 +88,9 @@
 
 ## 当前剩余缺口
 
-- IDE 自治执行链路已经补齐工作区级 `.openagent/CONTEXT.md`：当前会把计划状态、ready / blocked 队列、最近上下文压缩摘要、会话长摘要、最近子代理结果与恢复执行建议压成接力文档，并在对话触发上下文压缩时自动刷新；这让切换模型、恢复会话、长时间续跑时可以更快定位当前进度。当前剩余工作是把这套 handoff 文档继续升级为真正的“超长时间自治调度器”状态机，而不只是高质量恢复锚点。
-- 主代理委派子代理时已经会自动拉取当前接口支持的模型列表并执行子代理模型路由，落盘记录选型方式、可用模型数量和选型理由；子代理提示词也显式禁止继续创建代理。当前剩余缺口是把这套模型治理继续扩展到“按 Skill / MCP / 工具权限 / 成本预算”统一调度，以及支持更长生命周期的多轮子代理执行。
-- IDE 计划链路已经补齐“先生成详细计划、等待用户确认、切换计划状态、输出 `.openagent/PLAN.md` / `.openagent/TASKS.md` / `.openagent/SUBAGENTS.md` / `.openagent/SUPERVISOR.md`、再由主代理按 ready task 监督并发”的执行协议；`.openagent/TASKS.md` 也已从“只看当前队列”升级为“全量任务树 + 当前 ready / blocked 队列”，`IDEPlanPanel` 同时支持直接查看并复制主代理监督提示词和子代理提示词。当前剩余工作更多集中在“把这套协议进一步收口成真正持续自动运行的调度器”，而不是计划表达或分工协议缺失。
+- IDE 自治执行链路已经从 `.openagent/CONTEXT.md` handoff 升级到真正的 `.openagent/RUN.md` 自治调度状态机：当前会持久化自治运行状态、权限画像、建议并行度、任务领取映射、最近心跳，并在计划文档刷新时同步收口到工作区。当前剩余工作不再是“有没有调度器”，而是继续把它从“高质量状态机 + 恢复锚点”推进到“真正后台连续运行的 worker / 任务循环”。
+- 主代理委派子代理时已经会自动拉取当前接口支持的模型列表并执行子代理模型路由，落盘记录选型方式、可用模型数量和选型理由；`spawn_sub_agent` 现在也支持把 `planId` / `taskId` 显式挂到任务领取状态，便于自治调度器追踪 ready task -> 子代理 -> 结果回传的链路。当前剩余缺口是把这套模型治理继续扩展到“按 Skill / MCP / 工具权限 / 成本预算”统一调度的强约束执行层，以及支持更长生命周期的多轮子代理执行。
+- IDE 计划链路已经补齐“先生成详细计划、等待用户确认、切换计划状态、输出 `.openagent/PLAN.md` / `.openagent/TASKS.md` / `.openagent/CONTEXT.md` / `.openagent/RUN.md` / `.openagent/SUBAGENTS.md` / `.openagent/SUPERVISOR.md`、再由主代理按 ready task 监督并发”的执行协议；`IDEPlanPanel` 现在也会直接展示自治调度状态、权限统计、当前领取任务和最近心跳。当前剩余工作主要集中在把这套协议进一步收口成“可脱离前台页面持续运行”的执行器，而不是计划表达、任务树或监督提示词缺失。
 - `IDETerminal` 已支持多标签、持久 shell、stdin 持续输入、`xterm` 渲染、按键直通与 resize 同步，`vim` / `top` 这类全屏命令也具备前端承载条件；当前剩余风险主要是缺少这类 TUI 场景的人工回归，以及长时间运行命令下的稳定性观察。
 - IDE 项目计划已支持基于真实工作区快照、diff、失败反馈和上下文摘要的动态重规划，并在 `IDEPlanPanel` 中补齐了“计划漂移可见性 + 手动同步基线”能力：用户现在能直接看到当前计划与工作区之间的新增 / 修改 / 删除差异，区分“需要重规划”还是“仅需确认基线”；剩余工作是继续观察复杂冲突、跨阶段返工与多次连续重规划场景下的计划稳定性。
 - `IDEExplorer` 已补齐资源管理器的高频交互闭环：支持 Ctrl/Cmd 多选、Shift 连选、根目录拖放区、目录拖拽移动、批量删除、剪贴板式复制/粘贴与批量重命名；复制会在目标目录中自动规避重名，并在目录自拷贝到子目录这类危险路径上做前置跳过，批量重命名会保留文件扩展名并在提交前预览冲突。当前剩余工作更多偏增量体验优化，例如跨工作区复制提示、更细的复制冲突策略和批量重命名模板增强，不再属于交付阻断项。
@@ -179,3 +179,6 @@
 | 2026-03-13 | code | Phase 8 自治执行增强：`aiTools.ts` 改为在 `route_model` / `spawn_sub_agent` 中自动获取当前接口支持的模型列表并执行子代理模型选型，`types/index.ts` / `stores/ai.ts` 持久化子代理选型元数据，`aiPrompts.ts` 显式约束子代理不能再创建代理，`SubAgentCard.vue` 展示选型方式与理由 |
 | 2026-03-13 | code | Phase 8 上下文接力增强：`aiPlanEngine.ts` 新增 `.openagent/CONTEXT.md` 工作区 handoff 文档，压缩计划状态、ready / blocked 队列、会话摘要、上下文快照、最近子代理与开发日志；`aiConversation.ts` 在触发上下文压缩后自动刷新 handoff 文档，`aiContextEngine.ts` 也会把会话长摘要注入子代理共享上下文 |
 | 2026-03-13 | test | Phase 8 自治执行增强验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认新增模型路由、上下文 handoff 与压缩后文档刷新未破坏关键路由链路 |
+| 2026-03-13 | code | Phase 8 自治调度器状态机：`types/index.ts` / `stores/ai.ts` 新增自治运行状态、权限规则、任务领取与心跳持久化；`aiAutonomyScheduler.ts` 负责汇总 Skill / MCP / 内置工具权限画像、建议并行度与 ready task 领取状态，并在计划刷新时同步生成 `.openagent/RUN.md` |
+| 2026-03-13 | code | Phase 8 自治调度 UI/工具闭环：`IDEPlanPanel.vue` / `IDEView.vue` 新增自治调度状态卡片、运行/暂停/同步入口；`ai.ts` / `aiTools.ts` 新增 `ide_get_autonomy_run` / `ide_sync_autonomy_run`，并为 `spawn_sub_agent` 增加 `planId` / `taskId` 映射，打通任务 -> 子代理 -> 调度状态机链路 |
+| 2026-03-13 | test | Phase 8 自治调度器状态机验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 RUN.md 落盘、IDE 调度面板和自治工具链未破坏 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路 |

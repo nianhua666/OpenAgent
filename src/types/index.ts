@@ -470,6 +470,8 @@ export interface SubAgent {
   name: string
   role: string
   task: string
+  planId?: string
+  taskId?: string
   systemPrompt: string
   model: string
   protocol: AIProtocol
@@ -491,6 +493,8 @@ export interface SubAgentSpawnRequest {
   name: string
   role: string
   task: string
+  planId?: string
+  taskId?: string
   systemPrompt?: string
   model?: string
   protocol?: AIProtocol
@@ -713,6 +717,73 @@ export interface ProjectPlanDriftSummary {
   checkedAt: number
   samplePaths: string[]
   diff: ProjectPlanWorkspaceDiff
+}
+
+export type AutonomyRunStatus = 'queued' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed'
+export type AutonomyRunPermissionMode = 'allow' | 'ask' | 'deny'
+export type AutonomyRunResourceKind = 'builtin' | 'skill' | 'mcp'
+export type AutonomyRunTaskClaimStatus = 'ready' | 'deferred' | 'claimed' | 'running' | 'completed' | 'failed' | 'blocked'
+
+export interface AutonomyRunPermissionRule {
+  id: string
+  kind: AutonomyRunResourceKind
+  name: string
+  description: string
+  mode: AutonomyRunPermissionMode
+  capabilities: string[]
+}
+
+export interface AutonomyRunTaskClaim {
+  taskId: string
+  phaseId: string
+  taskTitle: string
+  agentName: string
+  agentRole: string
+  files: string[]
+  status: AutonomyRunTaskClaimStatus
+  reason: string
+  assignedAgentId?: string
+  model?: string
+  modelReason?: string
+  selectionMode?: SubAgent['selectionMode']
+  updatedAt: number
+}
+
+export interface AutonomyRunHeartbeat {
+  timestamp: number
+  summary: string
+  nextAction: string
+  readyTaskIds: string[]
+  blockedTaskIds: string[]
+  claimedTaskIds: string[]
+}
+
+export interface AutonomyRun {
+  id: string
+  workspaceId: string
+  planId: string
+  sessionId: string
+  status: AutonomyRunStatus
+  mode: 'continuous'
+  maxParallelTasks: number
+  subAgentBatchLimit: number
+  heartbeatIntervalMs: number
+  summary: string
+  nextAction: string
+  permissions: AutonomyRunPermissionRule[]
+  queue: {
+    readyTaskIds: string[]
+    blockedTaskIds: string[]
+    claimedTaskIds: string[]
+  }
+  claims: AutonomyRunTaskClaim[]
+  lastHeartbeat?: AutonomyRunHeartbeat
+  lastError?: string
+  createdAt: number
+  updatedAt: number
+  startedAt?: number
+  pausedAt?: number
+  completedAt?: number
 }
 
 export interface DevLogEntry {

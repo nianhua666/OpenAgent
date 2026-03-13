@@ -2858,6 +2858,8 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
             name: { type: 'string', description: '子代理名称，如"前端开发者"' },
             role: { type: 'string', description: '角色标识: code-analyst, frontend-dev, backend-dev, tester, reviewer, architect, devops' },
             task: { type: 'string', description: '分配给子代理的任务描述' },
+            planId: { type: 'string', description: '可选：项目计划 ID，用于把子代理结果挂到自治调度状态机上' },
+            taskId: { type: 'string', description: '可选：ready task 的任务 ID，用于建立子代理与计划任务的映射' },
             contextFromParent: { type: 'string', description: '从当前对话注入给子代理的关键上下文' },
             model: { type: 'string', description: '可选：主代理显式指定子代理使用的模型；若未指定，系统会按当前接口返回的模型列表自动选型' }
           },
@@ -3015,6 +3017,34 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
             type: 'object',
             properties: {
               planId: { type: 'string', description: '计划 ID' }
+            },
+            required: ['planId']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_get_autonomy_run',
+          description: '获取当前计划的自治调度器状态机，包括权限画像、任务领取状态、并行建议和最近心跳。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '可选：计划 ID；不传时默认读取当前工作区最新计划' }
+            }
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_sync_autonomy_run',
+          description: '刷新当前计划的自治调度器状态机与 RUN.md。适合在一轮任务推进后写入心跳摘要、ready queue 和权限状态。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' },
+              note: { type: 'string', description: '可选：本轮自治推进的心跳说明' }
             },
             required: ['planId']
           }

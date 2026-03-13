@@ -80,14 +80,19 @@
             :selected-plan-id="selectedPlanId"
             :replanning="replanningPlan"
             :syncing-baseline="syncingPlanBaseline"
+            :syncing-autonomy="syncingAutonomyRun"
             :updating-plan-status="updatingPlanStatus"
             :selected-plan-drift="selectedPlanDrift"
             :execution-packet="selectedPlanExecutionPacket"
+            :autonomy-run="selectedAutonomyRun"
             @select-plan="selectedPlanId = $event"
             @create-plan="createGeneratedPlanDraft"
             @update-plan-status="handleUpdatePlanStatus"
             @replan-plan="handleReplanPlan"
             @sync-plan-baseline="handleSyncPlanBaseline"
+            @sync-autonomy-run="handleSyncAutonomyRun"
+            @resume-autonomy-run="handleResumeAutonomyRun"
+            @pause-autonomy-run="handlePauseAutonomyRun"
           />
 
           <IDEDevLog :plan="selectedPlan" />
@@ -121,8 +126,9 @@ import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
-import type { IDEEditorSession, PlanStatus, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
+import type { AutonomyRun, IDEEditorSession, PlanStatus, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
 import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
+import { syncAutonomyRunState } from '@/utils/aiAutonomyScheduler'
 import { buildPlanExecutionPacket, flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
 
@@ -181,6 +187,7 @@ const selectedPlanId = ref('')
 const refreshingWorkspace = ref(false)
 const replanningPlan = ref(false)
 const syncingPlanBaseline = ref(false)
+const syncingAutonomyRun = ref(false)
 const updatingPlanStatus = ref(false)
 const selectedPlanDrift = ref<ProjectPlanDriftSummary | null>(null)
 let selectedPlanDriftRequestId = 0
@@ -206,6 +213,13 @@ const selectedPlanExecutionPacket = computed<ProjectPlanExecutionPacket | null>(
   }
 
   return buildPlanExecutionPacket(selectedPlan.value)
+})
+const selectedAutonomyRun = computed<AutonomyRun | null>(() => {
+  if (!selectedPlan.value) {
+    return null
+  }
+
+  return aiStore.getAutonomyRunByPlan(selectedPlan.value.id)
 })
 const openTabPaths = computed(() => editorTabs.value.map(tab => tab.path))
 const clipboardCount = computed(() => explorerClipboardEntries.value.length)
@@ -418,6 +432,14 @@ watch(workspacePlans, plans => {
 })
 
 watch(
+  () => [workspace.value?.id || '', selectedPlan.value?.id || '', selectedPlan.value?.updatedAt || 0],
+  () => {
+    void syncSelectedAutonomyRun({ silent: true })
+  },
+  { immediate: true },
+)
+
+watch(
   () => [workspace.value?.id || '', selectedPlanId.value, workspacePlans.value.length],
   () => {
     void refreshSelectedPlanDrift({ silent: true })
@@ -605,6 +627,40 @@ function scheduleSelectedPlanDriftRefresh() {
     selectedPlanDriftTimer = null
     void refreshSelectedPlanDrift({ silent: true })
   }, 120)
+}
+
+async function syncSelectedAutonomyRun(options?: { note?: string; silent?: boolean }) {
+  const currentWorkspace = workspace.value
+  const currentPlan = selectedPlan.value
+  if (!currentWorkspace || !currentPlan) {
+    return null
+  }
+
+  syncingAutonomyRun.value = true
+  try {
+    const run = await syncAutonomyRunState(
+      currentWorkspace,
+      currentPlan,
+      buildPlanExecutionPacket(currentPlan),
+      {
+        trigger: options?.note ? 'ide-panel-manual' : 'ide-panel-auto',
+        note: options?.note,
+      },
+    )
+
+    if (!options?.silent) {
+      showToast('success', `自治调度状态已同步：${currentPlan.goal}`)
+    }
+
+    return run
+  } catch (error) {
+    if (!options?.silent) {
+      showToast('error', error instanceof Error ? error.message : '同步自治调度状态失败')
+    }
+    return null
+  } finally {
+    syncingAutonomyRun.value = false
+  }
 }
 
 async function openFile(path: string) {
@@ -1551,6 +1607,73 @@ async function handleSyncPlanBaseline(planId: string) {
   } finally {
     syncingPlanBaseline.value = false
   }
+}
+
+async function handleSyncAutonomyRun(planId: string) {
+  const targetPlan = workspacePlans.value.find(plan => plan.id === planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可同步的自治调度状态')
+    return
+  }
+
+  if (targetPlan.id !== selectedPlan.value?.id) {
+    selectedPlanId.value = targetPlan.id
+  }
+
+  await syncSelectedAutonomyRun({
+    note: '主代理从 IDE 面板手动刷新自治调度状态。',
+  })
+}
+
+async function handleResumeAutonomyRun(planId: string) {
+  const targetPlan = workspacePlans.value.find(plan => plan.id === planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可恢复自治执行的计划')
+    return
+  }
+
+  if (targetPlan.id !== selectedPlan.value?.id) {
+    selectedPlanId.value = targetPlan.id
+  }
+
+  if (targetPlan.status === 'drafting') {
+    showToast('warning', '请先确认计划，再启动自治执行')
+    return
+  }
+
+  if (targetPlan.status !== 'in-progress') {
+    await handleUpdatePlanStatus({
+      planId: targetPlan.id,
+      status: 'in-progress',
+    })
+  }
+
+  await syncSelectedAutonomyRun({
+    note: '主代理已恢复自治执行，将继续按 RUN.md 和 TASKS.md 推进 ready queue。',
+  })
+}
+
+async function handlePauseAutonomyRun(planId: string) {
+  const targetPlan = workspacePlans.value.find(plan => plan.id === planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可暂停的自治计划')
+    return
+  }
+
+  if (targetPlan.id !== selectedPlan.value?.id) {
+    selectedPlanId.value = targetPlan.id
+  }
+
+  if (targetPlan.status !== 'paused') {
+    await handleUpdatePlanStatus({
+      planId: targetPlan.id,
+      status: 'paused',
+    })
+  }
+
+  await syncSelectedAutonomyRun({
+    note: '主代理已从 IDE 面板暂停自治执行，等待下一次恢复。',
+  })
 }
 
 async function handleReplanPlan(planId: string) {

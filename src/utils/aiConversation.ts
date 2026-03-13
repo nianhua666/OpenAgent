@@ -645,7 +645,7 @@ async function syncIDEExecutionHandoff(sessionId: string) {
   aiStore.addDevLog(plan.id, {
     type: 'context-compress',
     title: '刷新执行上下文摘要',
-    content: `会话 ${sessionId} 已完成一次上下文压缩，并同步刷新工作区内的 CONTEXT.md 接力摘要。`,
+    content: `会话 ${sessionId} 已完成一次上下文压缩，并同步刷新工作区内的 CONTEXT.md 与 RUN.md 接力摘要。`,
     metadata: {
       sessionId,
     },

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- IDE Mode 已新增 `.openagent/RUN.md` 自治调度状态机：现在会持久化自治运行状态、权限画像、建议并行度、任务领取映射和最近心跳，并在计划文档刷新时同步落盘，帮助主代理在长时间连续开发、切模型续跑和任务恢复时快速回到当前执行面。
+- IDE Mode 计划面板已补齐自治调度视图与工具闭环：`IDEPlanPanel` 会直接展示自治调度状态、权限统计、当前领取任务和最近心跳；同时新增 `ide_get_autonomy_run` / `ide_sync_autonomy_run`，让主代理可以把自治调度状态机当成结构化运行上下文持续刷新。
 - IDE Mode 已新增更接近长时间自治开发的接力机制：主代理现在会在 `route_model` / `spawn_sub_agent` 时自动拉取当前接口支持的模型列表并为子代理执行模型选型，记录选型方式、可用模型数量与理由；子代理提示词也显式禁止继续创建代理，避免多层代理失控。
 - IDE Mode 已新增 `.openagent/CONTEXT.md` 工作区 handoff 文档：会把计划状态、ready / blocked 队列、会话长摘要、上下文压缩快照、最近子代理结果与恢复执行建议压成可持续接力的上下文文档；当对话触发上下文压缩时，工作区 handoff 文档也会自动刷新，帮助切模型、换会话或长时间续跑时快速恢复进度。
 - IDE Mode 计划执行链路已补齐“先规划、再确认、后持续执行”的闭环：新增计划状态流转、ready / blocked 执行包、`.openagent/TASKS.md` 全量任务树、`.openagent/SUBAGENTS.md` 与 `.openagent/SUPERVISOR.md` 输出，`IDEPlanPanel` 也能直接展示并复制主代理监督提示词与每个 ready task 的子代理提示词，方便按主代理监督、多子代理并行的方式持续推进任务。

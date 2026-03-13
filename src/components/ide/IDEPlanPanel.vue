@@ -68,6 +68,62 @@
         </div>
       </div>
 
+      <div class="autonomy-panel" :class="autonomyPanelClass">
+        <div class="autonomy-head">
+          <strong>自治调度器</strong>
+          <div class="autonomy-head-actions">
+            <button class="btn btn-ghost btn-sm" :disabled="syncingAutonomy" type="button" @click="emit('sync-autonomy-run', selectedPlan.id)">
+              {{ syncingAutonomy ? '同步中..' : '同步状态' }}
+            </button>
+            <button
+              v-if="selectedPlan.status === 'approved' || selectedPlan.status === 'paused'"
+              class="btn btn-secondary btn-sm"
+              :disabled="syncingAutonomy || updatingPlanStatus"
+              type="button"
+              @click="emit('resume-autonomy-run', selectedPlan.id)"
+            >
+              {{ selectedPlan.status === 'paused' ? '恢复自治' : '启动自治' }}
+            </button>
+            <button
+              v-else-if="selectedPlan.status === 'in-progress'"
+              class="btn btn-ghost btn-sm"
+              :disabled="syncingAutonomy || updatingPlanStatus"
+              type="button"
+              @click="emit('pause-autonomy-run', selectedPlan.id)"
+            >
+              暂停自治
+            </button>
+            <span class="autonomy-badge">{{ autonomyRun ? autonomyStatusLabel(autonomyRun.status) : '待生成' }}</span>
+          </div>
+        </div>
+        <p class="autonomy-summary">
+          {{ autonomyRun?.summary || '当前计划尚未生成自治调度状态机。点击“同步状态”后会输出 RUN.md，并整理权限画像、任务领取状态和最近心跳。' }}
+        </p>
+        <div class="autonomy-meta">
+          <span>建议并行 {{ autonomyRun?.maxParallelTasks || 1 }} 个任务</span>
+          <span>子代理批次上限 {{ autonomyRun?.subAgentBatchLimit || 1 }}</span>
+          <span>{{ autonomyRun?.lastHeartbeat ? `最近心跳 ${formatCheckedTime(autonomyRun.lastHeartbeat.timestamp)}` : '尚未生成心跳' }}</span>
+        </div>
+        <div class="execution-chip-row">
+          <span class="execution-chip">允许 {{ permissionStats.allow }}</span>
+          <span class="execution-chip">谨慎使用 {{ permissionStats.ask }}</span>
+          <span class="execution-chip">禁止 {{ permissionStats.deny }}</span>
+        </div>
+        <p v-if="autonomyRun?.nextAction" class="autonomy-next">
+          下一动作：{{ autonomyRun.nextAction }}
+        </p>
+        <div v-if="visibleAutonomyClaims.length > 0" class="autonomy-claim-list">
+          <article v-for="claim in visibleAutonomyClaims" :key="claim.taskId" class="autonomy-claim-card">
+            <div class="autonomy-claim-head">
+              <strong>{{ claim.taskTitle }}</strong>
+              <span>{{ claim.agentName }}</span>
+            </div>
+            <p>{{ autonomyClaimStatusLabel(claim.status) }} · {{ claim.agentRole }}</p>
+            <p v-if="claim.reason" class="autonomy-claim-reason">{{ claim.reason }}</p>
+          </article>
+        </div>
+      </div>
+
       <div v-if="executionPacket" class="execution-panel">
         <div class="execution-head">
           <strong>执行编排</strong>
@@ -157,7 +213,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { PlanStatus, ProjectPlan, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
+import type { AutonomyRun, PlanStatus, ProjectPlan, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
 import { showToast } from '@/utils/toast'
 
 const props = defineProps<{
@@ -165,9 +221,11 @@ const props = defineProps<{
   selectedPlanId: string
   replanning?: boolean
   syncingBaseline?: boolean
+  syncingAutonomy?: boolean
   updatingPlanStatus?: boolean
   selectedPlanDrift?: ProjectPlanDriftSummary | null
   executionPacket?: ProjectPlanExecutionPacket | null
+  autonomyRun?: AutonomyRun | null
 }>()
 
 const emit = defineEmits<{
@@ -176,6 +234,9 @@ const emit = defineEmits<{
   (event: 'replan-plan', planId: string): void
   (event: 'sync-plan-baseline', planId: string): void
   (event: 'update-plan-status', payload: { planId: string; status: PlanStatus }): void
+  (event: 'sync-autonomy-run', planId: string): void
+  (event: 'resume-autonomy-run', planId: string): void
+  (event: 'pause-autonomy-run', planId: string): void
 }>()
 
 const goal = ref('')
@@ -186,9 +247,22 @@ const selectedPlan = computed(() => props.plans.find(plan => plan.id === props.s
 const canCreatePlan = computed(() => goal.value.length > 0 && overview.value.length > 0 && techStack.value.length > 0)
 const replanning = computed(() => props.replanning === true)
 const syncingBaseline = computed(() => props.syncingBaseline === true)
+const syncingAutonomy = computed(() => props.syncingAutonomy === true)
 const updatingPlanStatus = computed(() => props.updatingPlanStatus === true)
 const selectedPlanDrift = computed(() => props.selectedPlanDrift ?? null)
 const executionPacket = computed(() => props.executionPacket ?? null)
+const autonomyRun = computed(() => props.autonomyRun ?? null)
+const autonomyPanelClass = computed(() => autonomyRun.value ? `is-${autonomyRun.value.status}` : 'is-empty')
+const permissionStats = computed(() => {
+  const stats = { allow: 0, ask: 0, deny: 0 }
+  for (const rule of autonomyRun.value?.permissions || []) {
+    if (rule.mode === 'allow') stats.allow += 1
+    else if (rule.mode === 'ask') stats.ask += 1
+    else stats.deny += 1
+  }
+  return stats
+})
+const visibleAutonomyClaims = computed(() => (autonomyRun.value?.claims || []).slice(0, 4))
 const planStatusActions = computed<Array<{ status: PlanStatus; label: string }>>(() => {
   if (!selectedPlan.value) {
     return []
@@ -284,6 +358,33 @@ function statusLabel(status: string) {
     'in-progress': '进行中',
     completed: '已完成',
     paused: '已暂停',
+  }
+
+  return map[status] || status
+}
+
+function autonomyStatusLabel(status: NonNullable<AutonomyRun['status']>) {
+  const map: Record<AutonomyRun['status'], string> = {
+    queued: '待命',
+    running: '运行中',
+    paused: '已暂停',
+    blocked: '阻塞',
+    completed: '已完成',
+    failed: '失败',
+  }
+
+  return map[status] || status
+}
+
+function autonomyClaimStatusLabel(status: string) {
+  const map: Record<string, string> = {
+    ready: '待领取',
+    deferred: '延后',
+    claimed: '已领取',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败',
+    blocked: '阻塞',
   }
 
   return map[status] || status
@@ -482,6 +583,97 @@ async function copyPrompt(text: string, label: string) {
   flex-wrap: wrap;
   justify-content: flex-start;
   color: var(--text-muted);
+  font-size: $font-xs;
+}
+
+.autonomy-panel {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  padding: $spacing-sm;
+  border: 1px solid rgba(14, 25, 42, 0.08);
+  border-radius: $border-radius-sm;
+  background: rgba(14, 25, 42, 0.04);
+
+  &.is-running {
+    border-color: rgba(var(--primary-rgb, 232 120 154), 0.18);
+    background: rgba(var(--primary-rgb, 232 120 154), 0.08);
+  }
+
+  &.is-paused,
+  &.is-queued {
+    border-color: rgba(54, 109, 193, 0.16);
+    background: rgba(54, 109, 193, 0.06);
+  }
+
+  &.is-blocked,
+  &.is-failed {
+    border-color: rgba(211, 123, 35, 0.22);
+    background: rgba(211, 123, 35, 0.08);
+  }
+
+  &.is-completed {
+    border-color: rgba(29, 148, 92, 0.2);
+    background: rgba(29, 148, 92, 0.08);
+  }
+}
+
+.autonomy-head,
+.autonomy-claim-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+}
+
+.autonomy-head-actions,
+.autonomy-meta {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.autonomy-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-primary);
+  font-size: $font-xs;
+  font-weight: 700;
+}
+
+.autonomy-summary,
+.autonomy-next,
+.autonomy-claim-card p {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.autonomy-meta {
+  color: var(--text-muted);
+  font-size: $font-xs;
+}
+
+.autonomy-claim-list {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.autonomy-claim-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: $spacing-sm;
+  border-radius: $border-radius-sm;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.autonomy-claim-reason {
   font-size: $font-xs;
 }
 
