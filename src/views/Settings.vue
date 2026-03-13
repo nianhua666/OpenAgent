@@ -383,7 +383,8 @@
         </div>
         <div class="inline-actions">
           <button class="btn btn-primary btn-sm" @click="openAISettingsPage">前往 AI 设置</button>
-          <button class="btn btn-secondary btn-sm" @click="router.push('/ai')">打开 AI 助手</button>
+          <button class="btn btn-secondary btn-sm" @click="openAIOverlayWindow">打开 AI 悬浮窗</button>
+          <button class="btn btn-secondary btn-sm" @click="router.push('/ai')">打开 Agent</button>
         </div>
       </div>
     </div>
@@ -398,7 +399,7 @@
           <img src="/brand-mark.svg" :alt="`${APP_NAME} 图标`" class="about-icon" />
           <div>
             <p><strong>{{ APP_NAME }}</strong> v{{ APP_VERSION }}</p>
-            <p>{{ APP_TAGLINE }}，统一收口账号管理、AI 助手以及托管 MCP / Skills 扩展能力。</p>
+            <p>{{ APP_TAGLINE }}，统一收口账号管理、Agent 以及托管 MCP / Skills 扩展能力。</p>
           </div>
         </div>
         <div class="about-meta">
@@ -608,6 +609,15 @@ function updateSetting(key: string, value: unknown) {
 
 function openAISettingsPage() {
   void router.push('/ai-settings')
+}
+
+function openAIOverlayWindow() {
+  if (window.electronAPI?.showAIOverlayWindow) {
+    window.electronAPI.showAIOverlayWindow()
+    return
+  }
+
+  void router.push('/ai')
 }
 
 function sourceLabel(source: Live2DModelSource) {

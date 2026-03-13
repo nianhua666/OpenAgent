@@ -111,7 +111,7 @@
                 <button class="btn btn-primary btn-sm" :disabled="isInstalledMcpMarketplaceItem(item) || installingMarketplaceMcpId === item.id || serverSubmitting" @click="installMarketplaceMcp(item)">
                   {{ isInstalledMcpMarketplaceItem(item) ? '已安装' : installingMarketplaceMcpId === item.id ? '处理中...' : item.quickInstallable ? '一键安装' : '填充模板' }}
                 </button>
-                <button class="btn btn-secondary btn-sm" @click="fillServerFormFromMarketplace(item)">载入配置</button>
+                <button class="btn btn-secondary btn-sm" @click="fillServerFormFromMarketplace(item, { switchPanel: true, focusField: true })">载入配置</button>
               </div>
             </article>
           </div>
@@ -182,7 +182,7 @@
       </section>
     </div>
 
-    <div v-else-if="activePanel === 'mcp'" class="resource-grid">
+    <div v-else-if="activePanel === 'mcp'" ref="mcpPanelRef" class="resource-grid">
       <section class="resource-card glass-panel">
         <div class="resource-card-head">
           <div>
@@ -200,7 +200,7 @@
         <div class="resource-form-grid">
           <label class="field-block">
             <span>显示名称</span>
-            <input v-model="serverForm.name" class="resource-input" placeholder="例如 文件系统工具箱" />
+            <input ref="serverNameInputRef" v-model="serverForm.name" class="resource-input" placeholder="例如 文件系统工具箱" />
           </label>
           <label class="field-block">
             <span>服务器 ID</span>
@@ -495,7 +495,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import dayjs from 'dayjs'
 import type { AIManagedMCPServer, AIManagedMCPServerInspection, AIManagedSkill } from '@/types'
 import { useAIResourcesStore } from '@/stores/aiResources'
@@ -529,6 +529,8 @@ const normalizedQuery = computed(() => [normalizeSearchQuery(props.searchQuery),
 const mcpMarketplaceItems = ref<MCPMarketplaceItem[]>(MCP_MARKETPLACE_ITEMS)
 const skillMarketplaceItems = ref<SkillMarketplaceItem[]>(SKILL_MARKETPLACE_ITEMS)
 const activePanel = ref<'marketplace' | 'mcp' | 'skills'>('marketplace')
+const mcpPanelRef = ref<HTMLElement | null>(null)
+const serverNameInputRef = ref<HTMLInputElement | null>(null)
 const loadingMarketplace = ref(false)
 const refreshingMarketplace = ref(false)
 const marketplaceStatus = ref('')
@@ -759,7 +761,18 @@ function resetSkillForm() {
   skillForm.enabled = true
 }
 
-function fillServerFormFromMarketplace(item: MCPMarketplaceItem) {
+function jumpToMcpManagement(focusField = false) {
+  activePanel.value = 'mcp'
+  void nextTick(() => {
+    mcpPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (focusField) {
+      serverNameInputRef.value?.focus()
+      serverNameInputRef.value?.select()
+    }
+  })
+}
+
+function fillServerFormFromMarketplace(item: MCPMarketplaceItem, options: { switchPanel?: boolean; focusField?: boolean } = {}) {
   serverMode.value = item.packageName ? 'package' : 'command'
   serverForm.id = item.id
   serverForm.name = item.name
@@ -772,6 +785,10 @@ function fillServerFormFromMarketplace(item: MCPMarketplaceItem) {
   serverForm.cwd = item.cwd || ''
   serverForm.enabled = true
   serverSubmitStatus.value = item.configurationHint || `已加载 ${item.name} 的接入模板，可继续补充参数后安装。`
+
+  if (options.switchPanel) {
+    jumpToMcpManagement(Boolean(options.focusField))
+  }
 }
 
 function fillSkillFormFromMarketplace(item: SkillMarketplaceItem) {
@@ -1028,7 +1045,10 @@ async function installMarketplaceMcp(item: MCPMarketplaceItem) {
     return
   }
 
-  fillServerFormFromMarketplace(item)
+  fillServerFormFromMarketplace(item, {
+    switchPanel: !item.quickInstallable,
+    focusField: !item.quickInstallable
+  })
 
   if (!item.quickInstallable) {
     showToast('info', item.configurationHint || `已加载 ${item.name} 模板，请按你的环境修正参数后再安装。`)

@@ -212,3 +212,6 @@
 - 2026-03-13 Live2D 巡检确认：此前 `electron:preview -- --live2d-diagnose` 的失败根因不是 Live2D 代码或资源损坏，而是终端环境残留 `ELECTRON_RUN_AS_NODE=1`，导致 Electron 被错误降级为普通 Node 进程。
 - 2026-03-13 Live2D 真实验证：在清理环境变量后的真实 Electron 环境中，`npm.cmd run check:live2d` 已通过，默认 Shizuku 模型、`live2d://` 资源协议与采样资源请求均诊断成功。
 - 2026-03-13 Sub2API 核心契约验证：新增 `npm.cmd run check:sub2api`，已确认 OpenAgent 依赖的 `/v1/models`、`/v1/responses` 与 responses-only legacy `/v1/chat/completions` 提示契约可用；真实上游模型调用仍需用户自己的网关地址与 API Key 做联调。
+- 2026-03-14 3.0.0 发布验证：`npm.cmd run check:sub2api` 在当前 3.0.0 源码状态下再次通过，mock gateway 已确认模型列表、Responses 主链路与 legacy 兼容提示仍正常。
+- 2026-03-14 桌面打包验证：`npm.cmd run electron:build:clean` 已产出 `release/v3.0.0/OpenAgent Setup 3.0.0.exe`、`release/v3.0.0/OpenAgent Portable 3.0.0.exe` 与 `release/v3.0.0/win-unpacked`，且 `win-unpacked/resources/sub2api-runtime/bin/sub2api.exe -version` 可正常执行。
+- 2026-03-14 打包运行差异记录：`win-unpacked/OpenAgent.exe` 会拒绝开发态使用的 `--live2d-diagnose` 参数并返回 `bad option`，因此本轮打包后验证以安装包产物核对、Sub2API 二进制自检与前端路由烟测为主，后续如需继续保留发布包命令行诊断能力，需要单独调整打包态参数透传。

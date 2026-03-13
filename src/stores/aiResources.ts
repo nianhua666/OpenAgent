@@ -24,6 +24,7 @@ const DEFAULT_RESOURCE_REGISTRY: AIManagedResourceRegistry = {
 }
 
 let electronResourceSyncBound = false
+let defaultBootstrapTask: Promise<void> | null = null
 
 type SkillBootstrapStore = {
   findManagedSkillBySignature: (skill: Pick<AIManagedSkill, 'content'> & Partial<Pick<AIManagedSkill, 'name'>>) => AIManagedSkill | null
@@ -257,12 +258,31 @@ export const useAIResourcesStore = defineStore('aiResources', () => {
     return normalizeRegistry(registry.value)
   }
 
+  function ensureDefaultResourcesBootstrap() {
+    if (defaultBootstrapTask) {
+      return defaultBootstrapTask
+    }
+
+    // 默认技能与托管 MCP 属于可选增强能力，不应该阻塞主界面首屏启动。
+    defaultBootstrapTask = (async () => {
+      await bootstrapDefaultSkills(store)
+      await bootstrapDefaultMcpServers(store)
+    })()
+      .catch(error => {
+        console.error('[AIResources] 默认资源引导失败', error)
+      })
+      .finally(() => {
+        defaultBootstrapTask = null
+      })
+
+    return defaultBootstrapTask
+  }
+
   async function init() {
     registry.value = normalizeRegistry(await loadData<AIManagedResourceRegistry>(RESOURCE_STORE_KEY, DEFAULT_RESOURCE_REGISTRY))
     bindElectronResourceSync()
-    await bootstrapDefaultSkills(store)
-    await bootstrapDefaultMcpServers(store)
     loaded.value = true
+    void ensureDefaultResourcesBootstrap()
   }
 
   async function upsertManagedMcpServer(server: Omit<AIManagedMCPServer, 'tools'> & { tools?: AIManagedMCPToolInspection[] | AIManagedMCPServer['tools'] }) {

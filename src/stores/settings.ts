@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { AppSettings, Live2DLibraryItem, Live2DModelSource, Live2DRemoteModelRequest } from '@/types'
+import type { AppSettings, Live2DLibraryItem, Live2DModelSource, Live2DRemoteModelRequest, WindowBounds } from '@/types'
 import { loadData, saveData } from '@/utils/db'
 import {
   cacheLive2DRemoteModel,
@@ -49,6 +49,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   live2dStoragePath: '',
   live2dPosition: { x: -1, y: -1 },
   live2dScale: 0.12,
+  aiOverlayBounds: null,
   closeToTray: true,
   launchAtLogin: false,
   language: 'zh-CN',
@@ -111,6 +112,29 @@ function inferLocalModelSource(modelPath: string): Live2DModelSource {
   }
 
   return 'imported'
+}
+
+function normalizeWindowBounds(bounds: unknown): WindowBounds | null {
+  if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds)) {
+    return null
+  }
+
+  const candidate = bounds as Partial<WindowBounds>
+  if (
+    !Number.isFinite(candidate.x)
+    || !Number.isFinite(candidate.y)
+    || !Number.isFinite(candidate.width)
+    || !Number.isFinite(candidate.height)
+  ) {
+    return null
+  }
+
+  return {
+    x: Math.round(Number(candidate.x)),
+    y: Math.round(Number(candidate.y)),
+    width: Math.max(Math.round(Number(candidate.width)), 400),
+    height: Math.max(Math.round(Number(candidate.height)), 480)
+  }
 }
 
 function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
@@ -181,6 +205,7 @@ function normalizeSettings(saved: Partial<AppSettings>): AppSettings {
   merged.ttsVolume = Number.isFinite(merged.ttsVolume)
     ? Math.min(Math.max(Number(merged.ttsVolume), 0), 1)
     : DEFAULT_SETTINGS.ttsVolume
+  merged.aiOverlayBounds = normalizeWindowBounds(merged.aiOverlayBounds)
 
   if (isLegacyDesktopSettings && merged.live2dPosition.x === 0 && merged.live2dPosition.y === 0) {
     merged.live2dPosition = { x: -1, y: -1 }

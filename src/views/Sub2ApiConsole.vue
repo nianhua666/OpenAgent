@@ -3,12 +3,12 @@
     <section class="page-hero glass-panel">
       <div class="hero-copy">
         <span class="hero-tag">Sub2API Console</span>
-        <h2 class="page-title">Sub2API 内嵌后台</h2>
-        <p>把 setup、登录、API Key 和后台首页放到 OpenAgent 内部完成。桌面模式下可以直接在这里完成初始化、登录和账号池维护；外部模式也可以用这个容器作为统一入口。</p>
+        <h2 class="page-title">Sub2API 账号池与 API 面板</h2>
+        <p>把账号池接入、API Key 复用和后台概览收进 OpenAgent 内部。初始化只在首次接入时需要，日常主要用来维护账号池、查看模型与同步 API Key。</p>
       </div>
       <div class="hero-actions">
         <button class="btn btn-secondary btn-sm" @click="openWorkbench">返回工作台</button>
-        <button class="btn btn-secondary btn-sm" :disabled="!currentBaseUrl" @click="openExternalAdmin">打开原后台</button>
+        <button class="btn btn-secondary btn-sm" :disabled="!currentBaseUrl" @click="openExternalAdmin">打开原始后台</button>
         <button v-if="desktopModeEnabled" class="btn btn-primary btn-sm" :disabled="syncingAccess" @click="ensureDesktopAccess">
           {{ syncingAccess ? '同步中...' : '同步本地专属 Key' }}
         </button>
@@ -83,19 +83,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSub2ApiStore } from '@/stores/sub2api'
 import { showToast } from '@/utils/toast'
 
 type ConsoleTabId = 'dashboard' | 'setup' | 'login' | 'keys'
 
-const consoleTabs: Array<{ id: ConsoleTabId; label: string; path: string }> = [
-  { id: 'dashboard', label: '后台首页', path: '/dashboard' },
-  { id: 'setup', label: '初始化向导', path: '/setup' },
-  { id: 'login', label: '登录', path: '/login' },
+const BASE_CONSOLE_TABS: Array<{ id: ConsoleTabId; label: string; path: string }> = [
+  { id: 'dashboard', label: '概览', path: '/dashboard' },
+  { id: 'login', label: '账号池登录', path: '/login' },
   { id: 'keys', label: 'API Key', path: '/keys' }
 ]
+
+const SETUP_CONSOLE_TAB = { id: 'setup', label: '首次接入', path: '/setup' } satisfies { id: ConsoleTabId; label: string; path: string }
 
 const router = useRouter()
 const sub2ApiStore = useSub2ApiStore()
@@ -105,8 +106,17 @@ const syncingAccess = ref(false)
 
 const desktopModeEnabled = computed(() => sub2ApiStore.desktopModeEnabled)
 const runtimeState = computed(() => sub2ApiStore.runtimeState)
+const consoleTabs = computed(() => {
+  const tabs = [...BASE_CONSOLE_TABS]
+
+  if (!desktopModeEnabled.value || sub2ApiStore.setupStatus.needsSetup !== false) {
+    tabs.splice(1, 0, SETUP_CONSOLE_TAB)
+  }
+
+  return tabs
+})
 const currentBaseUrl = computed(() => sub2ApiStore.adminUrl || sub2ApiStore.effectiveGatewayRoot)
-const currentTab = computed(() => consoleTabs.find(tab => tab.id === activeTabId.value) ?? consoleTabs[0])
+const currentTab = computed(() => consoleTabs.value.find(tab => tab.id === activeTabId.value) ?? consoleTabs.value[0])
 const currentIframeUrl = computed(() => currentBaseUrl.value ? `${currentBaseUrl.value}${currentTab.value.path}` : '')
 const canStopRuntime = computed(() => runtimeState.value.status === 'running' || runtimeState.value.status === 'starting')
 const providerLabel = computed(() => desktopModeEnabled.value ? '内嵌桌面运行时' : '外部网关')
@@ -200,6 +210,12 @@ const apiKeyHint = computed(() => {
 
   return '初始化完成后，OpenAgent 会尝试自动登录后台并创建或复用专属 API Key。'
 })
+
+watch(consoleTabs, tabs => {
+  if (!tabs.some(tab => tab.id === activeTabId.value)) {
+    activeTabId.value = tabs[0]?.id ?? 'dashboard'
+  }
+}, { immediate: true })
 
 function openWorkbench() {
   void router.push('/sub2api')

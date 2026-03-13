@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 3.0.0 - 2026-03-14
+
+- 发布 3.0.0 验证包：本轮已完成 Sub2API 核心链路复核、可执行自检脚本沉淀与桌面打包交付，供本地安装验证；已产出 `release/v3.0.0/OpenAgent Setup 3.0.0.exe` 与 `release/v3.0.0/OpenAgent Portable 3.0.0.exe`。
 - Live2D 与 Sub2API 核心链路补上了可复用诊断入口：新增 `scripts/run-electron.cjs` 清理 `ELECTRON_RUN_AS_NODE` 后再启动 Electron，避免诊断与预览被错误降级为普通 Node 进程；同时补充 `npm.cmd run check:live2d`，让 `--live2d-diagnose` 能稳定复现真实 Electron 环境下的资源协议与默认模型自检。
 - 新增 `scripts/check-sub2api.cjs` 与 `npm.cmd run check:sub2api`，可用 mock gateway 或真实 `--base-url` 对 Sub2API 的 `/v1/models`、`/v1/responses` 和 legacy `/v1/chat/completions` 兼容层做契约校验，帮助确认 OpenAgent 所需的模型列表与 Responses 主链路可正常接入。
 - IDE 长时间运行链路进一步收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使终态事件丢失也能按快照完成收口；无输出结束会显式回传“命令已结束，未产生标准输出”，重复循环输出、长时间无输出、交互提示与超时则统一进入自动停机与系统说明链路，减少模型把命令误判成“仍在卡住”的概率。

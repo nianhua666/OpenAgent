@@ -138,7 +138,7 @@ function normalizeSetupProfile(saved?: Partial<Sub2ApiDesktopSetupProfile> | nul
   }
 }
 
-function normalizeSetupDatabaseConfig(saved?: Partial<Sub2ApiSetupDatabaseConfig> | null) {
+function normalizeSetupDatabaseConfig(saved?: Partial<Sub2ApiSetupDatabaseConfig> | null): Sub2ApiSetupDatabaseConfig {
   return {
     host: typeof saved?.host === 'string' && saved.host.trim() ? saved.host.trim() : '127.0.0.1',
     port: normalizePort(saved?.port ?? 5432),
@@ -151,7 +151,7 @@ function normalizeSetupDatabaseConfig(saved?: Partial<Sub2ApiSetupDatabaseConfig
   }
 }
 
-function normalizeSetupRedisConfig(saved?: Partial<Sub2ApiSetupRedisConfig> | null) {
+function normalizeSetupRedisConfig(saved?: Partial<Sub2ApiSetupRedisConfig> | null): Sub2ApiSetupRedisConfig {
   const redisDb = Number.isFinite(saved?.db) ? Number(saved?.db) : 0
   return {
     host: typeof saved?.host === 'string' && saved.host.trim() ? saved.host.trim() : '127.0.0.1',
@@ -202,6 +202,57 @@ function buildSetupRedisEndpoint(context: ResolvedRuntimeContext) {
 
 function buildSetupInstallEndpoint(context: ResolvedRuntimeContext) {
   return `${context.adminUrl}/setup/install`
+}
+
+function normalizeSetupActionDetails(details: string, fallback: string) {
+  const normalized = String(details || '').trim()
+  return normalized || fallback
+}
+
+function buildSetupDatabaseTarget(config: Sub2ApiSetupDatabaseConfig) {
+  return `${config.host}:${config.port}/${config.dbname}`
+}
+
+function buildSetupRedisTarget(config: Sub2ApiSetupRedisConfig) {
+  return `${config.host}:${config.port}/db${config.db}`
+}
+
+function formatSetupDependencyFailure(label: 'PostgreSQL' | 'Redis', target: string, details: string) {
+  const normalized = normalizeSetupActionDetails(details, `${label} 未返回更多错误信息`)
+  const lower = normalized.toLowerCase()
+
+  if (lower.includes('connection refused') || lower.includes('actively refused') || lower.includes('connectex')) {
+    return `${label} 无法连接到 ${target}。当前地址没有服务在监听，请先启动 ${label} 服务，或改成正确的主机和端口。原始错误：${normalized}`
+  }
+
+  if (lower.includes('no such host') || lower.includes('name or service not known') || lower.includes('getaddrinfo')) {
+    return `${label} 主机解析失败：${target}。请确认主机名可解析，或直接改成可访问的 IP 地址。原始错误：${normalized}`
+  }
+
+  if (lower.includes('authentication failed') || lower.includes('password authentication failed') || lower.includes('invalid password') || lower.includes('noauth')) {
+    return `${label} 鉴权失败：${target}。请确认账号、密码和认证方式是否正确。原始错误：${normalized}`
+  }
+
+  if (label === 'PostgreSQL' && lower.includes('does not exist')) {
+    return `PostgreSQL 已连接到 ${target}，但目标数据库不存在。请先创建数据库，或改成已有数据库名。原始错误：${normalized}`
+  }
+
+  return normalized
+}
+
+function formatSetupInstallFailure(profile: Sub2ApiDesktopSetupProfile, details: string) {
+  const normalized = normalizeSetupActionDetails(details, '未返回更多错误信息')
+  const lower = normalized.toLowerCase()
+
+  if (lower.includes('postgres') || lower.includes('database') || lower.includes(String(profile.database.port))) {
+    return formatSetupDependencyFailure('PostgreSQL', buildSetupDatabaseTarget(profile.database), normalized)
+  }
+
+  if (lower.includes('redis') || lower.includes(String(profile.redis.port))) {
+    return formatSetupDependencyFailure('Redis', buildSetupRedisTarget(profile.redis), normalized)
+  }
+
+  return normalized
 }
 
 async function waitForFile(targetPath: string, timeout = 5000) {
@@ -557,14 +608,15 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
 
   async function testSetupDatabase(payload: Partial<Sub2ApiSetupDatabaseConfig> | null | undefined, partial?: Partial<Sub2ApiDesktopRuntimeConfig>): Promise<Sub2ApiSetupActionResult> {
     const context = resolveRuntimeContext(partial)
-    const result = await requestSetupJson<{ message?: string }>(buildSetupDatabaseEndpoint(context), 'POST', normalizeSetupDatabaseConfig(payload))
+    const normalizedDatabase = normalizeSetupDatabaseConfig(payload)
+    const result = await requestSetupJson<{ message?: string }>(buildSetupDatabaseEndpoint(context), 'POST', normalizedDatabase)
     return {
       success: result.ok,
       code: result.statusCode,
       message: result.ok ? 'PostgreSQL 连接测试通过' : 'PostgreSQL 连接测试失败',
       details: result.ok
-        ? result.data?.message?.trim() || result.message || 'Connection successful'
-        : result.message || result.rawText || '未返回更多错误信息',
+        ? normalizeSetupActionDetails(result.data?.message?.trim() || result.message, 'Connection successful')
+        : formatSetupDependencyFailure('PostgreSQL', buildSetupDatabaseTarget(normalizedDatabase), result.rawText || result.message),
       data: result.data
     }
   }
@@ -584,8 +636,8 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       code: result.statusCode,
       message: result.ok ? 'Redis 连接测试通过' : 'Redis 连接测试失败',
       details: result.ok
-        ? result.data?.message?.trim() || result.message || 'Connection successful'
-        : result.message || result.rawText || '未返回更多错误信息',
+        ? normalizeSetupActionDetails(result.data?.message?.trim() || result.message, 'Connection successful')
+        : formatSetupDependencyFailure('Redis', buildSetupRedisTarget(normalizedRedis), result.rawText || result.message),
       data: result.data
     }
   }
@@ -637,7 +689,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
         ? restartWarning
           ? `安装已完成，但本地网关自动重启失败：${restartWarning}`
           : result.data?.message?.trim() || 'Installation completed successfully. Desktop runtime restarted.'
-        : result.message || result.rawText || '未返回更多错误信息',
+        : formatSetupInstallFailure(profile, result.rawText || result.message),
       data: result.data
     }
   }

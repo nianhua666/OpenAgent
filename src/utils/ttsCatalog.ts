@@ -122,7 +122,7 @@ const EDGE_FALLBACK_VOICE_META: Record<string, { name: string; accent: string; d
   'zh-CN-XiaoxiaoNeural': {
     name: '晓晓',
     accent: '普通话',
-    description: '微软中文神经女声，清晰度高，适合默认 AI 助手播报与较自然的情绪表达。',
+    description: '微软中文神经女声，清晰度高，适合默认 Agent 播报与较自然的情绪表达。',
     sampleText: '你好，我会用更自然的中文语音继续跟进这轮任务。',
     recommended: true
   },
@@ -472,7 +472,7 @@ export const TTS_MODEL_LIBRARY: TTSModelLibraryItem[] = [
     engine: EDGE_TTS_ENGINE,
     modelId: EDGE_TTS_MODEL_ID,
     name: 'Microsoft Edge 中文神经语音',
-    description: '在线神经语音引擎，中文发音更清晰，并通过韵律参数模拟情绪风格。适合作为 AI 助手主播报引擎。',
+    description: '在线神经语音引擎，中文发音更清晰，并通过韵律参数模拟情绪风格。适合作为 Agent 播报引擎。',
     language: 'zh-CN',
     sourceLabel: 'Microsoft Edge Read Aloud',
     sourceUrl: EDGE_VOICE_DOCS_URL,
