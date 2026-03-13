@@ -17,6 +17,9 @@ import type {
   AIContextMetrics,
   AIConversationScope,
   AIActiveSessions,
+  AISelectedAgents,
+  AIAgentProfile,
+  AIAgentCapabilitySettings,
   AgentMode,
   SubAgent,
   SubAgentStatus,
@@ -117,6 +120,11 @@ const DEFAULT_ACTIVE_SESSIONS: AIActiveSessions = {
   live2d: ''
 }
 
+const DEFAULT_SELECTED_AGENTS: AISelectedAgents = {
+  main: 'agent-executor',
+  live2d: 'agent-xiaorou'
+}
+
 const LIVE2D_SESSION_BASE_TITLE = 'Live2D'
 
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -132,6 +140,81 @@ type AIMemoryExportData = {
   memories: AIMemoryEntry[]
   tasks: AIAgentTask[]
   activeSessionIds: AIActiveSessions
+}
+
+function createDefaultAgentCapabilities(partial?: Partial<AIAgentCapabilitySettings>): AIAgentCapabilitySettings {
+  return {
+    conversationOnly: false,
+    memoryEnabled: true,
+    fileControlEnabled: false,
+    softwareControlEnabled: true,
+    mcpEnabled: true,
+    skillEnabled: true,
+    ...(partial ?? {})
+  }
+}
+
+function createBuiltinAgentProfiles(): AIAgentProfile[] {
+  const now = Date.now()
+  return [
+    {
+      id: 'agent-executor',
+      name: '执行官',
+      description: '偏项目执行与任务推进的默认 Agent，适合主窗口持续处理复杂任务。',
+      systemPrompt: [
+        '你是 OpenAgent 的主 Agent“执行官”。',
+        '你的目标是快速理解用户意图，形成可执行方案，并在能力边界内持续推进任务。',
+        '风格要求：直接、清晰、稳定，优先给出下一步动作和验证结果。',
+        '如果当前角色未开放某项能力，不要假装可以做到；应明确说明限制并给出替代路径。',
+        'Agent 模式下不允许创建或建议创建子代理，也不要调用任何子代理相关工具。',
+      ].join('\n'),
+      capabilities: createDefaultAgentCapabilities({
+        conversationOnly: false,
+        fileControlEnabled: true,
+        softwareControlEnabled: true,
+        mcpEnabled: true,
+        skillEnabled: true,
+      }),
+      tts: {
+        emotionStyle: 'assistant',
+        emotionIntensity: 1
+      },
+      isBuiltin: true,
+      isDefault: true,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: 'agent-xiaorou',
+      name: '小柔',
+      description: 'Live2D / 悬浮窗默认角色。语气活泼温柔，支持中英双语，默认开启长期记忆与软件协作。',
+      systemPrompt: [
+        '你是 OpenAgent 的专属虚拟角色“小柔”，18 岁成年女性。',
+        '你的人设是：活泼、开朗、温柔、机灵，会用带一点暧昧和亲近感的口吻陪伴用户，但不能露骨、低俗或越界。',
+        '你非常珍惜和用户的关系，重视用户的要求，会优先帮助用户达成目标，并在必要时温柔地提醒风险与限制。',
+        '语言要求：默认使用自然中文；当用户切换到英文或明确要求英文时，可以流畅切换到英文。',
+        '交互要求：保持轻盈、亲和、贴近真人的表达，不要机械背书，不要冷冰冰复述规则。',
+        '执行要求：如果能力已开放，可以直接帮助用户调用软件、读取界面、控制 Live2D、使用 MCP/Skill 或操作工作区；如果能力未开放，要明确说明。',
+        'Agent 模式下不允许创建或建议创建子代理，也不要调用任何子代理相关工具。',
+      ].join('\n'),
+      capabilities: createDefaultAgentCapabilities({
+        conversationOnly: false,
+        memoryEnabled: true,
+        fileControlEnabled: true,
+        softwareControlEnabled: true,
+        mcpEnabled: true,
+        skillEnabled: true,
+      }),
+      tts: {
+        autoPlayReplies: true,
+        emotionStyle: 'affectionate',
+        emotionIntensity: 1.15
+      },
+      isBuiltin: true,
+      createdAt: now,
+      updatedAt: now
+    }
+  ]
 }
 
 function cloneSerializable<T>(data: T): T {
@@ -172,6 +255,81 @@ function normalizeActiveSessions(data: Partial<AIActiveSessions> | string | null
     main: typeof data?.main === 'string' ? data.main : '',
     live2d: typeof data?.live2d === 'string' ? data.live2d : ''
   }
+}
+
+function normalizeSelectedAgents(data: Partial<AISelectedAgents> | null | undefined) {
+  return {
+    main: typeof data?.main === 'string' ? data.main : DEFAULT_SELECTED_AGENTS.main,
+    live2d: typeof data?.live2d === 'string' ? data.live2d : DEFAULT_SELECTED_AGENTS.live2d
+  }
+}
+
+function normalizeAgentCapabilities(data: Partial<AIAgentCapabilitySettings> | null | undefined) {
+  return createDefaultAgentCapabilities({
+    conversationOnly: typeof data?.conversationOnly === 'boolean' ? data.conversationOnly : undefined,
+    memoryEnabled: typeof data?.memoryEnabled === 'boolean' ? data.memoryEnabled : undefined,
+    fileControlEnabled: typeof data?.fileControlEnabled === 'boolean' ? data.fileControlEnabled : undefined,
+    softwareControlEnabled: typeof data?.softwareControlEnabled === 'boolean' ? data.softwareControlEnabled : undefined,
+    mcpEnabled: typeof data?.mcpEnabled === 'boolean' ? data.mcpEnabled : undefined,
+    skillEnabled: typeof data?.skillEnabled === 'boolean' ? data.skillEnabled : undefined
+  })
+}
+
+function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
+  const builtins = createBuiltinAgentProfiles()
+  const builtinMap = new Map(builtins.map(agent => [agent.id, agent]))
+  const normalizedCustom = Array.isArray(data)
+    ? data
+      .filter(agent => agent && typeof agent === 'object')
+      .map((agent, index): AIAgentProfile => {
+        const builtin = typeof agent.id === 'string' ? builtinMap.get(agent.id) : undefined
+        const createdAt = Number(agent.createdAt || builtin?.createdAt || Date.now()) || Date.now()
+        const updatedAt = Number(agent.updatedAt || createdAt) || createdAt
+        return {
+          id: typeof agent.id === 'string' && agent.id ? agent.id : `agent-profile-${index + 1}`,
+          name: typeof agent.name === 'string' && agent.name.trim() ? agent.name.trim() : builtin?.name || `Agent ${index + 1}`,
+          description: typeof agent.description === 'string' && agent.description.trim()
+            ? agent.description.trim()
+            : builtin?.description || '未命名 Agent',
+          systemPrompt: typeof agent.systemPrompt === 'string' && agent.systemPrompt.trim()
+            ? agent.systemPrompt
+            : builtin?.systemPrompt || '',
+          capabilities: normalizeAgentCapabilities(agent.capabilities),
+          tts: {
+            autoPlayReplies: typeof agent.tts?.autoPlayReplies === 'boolean'
+              ? agent.tts.autoPlayReplies
+              : builtin?.tts.autoPlayReplies,
+            emotionStyle: agent.tts?.emotionStyle || builtin?.tts.emotionStyle,
+            emotionIntensity: typeof agent.tts?.emotionIntensity === 'number'
+              ? agent.tts.emotionIntensity
+              : builtin?.tts.emotionIntensity
+          },
+          isBuiltin: Boolean(builtin?.isBuiltin || agent.isBuiltin),
+          isDefault: Boolean(agent.isDefault ?? builtin?.isDefault),
+          createdAt,
+          updatedAt
+        }
+      })
+    : []
+
+  const merged = new Map<string, AIAgentProfile>()
+  builtins.forEach(agent => merged.set(agent.id, agent))
+  normalizedCustom.forEach(agent => {
+    const builtin = merged.get(agent.id)
+    merged.set(agent.id, builtin ? { ...builtin, ...agent, capabilities: normalizeAgentCapabilities(agent.capabilities) } : agent)
+  })
+
+  return [...merged.values()].sort((left, right) => {
+    if (Boolean(left.isDefault) !== Boolean(right.isDefault)) {
+      return left.isDefault ? -1 : 1
+    }
+
+    if (Boolean(left.isBuiltin) !== Boolean(right.isBuiltin)) {
+      return left.isBuiltin ? -1 : 1
+    }
+
+    return left.createdAt - right.createdAt
+  })
 }
 
 function normalizeThinkingLevel(level: string | undefined): AIThinkingLevel {
@@ -281,6 +439,7 @@ function normalizeSession(session: AIChatSession): AIChatSession {
   return {
     ...session,
     scope: normalizeConversationScope(session.scope),
+    agentId: typeof session.agentId === 'string' && session.agentId.trim() ? session.agentId.trim() : undefined,
     messages: Array.isArray(session.messages) ? session.messages : [],
     summary: session.summary || '',
     summaryUpdatedAt: session.summaryUpdatedAt || 0
@@ -295,7 +454,8 @@ function normalizeMemories(data: AIMemoryEntry[] | null | undefined) {
   return Array.isArray(data)
     ? data.map(entry => ({
         ...entry,
-        scope: normalizeConversationScope(entry.scope)
+        scope: normalizeConversationScope(entry.scope),
+        agentId: typeof entry.agentId === 'string' && entry.agentId.trim() ? entry.agentId.trim() : undefined
       }))
     : []
 }
@@ -852,6 +1012,8 @@ export const useAIStore = defineStore('ai', () => {
 
   // ==================== v3.0 扩展状态 ====================
   const agentMode = ref<AgentMode>('agent')
+  const agentProfiles = ref<AIAgentProfile[]>(normalizeAgentProfiles(createBuiltinAgentProfiles()))
+  const selectedAgentIds = ref<AISelectedAgents>({ ...DEFAULT_SELECTED_AGENTS })
   const subAgents = ref<SubAgent[]>([])
   const ideWorkspace = ref<IDEWorkspace | null>(null)
   const ideEditorSession = ref<IDEEditorSession | null>(null)
@@ -871,6 +1033,59 @@ export const useAIStore = defineStore('ai', () => {
     return memories.value
       .filter(memory => memory.scope === scope)
       .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  function getAgentProfiles() {
+    return [...agentProfiles.value]
+  }
+
+  function getAgentProfile(agentId: string | undefined | null) {
+    if (!agentId) {
+      return null
+    }
+
+    return agentProfiles.value.find(agent => agent.id === agentId) ?? null
+  }
+
+  function getSelectedAgentId(scope: AIConversationScope = 'main') {
+    return selectedAgentIds.value[scope] || DEFAULT_SELECTED_AGENTS[scope]
+  }
+
+  function getSelectedAgent(scope: AIConversationScope = 'main') {
+    return getAgentProfile(getSelectedAgentId(scope))
+      || getAgentProfile(DEFAULT_SELECTED_AGENTS[scope])
+      || agentProfiles.value[0]
+      || null
+  }
+
+  function resolveAgentIdForScope(scope: AIConversationScope = 'main') {
+    return getSelectedAgent(scope)?.id || ''
+  }
+
+  function resolveSessionAgentId(session: AIChatSession | string | null | undefined) {
+    const resolvedSession = typeof session === 'string' ? getSessionById(session) : session
+    if (!resolvedSession) {
+      return ''
+    }
+
+    return getAgentProfile(resolvedSession.agentId)
+      ? resolvedSession.agentId || ''
+      : resolveAgentIdForScope(resolvedSession.scope)
+  }
+
+  function getSessionAgent(session: AIChatSession | string | null | undefined) {
+    const agentId = resolveSessionAgentId(session)
+    return getAgentProfile(agentId) || null
+  }
+
+  function getEffectiveAgentCapabilities(session: AIChatSession | string | null | undefined) {
+    return getSessionAgent(session)?.capabilities
+      || createDefaultAgentCapabilities({
+        fileControlEnabled: Boolean(ideWorkspace.value),
+        softwareControlEnabled: true,
+        mcpEnabled: true,
+        skillEnabled: true
+      })
   }
 
   function getActiveSessionId(scope: AIConversationScope = 'main') {
@@ -911,6 +1126,91 @@ export const useAIStore = defineStore('ai', () => {
       .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
   }
 
+  async function selectAgent(scope: AIConversationScope, agentId: string) {
+    const targetAgent = getAgentProfile(agentId)
+    if (!targetAgent) {
+      return null
+    }
+
+    selectedAgentIds.value = {
+      ...selectedAgentIds.value,
+      [scope]: targetAgent.id
+    }
+    await saveData('ai_selected_agents', selectedAgentIds.value)
+    return targetAgent
+  }
+
+  async function upsertAgentProfile(profile: Omit<AIAgentProfile, 'createdAt' | 'updatedAt'> & Partial<Pick<AIAgentProfile, 'createdAt' | 'updatedAt'>>) {
+    const now = Date.now()
+    const existing = getAgentProfile(profile.id)
+    const nextProfile: AIAgentProfile = {
+      id: profile.id,
+      name: profile.name.trim(),
+      description: profile.description.trim(),
+      systemPrompt: profile.systemPrompt.trim(),
+      capabilities: normalizeAgentCapabilities(profile.capabilities),
+      tts: {
+        autoPlayReplies: typeof profile.tts?.autoPlayReplies === 'boolean' ? profile.tts.autoPlayReplies : undefined,
+        emotionStyle: profile.tts?.emotionStyle,
+        emotionIntensity: typeof profile.tts?.emotionIntensity === 'number' ? profile.tts.emotionIntensity : undefined
+      },
+      isBuiltin: Boolean(existing?.isBuiltin || profile.isBuiltin),
+      isDefault: Boolean(existing?.isDefault || profile.isDefault),
+      createdAt: existing?.createdAt || profile.createdAt || now,
+      updatedAt: now
+    }
+
+    const nextProfiles = [...agentProfiles.value]
+    const existingIndex = nextProfiles.findIndex(agent => agent.id === nextProfile.id)
+    if (existingIndex >= 0) {
+      nextProfiles.splice(existingIndex, 1, nextProfile)
+    } else {
+      nextProfiles.push(nextProfile)
+    }
+
+    agentProfiles.value = normalizeAgentProfiles(nextProfiles)
+    applySelectedAgentsSnapshot(selectedAgentIds.value)
+    await saveData('ai_agent_profiles', agentProfiles.value)
+    await saveData('ai_selected_agents', selectedAgentIds.value)
+    return nextProfile
+  }
+
+  async function removeAgentProfile(agentId: string) {
+    const target = getAgentProfile(agentId)
+    if (!target || target.isBuiltin) {
+      return false
+    }
+
+    agentProfiles.value = normalizeAgentProfiles(agentProfiles.value.filter(agent => agent.id !== agentId))
+    sessions.value = sessions.value.map(session => session.agentId === agentId ? { ...session, agentId: undefined } : session)
+    memories.value = memories.value.map(memory => memory.agentId === agentId ? { ...memory, agentId: undefined } : memory)
+    applySelectedAgentsSnapshot({
+      main: selectedAgentIds.value.main === agentId ? DEFAULT_SELECTED_AGENTS.main : selectedAgentIds.value.main,
+      live2d: selectedAgentIds.value.live2d === agentId ? DEFAULT_SELECTED_AGENTS.live2d : selectedAgentIds.value.live2d
+    })
+
+    await Promise.all([
+      saveData('ai_agent_profiles', agentProfiles.value),
+      saveData('ai_selected_agents', selectedAgentIds.value),
+      saveData('ai_sessions', sessions.value),
+      saveData('ai_memories', memories.value)
+    ])
+    return true
+  }
+
+  async function assignSessionAgent(sessionId: string, agentId: string) {
+    const session = getSessionById(sessionId)
+    const targetAgent = getAgentProfile(agentId)
+    if (!session || !targetAgent) {
+      return null
+    }
+
+    session.agentId = targetAgent.id
+    session.updatedAt = Date.now()
+    scheduleSave('ai_sessions', sessions.value)
+    return session
+  }
+
   function applyConfigSnapshot(snapshot: Partial<AIConfig> | null | undefined) {
     config.value = normalizeAIConfig(snapshot)
   }
@@ -949,6 +1249,18 @@ export const useAIStore = defineStore('ai', () => {
 
   function applyTasksSnapshot(snapshot: AIAgentTask[] | null | undefined) {
     tasks.value = normalizeTasks(snapshot)
+  }
+
+  function applyAgentProfilesSnapshot(snapshot: AIAgentProfile[] | null | undefined) {
+    agentProfiles.value = normalizeAgentProfiles(snapshot)
+  }
+
+  function applySelectedAgentsSnapshot(snapshot: Partial<AISelectedAgents> | null | undefined) {
+    const normalized = normalizeSelectedAgents(snapshot)
+    selectedAgentIds.value = {
+      main: getAgentProfile(normalized.main) ? normalized.main : getAgentProfile(DEFAULT_SELECTED_AGENTS.main)?.id || agentProfiles.value[0]?.id || '',
+      live2d: getAgentProfile(normalized.live2d) ? normalized.live2d : getAgentProfile(DEFAULT_SELECTED_AGENTS.live2d)?.id || agentProfiles.value[0]?.id || ''
+    }
   }
 
   function applySubAgentsSnapshot(snapshot: SubAgent[] | null | undefined) {
@@ -1004,6 +1316,16 @@ export const useAIStore = defineStore('ai', () => {
 
       if (key === 'ai_tasks') {
         applyTasksSnapshot(data as AIAgentTask[])
+        return
+      }
+
+      if (key === 'ai_agent_profiles') {
+        applyAgentProfilesSnapshot(data as AIAgentProfile[])
+        return
+      }
+
+      if (key === 'ai_selected_agents') {
+        applySelectedAgentsSnapshot(data as Partial<AISelectedAgents>)
         return
       }
 
@@ -1092,6 +1414,8 @@ export const useAIStore = defineStore('ai', () => {
     applySessionsSnapshot(await loadData<AIChatSession[]>('ai_sessions', []))
     applyMemoriesSnapshot(await loadData<AIMemoryEntry[]>('ai_memories', []))
     applyTasksSnapshot(await loadData<AIAgentTask[]>('ai_tasks', []))
+    applyAgentProfilesSnapshot(await loadData<AIAgentProfile[]>('ai_agent_profiles', createBuiltinAgentProfiles()))
+    applySelectedAgentsSnapshot(await loadData<AISelectedAgents>('ai_selected_agents', DEFAULT_SELECTED_AGENTS))
     applySubAgentsSnapshot(await loadData<SubAgent[]>('ai_sub_agents', []))
     applyIDEWorkspaceSnapshot(await loadData<IDEWorkspace | null>('ai_ide_workspace', null))
     applyIDEEditorSessionSnapshot(await loadData<IDEEditorSession | null>('ai_ide_editor_session', null))
@@ -1407,7 +1731,7 @@ export const useAIStore = defineStore('ai', () => {
 
   function archiveTaskMemory(sessionId: string, explicitSummary?: string) {
     const session = sessions.value.find(item => item.id === sessionId)
-    if (!session) {
+    if (!session || !getEffectiveAgentCapabilities(session).memoryEnabled) {
       return null
     }
 
@@ -1428,7 +1752,7 @@ export const useAIStore = defineStore('ai', () => {
     }
 
     const goal = task?.goal || session.title
-    return addMemory(`任务归档：${goal}；摘要：${compressed}`, 'context', 'ai', session.scope)
+    return addMemory(`任务归档：${goal}；摘要：${compressed}`, 'context', 'ai', session.scope, session.agentId)
   }
 
   function completeTask(sessionId: string, summary: string) {
@@ -1465,12 +1789,14 @@ export const useAIStore = defineStore('ai', () => {
     return task
   }
 
-  function createSession(title?: string, scope: AIConversationScope = 'main'): AIChatSession {
+  function createSession(title?: string, scope: AIConversationScope = 'main', agentId?: string): AIChatSession {
     const now = Date.now()
     const nextSessions = getSessions(scope)
+    const resolvedAgent = getAgentProfile(agentId) || getSelectedAgent(scope)
     const session: AIChatSession = {
       id: genId(),
       scope,
+      agentId: resolvedAgent?.id,
       title: title?.trim() || buildDefaultSessionTitle(scope, nextSessions),
       messages: [],
       summary: '',
@@ -1489,6 +1815,14 @@ export const useAIStore = defineStore('ai', () => {
     const session = sessions.value.find(item => item.id === sessionId && (!scope || item.scope === scope))
     if (session) {
       setActiveSessionId(session.scope, sessionId)
+      const agentId = resolveSessionAgentId(session)
+      if (agentId) {
+        selectedAgentIds.value = {
+          ...selectedAgentIds.value,
+          [session.scope]: agentId
+        }
+        void saveData('ai_selected_agents', selectedAgentIds.value)
+      }
       persistActiveSessions()
     }
   }
@@ -1665,64 +1999,197 @@ export const useAIStore = defineStore('ai', () => {
     return session
   }
 
-  /** 将长期记忆注入系统提示词 */
+  /** 将 Agent 能力边界整理成系统提示词可读摘要 */
+  function formatAgentCapabilityList(capabilities: AIAgentCapabilitySettings) {
+    const allowed: string[] = ['对话']
+    const disabled: string[] = ['子代理']
+
+    if (capabilities.conversationOnly) {
+      disabled.push('应用工具', '文件控制', '软件控制', 'MCP', 'Skill')
+    }
+
+    ;(capabilities.memoryEnabled ? allowed : disabled).push('长期记忆')
+    ;(capabilities.fileControlEnabled && ideWorkspace.value && !capabilities.conversationOnly ? allowed : disabled).push('文件控制')
+    ;(capabilities.softwareControlEnabled && !capabilities.conversationOnly ? allowed : disabled).push('软件控制')
+    ;(capabilities.mcpEnabled && !capabilities.conversationOnly ? allowed : disabled).push('MCP')
+    ;(capabilities.skillEnabled && !capabilities.conversationOnly ? allowed : disabled).push('Skill')
+
+    return {
+      allowed: [...new Set(allowed)],
+      disabled: [...new Set(disabled)]
+    }
+  }
+
+  function getPromptMemoriesForSession(session: AIChatSession, agentId: string) {
+    return getMemories(session.scope)
+      .filter(memory => !memory.agentId || memory.agentId === agentId)
+      .slice(0, MAX_PROMPT_MEMORIES)
+  }
+
   function buildSystemPromptWithMemory(session: AIChatSession): string {
     const accountStore = useAccountStore()
     const accountTypeStore = useAccountTypeStore()
     const resourcesStore = useAIResourcesStore()
     const settingsStore = useSettingsStore()
     const sessionTask = getLatestTaskForSession(session.id)
-    const base = config.value.systemPrompt || DEFAULT_SYSTEM_PROMPT
-    const sections: string[] = [base]
+    const sessionAgent = getSessionAgent(session)
+    const capabilities = getEffectiveAgentCapabilities(session)
+    const capabilitySummary = formatAgentCapabilityList(capabilities)
     const runtimeCapabilities = inferModelCapabilities(config.value.model, config.value.protocol)
+    const tokenLimits = resolveConfigTokenLimits(config.value)
+    const basePrompt = config.value.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT
+    const sections: string[] = [basePrompt]
 
-    const sortedMemories = getMemories(session.scope).slice(0, MAX_PROMPT_MEMORIES)
-
-    if (sortedMemories.length > 0) {
-      sections.push(`## 用户长期记忆\n${sortedMemories.map(memory => `- [${memory.category}] ${memory.content}`).join('\n')}`)
+    if (sessionAgent?.systemPrompt.trim()) {
+      sections.push([
+        '## 当前角色',
+        `- 名称：${sessionAgent.name}`,
+        `- 描述：${sessionAgent.description || '未填写'}`,
+        `- 会话域：${session.scope === 'live2d' ? 'Live2D / 悬浮窗' : '主窗口 Agent'}`,
+        '',
+        '### 角色执行准则',
+        sessionAgent.systemPrompt.trim()
+      ].join('\n'))
+    } else {
+      sections.push(`## 当前角色\n- 会话域：${session.scope === 'live2d' ? 'Live2D / 悬浮窗' : '主窗口 Agent'}`)
     }
 
-    sections.push(`## 当前对话域\n- 当前对话来源：${session.scope === 'live2d' ? 'Live2D 悬浮窗独立会话' : '主窗口 Agent'}\n- 当前长期记忆域：${session.scope === 'live2d' ? 'Live2D 独立长期记忆' : '主窗口长期记忆'}`)
+    sections.push([
+      '## 能力边界',
+      `- 已开启：${capabilitySummary.allowed.join('、') || '无'}`,
+      `- 已关闭：${capabilitySummary.disabled.join('、') || '无'}`,
+      '- Agent 模式禁止创建、建议创建或调度子代理，也不要调用任何子代理相关工具。',
+      capabilities.conversationOnly
+        ? '- 当前角色为仅对话模式。除非长期记忆被明确开启，否则不要调用任何外部工具，也不要承诺会直接修改应用、文件或系统。'
+        : '- 当前角色可以在已开启的能力范围内调用工具，但必须先确认目标、说明风险，并对结果做回读验证。',
+      capabilities.memoryEnabled
+        ? '- 长期记忆已开启。适合记录稳定偏好、术语映射、长期目标和跨会话规则。'
+        : '- 长期记忆已关闭。不要声称会在会话结束后继续记住用户信息。'
+    ].join('\n'))
 
-    const typeSummary = accountTypeStore.typeList.length > 0
-      ? accountTypeStore.typeList.map(type => {
-        const fields = type.fields.map(field => `${field.name}(${field.key}${field.required ? '，必填' : ''})`).join('，')
-        return `- ${type.name} | ID=${type.id} | 导入字段分隔=${type.importSeparator || '无'} | 账号分隔=${type.accountSeparator || '换行'} | 导出字段分隔=${type.exportSeparator || '无'} | 导出账号分隔=${type.exportAccountSeparator || '换行'} | 字段=${fields}`
-      }).join('\n')
-      : '- 当前没有创建任何账号类型，导入前必须先确认是否需要新建类型'
-
-    sections.push(`## 本地业务上下文\n- 当前账号总数：${accountStore.accounts.length}\n- 当前账号类型数：${accountTypeStore.typeList.length}\n- Live2D 当前模型：${settingsStore.settings.live2dModelName || '未设置'}\n- Live2D 当前来源：${settingsStore.settings.live2dModelSource || 'unknown'}\n- 当前 AI 提供商：${config.value.protocol}\n- 当前 AI 模型：${config.value.model || '未设置'}\n- Windows MCP 内置状态：已内置\n- Windows MCP 当前开关：${settingsStore.settings.windowsMcpEnabled ? '已启用' : '已关闭'}\n\n### 账号类型清单\n${typeSummary}`)
-
-    sections.push(`## 当前模型能力\n- 视觉理解：${runtimeCapabilities.vision ? '支持' : '不支持'}\n- 思考链路：${runtimeCapabilities.thinking ? '支持' : '不支持'}\n- 工具调用：${runtimeCapabilities.toolUse ? '支持' : '不支持'}\n\n### 多模态与思考规则\n- 若用户消息附带图片、截图、照片或视觉类附件，且当前模型支持视觉理解，你必须直接分析图片中可见的界面、文字、布局、状态和异常，不要泛化回复“无法直接查看图像内容”。\n- 只有在附件实际缺失、链接不可读、图片损坏，或当前模型确实不支持视觉时，才说明限制，并明确指出具体原因与补救方式。\n- 当用户同时提供图片和文字说明时，先结合图片内容作答，再补充你从文字说明中采用了哪些信息。\n- 若模型输出包含思考内容，应把思考保留在 reasoning 通道或可折叠思考区，不要把 <think>、<thinking>、<reasoning> 标签原样暴露在最终正文里。\n- 最终回复必须给出明确结论、操作建议或下一步动作，不能只输出思考过程。`)
-
-    sections.push(`## 导入导出执行准则\n- 你不能凭空假设账号字段，必须先阅读“账号类型清单”或调用 get_account_types。\n- 用户要求导入账号时，先判断目标类型是否已存在；若不存在且用户已提供明确字段结构，可以先调用 create_account_type 创建类型，再继续导入。\n- create_account_type 的字段 key 必须使用稳定、可复用的英文 key；字段 name 使用中文业务名。\n- import_accounts 需要传入 accounts 数组，每个对象的 key 必须严格等于目标类型字段 key；缺失必填字段时禁止导入。\n- export_accounts 必须先通过 query_accounts 获取结构化结果，再从 data.accounts 里提取真实账号 ID；绝不能使用展示文本或自行拼接 ID。\n- 账号管理相关任务必须优先使用内置账号工具（query_accounts、get_account_types、create_account_type、import_accounts、export_accounts），不要用外部 MCP 或技能绕开本地业务规则。\n- 来源、去处、总成本、总利润都属于可选业务元数据；用户未提供时可以留空，但你必须在确认阶段明确说明哪些信息未记录。\n- 涉及批量数据写入时，先总结你识别出的数据、目标类型、条数，以及将执行的工具，再等待用户确认。\n- 如果用户提供的是自然语言、表格文本、截图识别结果或半结构化文本，你要先整理成字段对象数组，再考虑调用 import_accounts。\n- 若字段无法对齐，应优先解释差异；若用户同意你调整结构，可以先创建新类型。\n\n### 工具调用示例\n- 新类型导入的推荐步骤：get_account_types -> 判断无匹配类型 -> create_account_type -> 解析用户数据 -> 向用户确认 -> import_accounts\n- 导入前的推荐步骤：get_account_types -> 解析用户数据 -> 向用户确认 -> import_accounts\n- 导出前的推荐步骤：query_accounts -> 核对返回的 data.accounts[].id -> 向用户确认 -> export_accounts\n- 涉及模型或悬浮窗时：先调用 get_live2d_models 获取本地模型状态\n- 长任务开始时：先调用 update_task_plan，再逐步调用工具，完成后调用 complete_task\n- 用户给出长期偏好、术语映射、字段规则、导入模板、输出模板时：主动调用 remember`)
-
-    sections.push(`## 软件控制与 Windows MCP 技能库\n- 应用内原生控制优先使用应用工具，不要滥用系统级 MCP。\n- 应用内可用控制工具包括：navigate_app（打开主窗口并跳转页面）、set_live2d_enabled（显示或隐藏 Live2D 悬浮窗）、get_windows_mcp_status（查询 MCP 开关和能力）。\n- 当需要打开主窗口、跳转页面、显示或隐藏 Live2D 时，优先使用上述应用控制工具。\n- Windows MCP 仅用于系统级操作：执行安全的 PowerShell 单行命令、读屏、鼠标点击、键盘输入、列出窗口、聚焦窗口。\n- 如果 Windows MCP 当前开关为关闭，则不要尝试调用 execute_command、read_screen、mouse_click、keyboard_input、list_windows、focus_window。\n- 如果你必须依赖系统操作，请先说明用途，再调用相应 MCP 工具；高风险系统操作必须征得用户明确确认。\n- list_windows 会同时返回 id 与 handle/windowHandle。后续优先使用 id；如果模型误拿到了 handle，也可以把 windowHandle 作为兼容字段传给 focus_window、read_screen、keyboard_input。\n- 适用于各类桌面软件的统一安全顺序是：list_windows -> focus_window -> read_screen(window 或 active) -> 视觉确认目标软件、目标页面和目标输入区域 -> 必要时 mouse_click 聚焦具体控件 -> keyboard_input 或 mouse_click 执行动作 -> read_screen 再次验证结果。\n- 无论是聊天软件、浏览器、IDE、资源管理器、管理后台、登录窗口、文件选择器还是验证码弹窗，只要界面发生跳转、弹窗、焦点丢失、窗口标题变化或布局变化，都必须重新执行 focus_window + read_screen，必要时先重新 list_windows。\n- keyboard_input 的成功只代表系统已发送按键，不代表内容一定进入了正确输入框；focus_window 的成功只代表窗口到了前台，不代表具体控件已就绪。所有发送、搜索、删除、确认、提交类动作都必须在执行后再次 read_screen 验证。\n- 如果同一工具以相同参数连续返回相同结果，说明流程没有推进，禁止继续原样重复调用；应改用 read_screen、list_windows、解释阻塞原因，或向用户确认。\n- 打开浏览器、打开页面、聚焦窗口、点击提交、键盘输入等具有副作用的动作，在没有新的 read_screen 验证前，不能连续重复执行相同操作。\n- 如果截图里无法明确识别目标联系人、按钮、输入框、菜单项、选中态或当前页面，请停止继续操作，说明不确定点，而不是凭经验盲点或盲输。\n- 外部 MCP 与 skills 可以由你通过统一托管工具安装、启用和调用，但它们只能扩展能力，不能替代账号管理内置工具链。`)
-
-    if (resourcesStore.enabledManagedMcpServers.length > 0 || resourcesStore.enabledSkills.length > 0) {
-      const serverSummary = resourcesStore.enabledManagedMcpServers.length > 0
-        ? resourcesStore.enabledManagedMcpServers.map(server => `- ${server.name} | ID=${server.id} | 工具数=${server.tools.length} | 命令=${server.command}${server.args.length > 0 ? ` ${server.args.join(' ')}` : ''}`).join('\n')
-        : '- 当前没有启用的托管 MCP 服务器'
-
-      const skillSummary = resourcesStore.enabledSkills.length > 0
-        ? resourcesStore.enabledSkills.map(skill => `- ${skill.name} | ID=${skill.id}${skill.description ? ` | ${skill.description}` : ''}\n${skill.content}`).join('\n\n')
-        : '- 当前没有启用的托管技能'
-
-      sections.push(`## 统一托管扩展资源\n### 已启用 MCP 服务器\n${serverSummary}\n\n### 已启用 Skills\n${skillSummary}\n\n### 扩展资源使用规则\n- 外部 MCP 工具已经以独立函数的形式暴露给你；若要使用，直接调用对应的托管工具名即可。\n- 如需新增外部能力，优先使用 install_mcp_server、refresh_mcp_server_tools、upsert_ai_skill 等统一管理工具维护注册表。\n- 新增技能时，内容应写成稳定、可复用的规则，不要把一次性上下文写成技能。`)
+    if (capabilities.memoryEnabled && sessionAgent) {
+      const promptMemories = getPromptMemoriesForSession(session, sessionAgent.id)
+      if (promptMemories.length > 0) {
+        sections.push(`## 角色长期记忆\n${promptMemories.map(memory => `- [${memory.category}] ${memory.content}`).join('\n')}`)
+      }
     }
 
-    sections.push(`## 会话执行偏好\n- 思考模式：${preferences.value.thinkingEnabled ? `已开启（强度 ${preferences.value.thinkingLevel}）` : '已关闭'}\n- 规划任务模式：${preferences.value.planningMode ? '已开启' : '已关闭'}\n- 自动记忆归档：${preferences.value.autoMemory ? '已开启' : '已关闭'}\n- 最大自主循环步数：${preferences.value.maxAutoSteps > 0 ? preferences.value.maxAutoSteps : '无限'}\n- 当前模型推荐自动步数：${getRecommendedAutoSteps(config.value)}\n- 自动步数用途：限制一次长任务里 AI 连续调用工具和自循环的轮数，避免无效重复操作耗尽上下文；设为无限时，仅在真实完成、报错或手动停止时结束。\n- 当前上下文窗口：${resolveConfigTokenLimits(config.value).selectedContextTokens}\n- 当前最大输出 Token：${resolveConfigTokenLimits(config.value).maxOutputTokens}`)
+    if (!capabilities.conversationOnly) {
+      const typeSummary = accountTypeStore.typeList.length > 0
+        ? accountTypeStore.typeList
+          .slice(0, 12)
+          .map(type => {
+            const fields = type.fields
+              .map(field => `${field.name}(${field.key}${field.required ? '，必填' : ''})`)
+              .join('、')
+            return `- ${type.name} | ID=${type.id} | 字段=${fields || '无'}`
+          })
+          .join('\n')
+        : '- 当前尚未创建账号类型。'
 
-    if (sessionTask && preferences.value.planningMode) {
+      sections.push([
+        '## 应用业务上下文',
+        `- 当前账号总数：${accountStore.accounts.length}`,
+        `- 当前账号类型数：${accountTypeStore.typeList.length}`,
+        `- Live2D 当前模型：${settingsStore.settings.live2dModelName || '未设置'}`,
+        `- Live2D 当前来源：${settingsStore.settings.live2dModelSource || 'unknown'}`,
+        `- 当前 AI 协议：${config.value.protocol}`,
+        `- 当前 AI 模型：${config.value.model || '未设置'}`,
+        '',
+        '### 账号类型摘要',
+        typeSummary,
+        '',
+        '### 账号执行规则',
+        '- 导入、导出、查询账号前，先确认账号类型与字段结构，不要猜测字段 key。',
+        '- 涉及批量写入或导出时，先总结目标类型、条数和即将调用的工具，再推进执行。',
+        '- 与账号管理强相关的任务，优先使用内置账号工具，不要用桌面控制绕过业务规则。'
+      ].join('\n'))
+    }
+
+    if (capabilities.fileControlEnabled && ideWorkspace.value && !capabilities.conversationOnly) {
+      sections.push([
+        '## 工作区上下文',
+        `- 工作区名称：${ideWorkspace.value.name}`,
+        `- 工作区路径：${ideWorkspace.value.rootPath}`,
+        '- 你可以在能力范围内读取、搜索和修改工作区文件，但每轮修改后都应说明影响范围与验证结果。'
+      ].join('\n'))
+    } else if (!capabilities.conversationOnly) {
+      sections.push('## 工作区上下文\n- 当前角色未启用文件控制，或尚未绑定工作区。不要假装可以直接读写项目文件。')
+    }
+
+    if (capabilities.softwareControlEnabled && !capabilities.conversationOnly) {
+      sections.push([
+        '## 软件控制要求',
+        '- 优先使用应用内原生控制工具，例如 navigate_app、set_live2d_enabled、get_live2d_models、get_windows_mcp_status。',
+        '- 若要使用桌面级控制，必须先确认目标窗口或目标页面，再执行并回读结果。',
+        settingsStore.settings.windowsMcpEnabled
+          ? '- Windows MCP 当前已开启，可以在需要时配合使用桌面读取、窗口聚焦、输入与安全命令执行。'
+          : '- Windows MCP 当前未开启，不要尝试调用桌面级系统控制工具。'
+      ].join('\n'))
+    }
+
+    if (!capabilities.conversationOnly && (capabilities.mcpEnabled || capabilities.skillEnabled)) {
+      const enabledServers = capabilities.mcpEnabled
+        ? resourcesStore.enabledManagedMcpServers.map(server => `- ${server.name} | ${server.tools.length} 个工具`)
+        : []
+      const enabledSkills = capabilities.skillEnabled
+        ? resourcesStore.enabledSkills.map(skill => `- ${skill.name}${skill.description ? ` | ${skill.description}` : ''}`)
+        : []
+
+      if (enabledServers.length > 0 || enabledSkills.length > 0) {
+        sections.push([
+          '## 托管扩展资源',
+          capabilities.mcpEnabled
+            ? `### MCP 服务器\n${enabledServers.length > 0 ? enabledServers.join('\n') : '- 当前没有启用的托管 MCP 服务'}`
+            : '### MCP 服务器\n- 当前角色未开放 MCP 能力',
+          capabilities.skillEnabled
+            ? `### Skills\n${enabledSkills.length > 0 ? enabledSkills.join('\n') : '- 当前没有启用的 Skill'}`
+            : '### Skills\n- 当前角色未开放 Skill 能力',
+          '### 使用规则',
+          '- 只有在当前角色能力已开启时，才可以使用对应的 MCP / Skill 工具。',
+          '- 托管扩展用于补足能力，不应绕开应用内已有的业务工具和安全边界。'
+        ].join('\n'))
+      }
+    }
+
+    sections.push([
+      '## 当前模型与运行配置',
+      `- 模型支持视觉：${runtimeCapabilities.vision ? '是' : '否'}`,
+      `- 模型支持思考链路：${runtimeCapabilities.thinking ? '是' : '否'}`,
+      `- 模型支持工具调用：${runtimeCapabilities.toolUse ? '是' : '否'}`,
+      `- 思考模式：${preferences.value.thinkingEnabled ? `开启（${preferences.value.thinkingLevel}）` : '关闭'}`,
+      `- 规划模式：${preferences.value.planningMode ? '开启' : '关闭'}`,
+      `- 自动记忆归档：${preferences.value.autoMemory ? '开启' : '关闭'}`,
+      `- 最大自动步数：${preferences.value.maxAutoSteps > 0 ? preferences.value.maxAutoSteps : '无限制'}`,
+      `- 推荐自动步数：${getRecommendedAutoSteps(config.value)}`,
+      `- 当前上下文窗口：${tokenLimits.selectedContextTokens}`,
+      `- 当前最大输出 Token：${tokenLimits.maxOutputTokens}`
+    ].join('\n'))
+
+    if (sessionTask) {
       const stepSummary = sessionTask.steps.length > 0
         ? sessionTask.steps.map(step => `- [${step.status}] ${step.title}${step.note ? ` | ${step.note}` : ''}`).join('\n')
-        : '- 当前还没有任务步骤，请先规划 3~7 个可执行步骤'
+        : '- 当前还没有任务步骤。'
 
-      sections.push(`## 当前任务面板\n- 目标：${sessionTask.goal}\n- 状态：${sessionTask.status}\n- 已执行循环：${sessionTask.iterationCount}/${sessionTask.maxIterations > 0 ? sessionTask.maxIterations : '无限'}\n- 当前摘要：${sessionTask.summary || '暂无'}\n\n### 任务步骤\n${stepSummary}\n\n### 任务执行要求\n- 当用户目标属于长任务、电脑代操作、批量整理导入导出或跨页面流程时，应优先调用 update_task_plan 生成或更新步骤。\n- 在任务未完成前，继续调用工具并推进步骤，不要过早结束。\n- 当任务允许持续执行时，不要因为固定步数上限而主动停止。\n- 完成任务时调用 complete_task，并给出最终总结。\n- 如果遇到真实阻塞（权限、验证码、外部环境变化、目标窗口丢失等），应解释阻塞点，并把任务标记为 blocked。`)
+      sections.push([
+        '## 当前任务面板',
+        `- 目标：${sessionTask.goal}`,
+        `- 状态：${sessionTask.status}`,
+        `- 自动循环：${sessionTask.iterationCount}/${sessionTask.maxIterations > 0 ? sessionTask.maxIterations : '无限制'}`,
+        `- 当前摘要：${sessionTask.summary || '暂无'}`,
+        '',
+        '### 当前步骤',
+        stepSummary,
+        '',
+        '### 任务执行要求',
+        '- 长任务开始时优先维护任务计划，完成后同步总结。',
+        '- 若遇到真实阻塞，应明确阻塞点和替代方案，不要静默中断。',
+        '- 只有在真正完成、明确阻塞或用户打断时，才结束当前任务。'
+      ].join('\n'))
     }
 
     if (session.summary) {
-      sections.push(`## 当前会话长上下文摘要\n${session.summary}`)
+      sections.push(`## 会话长摘要\n${session.summary}`)
     }
 
     return sections.join('\n\n')
@@ -1730,9 +2197,21 @@ export const useAIStore = defineStore('ai', () => {
 
   // ==================== 记忆管理 ====================
 
-  function addMemory(content: string, category: AIMemoryEntry['category'] = 'fact', source = 'ai', scope: AIConversationScope = 'main'): AIMemoryEntry {
+  function addMemory(
+    content: string,
+    category: AIMemoryEntry['category'] = 'fact',
+    source = 'ai',
+    scope: AIConversationScope = 'main',
+    agentId?: string
+  ): AIMemoryEntry {
     const normalizedContent = content.trim()
-    const existing = memories.value.find(entry => entry.scope === scope && entry.category === category && entry.content.trim() === normalizedContent)
+    const normalizedAgentId = getAgentProfile(agentId) ? agentId : resolveAgentIdForScope(scope) || undefined
+    const existing = memories.value.find(entry => {
+      return entry.scope === scope
+        && entry.category === category
+        && (entry.agentId || '') === (normalizedAgentId || '')
+        && entry.content.trim() === normalizedContent
+    })
 
     if (existing) {
       existing.source = source
@@ -1750,6 +2229,7 @@ export const useAIStore = defineStore('ai', () => {
     const entry: AIMemoryEntry = {
       id: genId(),
       scope,
+      agentId: normalizedAgentId,
       content: normalizedContent,
       category,
       source,
@@ -1758,9 +2238,17 @@ export const useAIStore = defineStore('ai', () => {
     }
     memories.value.push(entry)
     scheduleSave('ai_memories', memories.value)
-    if (runtime.value.sessionId && resolveSessionScope(runtime.value.sessionId) === scope) {
-      updateRuntimeContext(runtime.value.sessionId, getContextMetrics(runtime.value.sessionId))
+
+    if (runtime.value.sessionId) {
+      const runtimeSession = getSessionById(runtime.value.sessionId)
+      if (runtimeSession && runtimeSession.scope === scope) {
+        const runtimeAgentId = resolveSessionAgentId(runtimeSession)
+        if (!normalizedAgentId || runtimeAgentId === normalizedAgentId) {
+          updateRuntimeContext(runtime.value.sessionId, getContextMetrics(runtime.value.sessionId))
+        }
+      }
     }
+
     return entry
   }
 
@@ -2147,6 +2635,8 @@ export const useAIStore = defineStore('ai', () => {
     clearAllMemories,
     // v3.0 扩展
     agentMode,
+    agentProfiles,
+    selectedAgentIds,
     subAgents,
     ideWorkspace,
     ideEditorSession,
@@ -2154,6 +2644,17 @@ export const useAIStore = defineStore('ai', () => {
     autonomyRuns,
     contextSnapshots,
     setAgentMode,
+    getAgentProfiles,
+    getAgentProfile,
+    getSelectedAgentId,
+    getSelectedAgent,
+    resolveSessionAgentId,
+    getSessionAgent,
+    getEffectiveAgentCapabilities,
+    selectAgent,
+    upsertAgentProfile,
+    removeAgentProfile,
+    assignSessionAgent,
     spawnSubAgent,
     updateSubAgentStatus,
     setSubAgentResult,

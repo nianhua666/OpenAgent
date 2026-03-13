@@ -744,11 +744,13 @@ async function rememberInfo(args: Record<string, unknown>, context: ToolExecutio
   const content = args.content as string
   const category = (args.category as 'preference' | 'fact' | 'context' | 'instruction') || 'fact'
   const sessionId = context.sessionId || ''
-  const scope = sessionId ? aiStore.resolveSessionScope(sessionId) : 'main'
+  const session = sessionId ? aiStore.getSessionById(sessionId) : null
+  const scope = session?.scope || (sessionId ? aiStore.resolveSessionScope(sessionId) : 'main')
+  const sessionAgent = session ? aiStore.getSessionAgent(session) : null
 
   if (!content) return errorResult('记忆内容为空')
 
-  const entry = aiStore.addMemory(content, category, 'ai', scope)
+  const entry = aiStore.addMemory(content, category, 'ai', scope, sessionAgent?.id)
   return successResult(`已写入长期记忆: ${entry.content}`, {
     memory: entry
   })

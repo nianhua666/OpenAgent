@@ -2,8 +2,8 @@
   <section ref="scrollRef" class="agent-message-list glass-panel">
     <div v-if="!session" class="empty-state">
       <p class="empty-eyebrow">Ready</p>
-      <h3>主代理等待任务</h3>
-      <p class="empty-copy">你可以让它分析代码、调用工具、创建计划，或者并行委派子代理处理细分任务。</p>
+      <h3>当前角色等待任务</h3>
+      <p class="empty-copy">你可以让它先梳理需求、记录长期记忆、调用工具、直接控制软件或创建执行计划；Agent 模式不会继续派生子代理。</p>
       <div class="starter-list">
         <button v-for="prompt in starterPrompts" :key="prompt" class="starter-btn" @click="$emit('apply-prompt', prompt)">
           {{ prompt }}

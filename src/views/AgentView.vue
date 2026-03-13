@@ -4,7 +4,9 @@
       <div>
         <p class="hero-eyebrow">OpenAgent v3.0</p>
         <h1>Agent Mode</h1>
-        <p class="hero-copy">主代理负责规划、调度与结果汇总，子代理负责并行分析和执行。当前界面聚焦真实任务推进，而不是聊天气泡堆叠。</p>
+        <p class="hero-copy">
+          这里现在是多角色 Agent 工作台。主窗口和 Live2D / 悬浮窗都可以绑定不同角色，每个角色都能独立定义提示词、长期记忆、文件控制、软件控制、MCP 与 Skill 边界。
+        </p>
       </div>
       <div class="hero-actions">
         <button class="mode-pill active">Agent</button>
@@ -39,8 +41,8 @@
         />
 
         <section v-if="!aiStore.isConfigured" class="agent-warning glass-panel">
-          <strong>当前尚未配置可用模型。</strong>
-          <p>先在 AI 设置里填写服务地址、模型和鉴权信息，主代理才能开始执行任务。</p>
+          <strong>当前还没有可用模型配置。</strong>
+          <p>先在 AI 设置里补齐服务地址、模型和鉴权信息，角色能力边界才会落到真实对话链路里。</p>
         </section>
 
         <AgentMessageList
@@ -82,46 +84,40 @@
 
       <div class="agent-side">
         <AgentTaskBoard :task="currentTask" :plan="latestPlan" />
-
-        <section class="sub-agent-panel glass-panel">
-          <div class="side-head">
-            <div>
-              <p class="side-eyebrow">Delegation</p>
-              <h3>子代理池</h3>
-            </div>
-            <span class="side-badge">{{ sessionSubAgents.length }}</span>
-          </div>
-
-          <div v-if="sessionSubAgents.length === 0" class="side-empty">
-            <p>当前会话还没有委派出的子代理。启用子任务拆解后，执行中的分析师、开发者、测试代理会出现在这里。</p>
-          </div>
-
-          <div v-else class="sub-agent-list">
-            <SubAgentCard v-for="agent in sessionSubAgents" :key="agent.id" :agent="agent" />
-          </div>
-        </section>
+        <AgentProfileManager
+          :agents="agentProfiles"
+          :selected-agent-id="selectedAgentId"
+          :current-agent-id="currentSessionAgentId"
+          :current-scope="selectedScope"
+          :current-session-has-messages="Boolean(currentSession?.messages.length)"
+          :streaming="aiStore.streaming"
+          @select-agent="handleSelectAgent"
+          @save-agent="handleSaveAgent"
+          @delete-agent="handleDeleteAgent"
+        />
       </div>
     </div>
 
     <AgentContextBar
       :metrics="currentContextMetrics"
-      :sub-agent-count="sessionSubAgents.length"
-      :running-sub-agent-count="runningSubAgentCount"
+      :agent-count="agentProfiles.length"
+      :current-agent-name="currentAgent?.name || ''"
+      :memory-enabled="Boolean(currentAgentCapabilities?.memoryEnabled)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import type { AIChatAttachment, AIConversationScope, AIProviderModel } from '@/types'
+import { useRoute, useRouter } from 'vue-router'
+import type { AIChatAttachment, AIConversationScope, AIAgentProfile, AIProviderModel } from '@/types'
 import AgentContextBar from '@/components/agent/AgentContextBar.vue'
 import AgentInputBar from '@/components/agent/AgentInputBar.vue'
 import AgentMessageList from '@/components/agent/AgentMessageList.vue'
+import AgentProfileManager from '@/components/agent/AgentProfileManager.vue'
 import AgentSessionList from '@/components/agent/AgentSessionList.vue'
 import AgentTaskBoard from '@/components/agent/AgentTaskBoard.vue'
 import AgentToolbar from '@/components/agent/AgentToolbar.vue'
-import SubAgentCard from '@/components/agent/SubAgentCard.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
@@ -132,6 +128,7 @@ import { showToast } from '@/utils/toast'
 const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
 const router = useRouter()
+const route = useRoute()
 
 const selectedScope = ref<AIConversationScope>('main')
 const selectedSessionId = ref('')
@@ -144,14 +141,16 @@ const playingMessageId = ref('')
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
 
 const starterPrompts = [
-  '先分析当前任务，判断是否需要切换模型或拆出子代理。',
-  '给我一个从 0 到 1 的项目执行计划，并列出关键阶段。',
-  '检查最近这次会话的上下文负载和潜在瓶颈。',
+  '先帮我拆解需求并给出详细执行计划，暂时先不要动手，等我确认后再持续推进。',
+  '从当前角色和能力边界出发，告诉我这轮任务还缺哪些上下文、风险或约束。',
+  '根据当前角色的人设和能力，直接说明你现在可以替我做什么，以及哪些事情需要我确认。'
 ]
 
 const aiConfig = computed(() => aiStore.config)
 const mainSessions = computed(() => aiStore.getSortedSessions('main'))
 const live2dSessions = computed(() => aiStore.getSortedSessions('live2d'))
+const agentProfiles = computed(() => aiStore.getAgentProfiles())
+const selectedAgentId = computed(() => aiStore.getSelectedAgentId(selectedScope.value))
 const combinedSessions = computed(() => {
   const pinnedLive2D = live2dSessions.value
     .map(session => ({ ...session, isPinned: session.title.trim() === 'Live2D' }))
@@ -164,13 +163,17 @@ const combinedSessions = computed(() => {
 
   return [
     ...pinnedLive2D,
-    ...mainSessions.value.map(session => ({ ...session, isPinned: false })),
+    ...mainSessions.value.map(session => ({ ...session, isPinned: false }))
   ]
 })
 const currentSession = computed(() => (selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null))
 const currentTask = computed(() => (currentSession.value ? aiStore.getLatestTaskForSession(currentSession.value.id) : null))
-const sessionSubAgents = computed(() => (currentSession.value ? aiStore.getSubAgentsForSession(currentSession.value.id) : []))
-const runningSubAgentCount = computed(() => sessionSubAgents.value.filter(agent => agent.status === 'running').length)
+const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
+const currentSessionAgentId = computed(() => currentSessionAgent.value?.id || '')
+const currentAgent = computed(() => currentSessionAgent.value || aiStore.getSelectedAgent(selectedScope.value))
+const currentAgentCapabilities = computed(() => currentSession.value
+  ? aiStore.getEffectiveAgentCapabilities(currentSession.value)
+  : currentAgent.value?.capabilities || null)
 const latestPlan = computed(() => {
   const plans = [...aiStore.projectPlans]
   if (plans.length === 0) {
@@ -217,12 +220,12 @@ const currentModelMeta = computed(() => {
     name: aiConfig.value.model,
     label: aiConfig.value.model,
     capabilities: inferModelCapabilities(aiConfig.value.model, aiConfig.value.protocol),
-    limits: inferModelLimits(aiConfig.value.model, aiConfig.value.protocol),
+    limits: inferModelLimits(aiConfig.value.model, aiConfig.value.protocol)
   }
 })
 const currentModelBadges = computed(() => [
   ...getModelCapabilityLabels(currentModelMeta.value?.capabilities),
-  ...getModelLimitLabels(currentModelMeta.value?.limits),
+  ...getModelLimitLabels(currentModelMeta.value?.limits)
 ])
 const currentModelLabel = computed(() => currentModelMeta.value?.label || aiConfig.value.model.trim() || '未选择')
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(aiConfig.value))
@@ -242,6 +245,10 @@ const showVoiceActions = computed(() => {
     return false
   }
 
+  if (currentAgent.value?.tts.autoPlayReplies) {
+    return true
+  }
+
   return currentSession.value?.scope === 'live2d' || settingsStore.settings.ttsShowMainReplyButton
 })
 
@@ -249,7 +256,7 @@ watch(
   () => [selectedSessionId.value, currentSession.value?.messages.at(-1)?.id ?? '', aiStore.runtime.updatedAt],
   () => {
     scrollMessageListToBottom()
-  },
+  }
 )
 
 watch(combinedSessions, () => {
@@ -258,13 +265,51 @@ watch(combinedSessions, () => {
   }
 })
 
-onMounted(() => {
+watch(
+  () => [route.query.sessionId, route.query.scope],
+  () => {
+    initializeSelection()
+  }
+)
+
+onMounted(async () => {
   aiStore.setAgentMode('agent')
+  if (!aiStore.loaded) {
+    await aiStore.init()
+  }
   initializeSelection()
   void refreshModelOptions()
 })
 
+function getRequestedScope(): AIConversationScope | null {
+  return route.query.scope === 'live2d' || route.query.scope === 'main'
+    ? route.query.scope
+    : null
+}
+
 function initializeSelection() {
+  const requestedSessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : ''
+  if (requestedSessionId) {
+    const session = aiStore.getSessionById(requestedSessionId)
+    if (session) {
+      selectedScope.value = session.scope
+      selectedSessionId.value = session.id
+      aiStore.switchSession(session.id, session.scope)
+      return
+    }
+  }
+
+  const requestedScope = getRequestedScope()
+  if (requestedScope) {
+    const scopedFallback = aiStore.getActiveSession(requestedScope) || aiStore.getSortedSessions(requestedScope)[0] || null
+    if (scopedFallback) {
+      selectedScope.value = scopedFallback.scope
+      selectedSessionId.value = scopedFallback.id
+      aiStore.switchSession(scopedFallback.id, scopedFallback.scope)
+      return
+    }
+  }
+
   const selected = selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null
   if (selected) {
     selectedScope.value = selected.scope
@@ -274,12 +319,13 @@ function initializeSelection() {
   const fallback = aiStore.getActiveSession('main') || aiStore.getActiveSession('live2d') || combinedSessions.value[0] || null
   if (!fallback) {
     selectedSessionId.value = ''
-    selectedScope.value = 'main'
+    selectedScope.value = requestedScope || 'main'
     return
   }
 
   selectedSessionId.value = fallback.id
   selectedScope.value = fallback.scope
+  aiStore.switchSession(fallback.id, fallback.scope)
 }
 
 function scrollMessageListToBottom() {
@@ -385,7 +431,7 @@ function startNewSession() {
   }
 
   const nextScope = currentSession.value?.scope || selectedScope.value
-  const session = aiStore.createSession(undefined, nextScope)
+  const session = aiStore.createSession(undefined, nextScope, aiStore.getSelectedAgentId(nextScope))
   selectedScope.value = session.scope
   selectedSessionId.value = session.id
   scrollMessageListToBottom()
@@ -430,6 +476,44 @@ async function clearAllSessions() {
   }
 }
 
+async function handleSelectAgent(agentId: string) {
+  const targetAgent = await aiStore.selectAgent(selectedScope.value, agentId)
+  if (!targetAgent) {
+    return
+  }
+
+  if (currentSession.value && currentSession.value.messages.length === 0) {
+    await aiStore.assignSessionAgent(currentSession.value.id, targetAgent.id)
+    return
+  }
+
+  if (currentSession.value) {
+    showToast('info', `已切换默认角色为 ${targetAgent.name}，当前会话仍保持原角色。`)
+  }
+}
+
+async function handleSaveAgent(profile: Omit<AIAgentProfile, 'createdAt' | 'updatedAt'> & Partial<Pick<AIAgentProfile, 'createdAt' | 'updatedAt'>>) {
+  const saved = await aiStore.upsertAgentProfile(profile)
+  await handleSelectAgent(saved.id)
+  showToast('success', `已保存角色：${saved.name}`)
+}
+
+async function handleDeleteAgent(agentId: string) {
+  const target = aiStore.getAgentProfile(agentId)
+  if (!target) {
+    return
+  }
+
+  if (!confirm(`确定删除角色“${target.name}”吗？`)) {
+    return
+  }
+
+  const removed = await aiStore.removeAgentProfile(agentId)
+  if (removed) {
+    showToast('success', `已删除角色：${target.name}`)
+  }
+}
+
 function openSettingsPage() {
   void router.push('/ai-settings')
 }
@@ -446,7 +530,7 @@ async function sendMessage() {
 
   let session = currentSession.value
   if (!session) {
-    session = aiStore.createSession(undefined, selectedScope.value)
+    session = aiStore.createSession(undefined, selectedScope.value, aiStore.getSelectedAgentId(selectedScope.value))
     selectedSessionId.value = session.id
   }
 
@@ -456,14 +540,17 @@ async function sendMessage() {
 
   await startConversationTurn(session.id, text, attachments, {
     onStream: scrollMessageListToBottom,
-    onAfterUpdate: scrollMessageListToBottom,
+    onAfterUpdate: scrollMessageListToBottom
   })
 }
 
 async function playAssistantMessage(message: { id: string; content: string }) {
   try {
     playingMessageId.value = message.id
-    await playTextToSpeech(settingsStore.settings, message.content)
+    await playTextToSpeech(settingsStore.settings, message.content, {
+      emotionStyle: currentAgent.value?.tts.emotionStyle,
+      emotionIntensity: currentAgent.value?.tts.emotionIntensity
+    })
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '语音播放失败')
   } finally {
@@ -483,8 +570,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 }
 
 .agent-hero,
-.agent-warning,
-.sub-agent-panel {
+.agent-warning {
   padding: 18px;
 }
 
@@ -498,8 +584,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
   justify-content: space-between;
 }
 
-.hero-eyebrow,
-.side-eyebrow {
+.hero-eyebrow {
   color: var(--text-muted);
   font-size: 12px;
   letter-spacing: 0.16em;
@@ -518,8 +603,7 @@ h1 {
 }
 
 .hero-copy,
-.agent-warning p,
-.side-empty p {
+.agent-warning p {
   color: var(--text-secondary);
   line-height: 1.7;
   margin-top: 10px;
@@ -534,14 +618,9 @@ h1 {
 }
 
 .mode-pill,
-.hero-link,
-.side-badge {
+.hero-link {
   border-radius: 999px;
   font-size: 12px;
-}
-
-.mode-pill,
-.hero-link {
   border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 10px 14px;
 }
@@ -565,14 +644,12 @@ h1 {
 .agent-layout {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(320px, 380px);
   min-height: 0;
 }
 
 .agent-center,
-.agent-side,
-.sub-agent-panel,
-.sub-agent-list {
+.agent-side {
   display: grid;
   gap: 18px;
   min-height: 0;
@@ -582,34 +659,8 @@ h1 {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
-.agent-side {
-  align-content: start;
-}
-
 .agent-warning {
   border: 1px solid rgba(255, 183, 3, 0.24);
-}
-
-.side-head {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.side-badge {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-  padding: 6px 10px;
-}
-
-.sub-agent-panel {
-  max-height: 100%;
-}
-
-.sub-agent-list {
-  overflow: auto;
 }
 
 @media (max-width: 1280px) {

@@ -2831,6 +2831,14 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
 
   // Agent 增强工具（模型路由 + 子代理）
   const aiStore = useAIStore()
+  const isAgentMode = aiStore.agentMode === 'agent'
+  const runtimeSession = aiStore.runtime.sessionId ? aiStore.getSessionById(aiStore.runtime.sessionId) : null
+  const fallbackScope = runtimeSession?.scope || 'main'
+  const selectedAgent = isAgentMode ? aiStore.getSelectedAgent(fallbackScope) : null
+  const agentCapabilities = isAgentMode
+    ? (runtimeSession ? aiStore.getEffectiveAgentCapabilities(runtimeSession) : selectedAgent?.capabilities || null)
+    : null
+  const managedMcpToolNames = new Set<string>()
   toolList.push(
     {
       type: 'function',
@@ -2881,6 +2889,67 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
       }
     },
   )
+
+  if (isAgentMode && agentCapabilities?.fileControlEnabled && aiStore.ideWorkspace) {
+    toolList.push(
+      {
+        type: 'function',
+        function: {
+          name: 'ide_read_file',
+          description: '读取工作区中的文件内容。路径相对于工作区根目录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对文件路径' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_write_file',
+          description: '在工作区中创建或覆盖文件。自动创建中间目录。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对文件路径' },
+              content: { type: 'string', description: '文件内容' }
+            },
+            required: ['path', 'content']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_list_directory',
+          description: '列出工作区目录内容。返回文件和子目录的名称及类型。',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: '相对目录路径，留空表示根目录' }
+            }
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_search_files',
+          description: '在工作区中按文件名模式搜索文件。支持 glob 模式（如 **/*.ts）或子串匹配。',
+          parameters: {
+            type: 'object',
+            properties: {
+              pattern: { type: 'string', description: '搜索模式' }
+            },
+            required: ['pattern']
+          }
+        }
+      },
+    )
+  }
 
   // IDE 模式工具（仅 IDE 模式下启用）
   if (aiStore.agentMode === 'ide') {
@@ -3169,21 +3238,77 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
 
   try {
     const resourcesStore = useAIResourcesStore()
-    toolList.push(...resourcesStore.enabledManagedMcpTools.map(({ server, tool }) => ({
-      type: 'function' as const,
-      function: {
-        name: tool.invocationName,
-        description: `托管 MCP 工具，来自服务器「${server.name}」：${tool.description}`,
-        parameters: tool.inputSchema && Object.keys(tool.inputSchema).length > 0
-          ? tool.inputSchema
-          : { type: 'object', properties: {} }
-      }
-    })))
+    if (!isAgentMode || agentCapabilities?.mcpEnabled) {
+      toolList.push(...resourcesStore.enabledManagedMcpTools.map(({ server, tool }) => {
+        managedMcpToolNames.add(tool.invocationName)
+        return {
+          type: 'function' as const,
+          function: {
+            name: tool.invocationName,
+            description: `托管 MCP 工具，来自服务器「${server.name}」：${tool.description}`,
+            parameters: tool.inputSchema && Object.keys(tool.inputSchema).length > 0
+              ? tool.inputSchema
+              : { type: 'object', properties: {} }
+          }
+        }
+      }))
+    }
   } catch {
     // AI 资源 store 尚未初始化时回退为仅使用内置工具。
   }
 
-  return toolList
+  if (!isAgentMode || !agentCapabilities) {
+    return toolList
+  }
+
+  const workspaceToolNames = new Set(['ide_read_file', 'ide_write_file', 'ide_list_directory', 'ide_search_files'])
+  const softwareControlToolNames = new Set(['get_live2d_models', 'get_windows_mcp_status', 'navigate_app', 'set_live2d_enabled'])
+  const windowsMcpToolNames = new Set(['execute_command', 'read_screen', 'mouse_click', 'keyboard_input', 'list_windows', 'focus_window'])
+  const mcpRegistryToolNames = new Set(['install_mcp_server', 'refresh_mcp_server_tools', 'set_mcp_server_enabled', 'remove_mcp_server'])
+  const skillRegistryToolNames = new Set(['upsert_ai_skill', 'set_ai_skill_enabled', 'remove_ai_skill'])
+  const blockedAgentModeTools = new Set(['route_model', 'spawn_sub_agent', 'get_sub_agent_status'])
+
+  return toolList.filter(tool => {
+    const name = tool.function.name
+
+    if (blockedAgentModeTools.has(name)) {
+      return false
+    }
+
+    if (agentCapabilities.conversationOnly) {
+      return name === 'remember' ? agentCapabilities.memoryEnabled : false
+    }
+
+    if (name === 'remember') {
+      return agentCapabilities.memoryEnabled
+    }
+
+    if (workspaceToolNames.has(name)) {
+      return agentCapabilities.fileControlEnabled && Boolean(aiStore.ideWorkspace)
+    }
+
+    if (softwareControlToolNames.has(name)) {
+      return agentCapabilities.softwareControlEnabled
+    }
+
+    if (windowsMcpToolNames.has(name)) {
+      return agentCapabilities.softwareControlEnabled && agentCapabilities.mcpEnabled && isWindowsMcpEnabled()
+    }
+
+    if (name === 'get_managed_ai_resources') {
+      return agentCapabilities.mcpEnabled || agentCapabilities.skillEnabled
+    }
+
+    if (mcpRegistryToolNames.has(name) || managedMcpToolNames.has(name)) {
+      return agentCapabilities.mcpEnabled
+    }
+
+    if (skillRegistryToolNames.has(name)) {
+      return agentCapabilities.skillEnabled
+    }
+
+    return true
+  })
 }
 
 async function streamOpenAIChat(

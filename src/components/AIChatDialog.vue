@@ -12,6 +12,11 @@
           <span v-if="!aiStore.isConfigured" class="config-hint">未配置</span>
         </div>
         <div class="chat-actions">
+          <select class="agent-select" :value="selectedAgentId" :disabled="aiStore.streaming" @change="handleAgentChange(($event.target as HTMLSelectElement).value)">
+            <option v-for="agent in availableAgents" :key="agent.id" :value="agent.id">
+              {{ agent.name }}
+            </option>
+          </select>
           <button class="icon-btn" :disabled="aiStore.streaming" title="新对话" @click="startNewSession">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -94,6 +99,19 @@
 
           <div class="chat-main-pane">
             <div class="chat-top-panel">
+              <div class="agent-identity-card">
+                <div class="agent-identity-copy">
+                  <strong>{{ currentAgent?.name || '未选择角色' }}</strong>
+                  <span>{{ currentAgent?.description || '当前会话将沿用这个角色的人设、记忆和能力边界。' }}</span>
+                  <small v-if="currentSessionAgent && selectedAgent && currentSessionAgent.id !== selectedAgent.id">
+                    当前会话仍绑定 {{ currentSessionAgent.name }}，新选择的 {{ selectedAgent.name }} 会用于后续新会话或空会话。
+                  </small>
+                </div>
+                <div v-if="currentAgentCapabilityBadges.length" class="agent-capability-row">
+                  <span v-for="badge in currentAgentCapabilityBadges" :key="badge" class="agent-capability-pill">{{ badge }}</span>
+                </div>
+              </div>
+
               <div class="chat-runtime-toolbar">
                 <button class="runtime-chip" :class="{ active: aiStore.preferences.thinkingEnabled }" @click="toggleThinkingMode">
                   思考 {{ aiStore.preferences.thinkingEnabled ? aiStore.preferences.thinkingLevel : '关' }}
@@ -362,16 +380,55 @@ const defaultLive2DSessionTitle = 'Live2D'
 const chatScope = computed(() => props.scope || 'main')
 const showSessionManager = computed(() => typeof props.showSessionManager === 'boolean' ? props.showSessionManager : chatScope.value === 'live2d')
 const useNativeWindowDrag = computed(() => typeof props.nativeWindowDrag === 'boolean' ? props.nativeWindowDrag : chatScope.value === 'live2d')
-const dialogTitle = computed(() => props.title || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'Agent'))
-const dialogSubtitle = computed(() => props.subtitle || (chatScope.value === 'live2d' ? '独立记忆与自动语音' : '主窗口文本对话'))
-const emptyHint = computed(() => chatScope.value === 'live2d'
-  ? '这是 Live2D 的独立对话空间，会单独保存长期记忆，并默认自动播报助手回复。'
-  : '我可以帮你查询、导入、导出账号，或控制电脑执行操作')
-
 const aiConfig = computed(() => aiStore.config)
 const scopedActiveSessionId = computed(() => aiStore.getActiveSessionId(chatScope.value))
 const scopedSessions = computed(() => aiStore.getSortedSessions(chatScope.value))
 const currentSession = computed(() => aiStore.getActiveSession(chatScope.value))
+const availableAgents = computed(() => aiStore.getAgentProfiles())
+const selectedAgentId = computed(() => aiStore.getSelectedAgentId(chatScope.value))
+const selectedAgent = computed(() => aiStore.getSelectedAgent(chatScope.value))
+const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
+const currentAgent = computed(() => currentSessionAgent.value || selectedAgent.value)
+const currentAgentCapabilities = computed(() => {
+  if (currentSession.value) {
+    return aiStore.getEffectiveAgentCapabilities(currentSession.value)
+  }
+
+  return currentAgent.value?.capabilities || null
+})
+const currentAgentCapabilityBadges = computed(() => {
+  const capabilities = currentAgentCapabilities.value
+  if (!capabilities) {
+    return []
+  }
+
+  if (capabilities.conversationOnly) {
+    return ['仅对话', capabilities.memoryEnabled ? '记忆' : '无记忆']
+  }
+
+  return [
+    capabilities.memoryEnabled ? '记忆' : '无记忆',
+    capabilities.fileControlEnabled ? '文件控制' : '无文件控制',
+    capabilities.softwareControlEnabled ? '软件控制' : '无软件控制',
+    capabilities.mcpEnabled ? 'MCP' : '无 MCP',
+    capabilities.skillEnabled ? 'Skill' : '无 Skill'
+  ]
+})
+const dialogTitle = computed(() => props.title || currentAgent.value?.name || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'Agent'))
+const dialogSubtitle = computed(() => props.subtitle || currentAgent.value?.description || (chatScope.value === 'live2d' ? '独立记忆与自动语音' : '主窗口文本对话'))
+const emptyHint = computed(() => {
+  if (chatScope.value === 'live2d') {
+    return currentAgent.value?.name
+      ? `${currentAgent.value.name} 会在这个独立会话域里陪你继续对话，并优先沿用这个角色的记忆与语音风格。`
+      : '这是 Live2D 的独立对话空间，会单独保存长期记忆，并默认自动播报助手回复。'
+  }
+
+  if (currentAgentCapabilities.value?.conversationOnly) {
+    return '当前角色处于仅对话模式，会专注陪聊、解释和提供建议。'
+  }
+
+  return currentAgent.value?.description || '我可以帮你查询、导入、导出账号，或控制电脑执行操作'
+})
 const currentTask = computed(() => aiStore.getActiveTask(chatScope.value))
 const streamingContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.content : ''))
 const streamingReasoningContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.reasoningContent : ''))
@@ -506,6 +563,26 @@ function selectSession(sessionId: string) {
   scrollToBottom()
 }
 
+async function handleAgentChange(agentId: string) {
+  if (aiStore.streaming) {
+    return
+  }
+
+  const targetAgent = await aiStore.selectAgent(chatScope.value, agentId)
+  if (!targetAgent) {
+    return
+  }
+
+  if (currentSession.value && currentSession.value.messages.length === 0) {
+    await aiStore.assignSessionAgent(currentSession.value.id, targetAgent.id)
+    return
+  }
+
+  if (currentSession.value) {
+    showToast('info', `已将默认角色切换为 ${targetAgent.name}，当前会话仍保持原角色。`)
+  }
+}
+
 async function ensureScopedSession() {
   const existingActive = aiStore.getActiveSession(chatScope.value)
   if (existingActive) {
@@ -518,7 +595,11 @@ async function ensureScopedSession() {
     return fallbackSession
   }
 
-  return aiStore.createSession(chatScope.value === 'live2d' ? defaultLive2DSessionTitle : undefined, chatScope.value)
+  return aiStore.createSession(
+    chatScope.value === 'live2d' ? defaultLive2DSessionTitle : undefined,
+    chatScope.value,
+    aiStore.getSelectedAgentId(chatScope.value)
+  )
 }
 
 async function deleteScopedSession(sessionId: string) {
@@ -742,7 +823,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 function startNewSession() {
   if (aiStore.streaming) return
 
-  aiStore.createSession(undefined, chatScope.value)
+  aiStore.createSession(undefined, chatScope.value, aiStore.getSelectedAgentId(chatScope.value))
   scrollToBottom()
 }
 
@@ -811,18 +892,14 @@ async function sendMessage() {
     return
   }
 
-  if (!currentSession.value) {
-    aiStore.createSession(undefined, chatScope.value)
-  }
-
-  const sessionId = aiStore.getActiveSessionId(chatScope.value)
+  const session = currentSession.value || await ensureScopedSession()
   const attachments = [...pendingAttachments.value]
   inputText.value = ''
   pendingAttachments.value = []
   autoResize()
 
   await startConversationTurn(
-    sessionId,
+    session.id,
     text,
     attachments,
     {
@@ -837,7 +914,15 @@ async function sendMessage() {
 }
 
 function shouldAutoPlayReplies() {
-  return settingsStore.settings.ttsEnabled && chatScope.value === 'live2d' && settingsStore.settings.ttsAutoPlayLive2D
+  if (!settingsStore.settings.ttsEnabled) {
+    return false
+  }
+
+  if (typeof currentAgent.value?.tts.autoPlayReplies === 'boolean') {
+    return currentAgent.value.tts.autoPlayReplies
+  }
+
+  return chatScope.value === 'live2d' && settingsStore.settings.ttsAutoPlayLive2D
 }
 
 function shouldShowReplyVoiceButton() {
@@ -855,7 +940,10 @@ function canPlayAssistantReply(message: AIChatMessage) {
 async function playAssistantMessage(message: AIChatMessage) {
   try {
     playingMessageId.value = message.id
-    await playTextToSpeech(settingsStore.settings, message.content)
+    await playTextToSpeech(settingsStore.settings, message.content, {
+      emotionStyle: currentAgent.value?.tts.emotionStyle,
+      emotionIntensity: currentAgent.value?.tts.emotionIntensity
+    })
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '语音播放失败')
   } finally {
@@ -1192,7 +1280,8 @@ onBeforeUnmount(() => {
   -webkit-app-region: drag;
 }
 
-.chat-header.is-window-drag-enabled .icon-btn {
+.chat-header.is-window-drag-enabled .icon-btn,
+.chat-header.is-window-drag-enabled .agent-select {
   -webkit-app-region: no-drag;
 }
 
@@ -1244,7 +1333,25 @@ onBeforeUnmount(() => {
 .chat-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
   -webkit-app-region: no-drag;
+}
+
+.agent-select {
+  min-width: 104px;
+  border: 1px solid rgba(255, 200, 220, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+  outline: none;
+}
+
+.agent-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .icon-btn {
@@ -1296,6 +1403,50 @@ onBeforeUnmount(() => {
   padding: 7px 10px;
   border-bottom: 1px solid rgba(255, 200, 220, 0.18);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 248, 251, 0.28));
+}
+
+.agent-identity-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 200, 220, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.agent-identity-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-identity-copy strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.agent-identity-copy span,
+.agent-identity-copy small {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.agent-capability-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-capability-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 246, 250, 0.92);
+  border: 1px solid rgba(255, 200, 220, 0.22);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .chat-model-strip {

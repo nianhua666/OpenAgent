@@ -48,7 +48,7 @@
 | 5.1 | `AgentSessionList` 组件 | 已完成 | `src/components/agent/AgentSessionList.vue` |
 | 5.2 | `AgentMessageList` 组件 | 已完成 | `src/components/agent/AgentMessageList.vue` |
 | 5.3 | `AgentInputBar` 组件 | 已完成 | `src/components/agent/AgentInputBar.vue` |
-| 5.4 | `SubAgentCard` 组件 | 已完成 | `src/components/agent/SubAgentCard.vue` |
+| 5.4 | `AgentProfileManager` 组件 | 已完成 | `src/components/agent/AgentProfileManager.vue` |
 | 5.5 | `AgentTaskBoard` 组件 | 已完成 | `src/components/agent/AgentTaskBoard.vue` |
 | 5.6 | `AgentToolbar` 组件 | 已完成 | `src/components/agent/AgentToolbar.vue` |
 | 5.7 | `AgentContextBar` 组件 | 已完成 | `src/components/agent/AgentContextBar.vue` |
@@ -88,6 +88,8 @@
 
 ## 当前剩余缺口
 
+- Agent Mode 现在已经从“主代理 + 子代理池”收口为真正的“多角色 Agent 工作台”：主窗口与 Live2D / 悬浮窗都可以绑定不同角色，每个角色独立维护系统提示词、长期记忆、文件控制、软件控制、MCP 与 Skill 边界；会话会绑定角色，长期记忆也按角色隔离，且 Agent 模式下已显式禁止继续创建、建议创建或调用子代理工具。当前剩余工作主要不是角色切换本身，而是继续补齐“角色长期记忆可视化管理 / 清理 / 导出”等管理界面，以及让兼容入口 `/ai/classic` 也逐步跟上主链路体验。
+- Live2D / AI 悬浮对话主链路现在已经真正默认绑定“小柔”：`/ai-overlay` 直接继承 Live2D 域默认角色，AI 悬浮窗会显示当前角色身份、能力边界并沿用角色级 TTS 风格；Live2D 悬浮窗抽屉也会显示当前角色、长期记忆、软件控制、MCP / Skill 与自动播报状态，方便用户从桌面侧确认“当前到底是谁在响应”。当前剩余工作主要是继续把 Live2D 表情 / 口型 / TTS 情绪做更深联动，以及补更多人工回归场景。
 - Sub2API 的核心接入能力已经不再局限于独立工作台：`/ai` 主页面与悬浮对话窗现在都补上了可复用的桥接面板，用户可以在 Agent 主链路里直接看到本地 / 外部网关状态、一键切换当前 Sub2API 路由、读取模型、同步本地专属 Key 并执行快速体检。当前剩余工作不再是“有没有入口”，而是继续把账号池状态、路由选择与自治执行器里的任务上下文做更深的一体化联动。
 - IDE 自治执行链路已经从 `.openagent/CONTEXT.md` handoff 升级到真正的 `.openagent/RUN.md` 自治调度状态机：当前会持久化自治运行状态、权限画像、建议并行度、任务领取映射、最近心跳，并在计划文档刷新时同步收口到工作区。当前剩余工作不再是“有没有调度器”，而是继续把它从“高质量状态机 + 恢复锚点”推进到“真正后台连续运行的 worker / 任务循环”。
 - 主代理委派子代理时已经会自动拉取当前接口支持的模型列表并执行子代理模型路由，落盘记录选型方式、可用模型数量和选型理由；`spawn_sub_agent` 现在也支持把 `planId` / `taskId` 显式挂到任务领取状态，便于自治调度器追踪 ready task -> 子代理 -> 结果回传的链路。当前剩余缺口是把这套模型治理继续扩展到“按 Skill / MCP / 工具权限 / 成本预算”统一调度的强约束执行层，以及支持更长生命周期的多轮子代理执行。
@@ -185,3 +187,7 @@
 | 2026-03-13 | test | Phase 8 自治调度器状态机验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 RUN.md 落盘、IDE 调度面板和自治工具链未破坏 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路 |
 | 2026-03-13 | code | Phase 8 Sub2API 主链路集成：新增 `Sub2ApiAgentBridge.vue`，把本地 / 外部网关状态、一键接管 Agent、模型读取、快速体检与本地专属 Key 同步直接下沉到 `/ai` 与悬浮对话窗；同时 `sub2api.ts` / `stores/sub2api.ts` / `AISettings.vue` / `Sub2ApiSettings.vue` 改为优先使用真实 `runtimeState` 推导 Base URL、模型读取、能力检查和 Codex 配置模板，避免桌面网关场景下的静态地址错位 |
 | 2026-03-13 | test | Phase 8 Sub2API 主链路集成验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 Agent 页面、悬浮对话窗与 `/sub2api` 工作台在新增桥接面板后仍保持关键路由可达 |
+| 2026-03-13 | code | Phase 8 Agent 模式角色化收口：`stores/ai.ts` / `types/index.ts` 新增多角色 Agent 配置、角色级长期记忆与默认作用域选择；`AIChatDialog.vue` / `AgentView.vue` / `AgentSessionList.vue` / `AgentContextBar.vue` / `AgentProfileManager.vue` 改为围绕角色提示词、长期记忆、文件控制、软件控制、MCP / Skill 边界工作，并明确 Agent 模式不支持子代理 |
+| 2026-03-13 | code | Phase 8 悬浮链路角色同步：`AIOverlay.vue` 默认显示 Live2D 域角色（默认小柔），`Live2DOverlay.vue` 抽屉新增角色身份、长期记忆、软件控制、MCP / Skill 与 TTS 自动播报状态展示，帮助用户从桌面侧快速确认当前角色配置 |
+| 2026-03-13 | review | Phase 8 一致性巡检：修复 `AgentProfileManager.vue` 草稿脏状态判断失效、收口 `aiPrompts.ts` 中 Agent 模式仍建议模型路由 / 子代理的旧叙事，并校正文案空态，避免 UI 和运行时边界出现两套说法 |
+| 2026-03-13 | test | Phase 8 多角色 Agent 收口验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认 `/ai`、`/ai-overlay`、`/live2d-overlay` 与 `/ide` 主链路在多角色 / 长期记忆 / 能力门禁接入后仍保持可构建和可达 |

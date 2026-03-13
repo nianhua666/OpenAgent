@@ -3,7 +3,7 @@
     <div class="overlay-backdrop"></div>
     <div class="overlay-shell">
       <div class="overlay-toolbar">
-        <span class="overlay-badge">Live2D 共用会话</span>
+        <span class="overlay-badge">Live2D · {{ overlayAgent?.name || '小柔' }}</span>
         <div class="overlay-toolbar-actions">
           <button class="overlay-toolbar-btn" @click="openMainWindowToAI">主窗口</button>
           <button class="overlay-toolbar-btn" @click="openMainWindowToSettings">AI 设置</button>
@@ -13,8 +13,6 @@
       <AIChatDialog
         visible
         scope="live2d"
-        title="AI 对话悬浮窗"
-        subtitle="独立窗口，自动沿用 Live2D 会话与语音"
         :native-window-drag="false"
         :show-session-manager="false"
         :style="chatStyle"
@@ -34,6 +32,7 @@ import { useAIStore } from '@/stores/ai'
 
 const router = useRouter()
 const aiStore = useAIStore()
+const overlayAgent = computed(() => aiStore.getSelectedAgent('live2d'))
 
 const chatStyle = computed(() => ({
   position: 'relative' as const,

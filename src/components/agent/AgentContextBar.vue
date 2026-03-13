@@ -11,8 +11,9 @@
     </div>
 
     <div class="context-stats">
-      <span class="stat-pill">子代理 {{ subAgentCount }}</span>
-      <span class="stat-pill running">运行中 {{ runningSubAgentCount }}</span>
+      <span class="stat-pill">角色 {{ agentCount }}</span>
+      <span class="stat-pill running">{{ currentAgentName || '未选择角色' }}</span>
+      <span class="stat-pill" :class="{ running: memoryEnabled }">{{ memoryEnabled ? '长期记忆开启' : '长期记忆关闭' }}</span>
       <span class="stat-pill" v-if="metrics?.compressionCount">压缩 {{ metrics.compressionCount }} 次</span>
       <span class="stat-pill" v-else>未压缩</span>
     </div>
@@ -25,8 +26,9 @@ import type { AIContextMetrics } from '@/types'
 
 const props = defineProps<{
   metrics: AIContextMetrics | null
-  subAgentCount: number
-  runningSubAgentCount: number
+  agentCount: number
+  currentAgentName: string
+  memoryEnabled: boolean
 }>()
 
 const usagePercent = computed(() => {

@@ -355,6 +355,39 @@ export interface AIActiveSessions {
   live2d: string
 }
 
+export interface AISelectedAgents {
+  main: string
+  live2d: string
+}
+
+export interface AIAgentCapabilitySettings {
+  conversationOnly: boolean
+  memoryEnabled: boolean
+  fileControlEnabled: boolean
+  softwareControlEnabled: boolean
+  mcpEnabled: boolean
+  skillEnabled: boolean
+}
+
+export interface AIAgentTTSProfile {
+  autoPlayReplies?: boolean
+  emotionStyle?: TTSEmotionStyle
+  emotionIntensity?: number
+}
+
+export interface AIAgentProfile {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string
+  capabilities: AIAgentCapabilitySettings
+  tts: AIAgentTTSProfile
+  isBuiltin?: boolean
+  isDefault?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AIChatPreferences {
   thinkingEnabled: boolean
   thinkingLevel: AIThinkingLevel
@@ -441,6 +474,7 @@ export interface AIToolCall {
 export interface AIChatSession {
   id: string
   scope: AIConversationScope
+  agentId?: string
   title: string
   messages: AIChatMessage[]
   summary?: string
@@ -840,6 +874,7 @@ export interface AIAgentTask {
 export interface AIMemoryEntry {
   id: string
   scope: AIConversationScope
+  agentId?: string
   content: string
   category: 'preference' | 'fact' | 'context' | 'instruction'
   source: string

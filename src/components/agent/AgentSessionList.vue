@@ -27,6 +27,7 @@
           <span class="session-title">{{ session.title }}</span>
           <span class="session-badge" :class="`is-${session.scope}`">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
         </div>
+        <p class="session-agent">{{ resolveAgentName(session) }}</p>
         <p class="session-meta">{{ formatTime(session.updatedAt) }} · {{ session.messages.length }} 条消息</p>
         <p v-if="session.summary" class="session-summary">{{ session.summary }}</p>
         <p v-else class="session-summary muted">{{ fallbackSummary(session) }}</p>
@@ -47,6 +48,7 @@
 import { computed } from 'vue'
 import dayjs from 'dayjs'
 import type { AIChatSession } from '@/types'
+import { useAIStore } from '@/stores/ai'
 
 type SessionListItem = AIChatSession & {
   isPinned?: boolean
@@ -67,6 +69,7 @@ defineEmits<{
 }>()
 
 const sessions = computed(() => props.sessions)
+const aiStore = useAIStore()
 
 function formatTime(timestamp: number) {
   return dayjs(timestamp).format('MM/DD HH:mm')
@@ -79,6 +82,10 @@ function fallbackSummary(session: AIChatSession) {
   }
 
   return lastMessage.content.trim().slice(0, 72)
+}
+
+function resolveAgentName(session: AIChatSession) {
+  return aiStore.getSessionAgent(session)?.name || '默认角色'
 }
 </script>
 
@@ -178,6 +185,7 @@ h3 {
   color: #ffcf5c;
 }
 
+.session-agent,
 .session-meta,
 .session-summary,
 .panel-empty {
@@ -185,6 +193,11 @@ h3 {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.session-agent {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .muted {

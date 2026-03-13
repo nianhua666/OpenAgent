@@ -37,7 +37,7 @@
           <button class="tool-btn" title="恢复默认模型" @click="restoreBundledDefault">
             <svg width="16" height="16"><use href="#icon-refresh"/></svg>
           </button>
-          <button class="tool-btn" :class="{ active: aiChatVisible }" title="AI 对话" @click="toggleAiChat">
+          <button class="tool-btn" title="AI 对话悬浮窗" @click="openAiOverlayWindow">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
@@ -71,6 +71,21 @@
             <button class="btn btn-secondary btn-sm" @click="restoreBundledDefault">恢复默认</button>
           </div>
 
+          <div class="drawer-agent-card">
+            <div class="drawer-agent-copy">
+              <strong>{{ overlayAgent?.name || '小柔' }}</strong>
+              <span>{{ overlayAgent?.description || 'Live2D 默认角色，会继承独立记忆、语音和工具边界。' }}</span>
+            </div>
+            <div v-if="overlayStatusBadges.length" class="drawer-agent-pills">
+              <span v-for="badge in overlayStatusBadges" :key="badge" class="drawer-agent-pill">{{ badge }}</span>
+            </div>
+            <small class="drawer-agent-note">{{ overlaySpeechHint }}</small>
+            <div class="drawer-agent-actions">
+              <button class="btn btn-secondary btn-sm" @click="openMainWindowToAgent">打开 Agent</button>
+              <button class="btn btn-secondary btn-sm" @click="openAiOverlayWindow">对话悬浮窗</button>
+            </div>
+          </div>
+
           <div class="panel-models" v-if="availableModels.length">
             <button
               v-for="model in availableModels"
@@ -85,19 +100,6 @@
           </div>
         </div>
       </transition>
-
-      <AIChatDialog
-        :visible="aiChatVisible"
-        ref="aiChatRef"
-        scope="live2d"
-        title="Live2D 陪伴对话"
-        subtitle="独立长期记忆与默认语音播报"
-        :style="aiChatStyle"
-        @close="aiChatVisible = false"
-        @drag-state-change="handleChatDragStateChange"
-        @open-main="openMainWindowToAI"
-        @open-settings="openMainWindowToSettings"
-      />
     </div>
   </div>
 </template>
@@ -106,7 +108,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Live2DLibraryItem, Live2DModelBounds, Live2DModelSource, WindowShapeRect } from '@/types'
 import Live2DWidget from '@/components/Live2DWidget.vue'
-import AIChatDialog from '@/components/AIChatDialog.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { showToast } from '@/utils/toast'
@@ -115,6 +116,49 @@ import { DEFAULT_BUNDLED_LIVE2D_MODEL, listLocalLive2DModels } from '@/utils/liv
 const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
+const overlayAgent = computed(() => aiStore.getSelectedAgent('live2d'))
+const overlayStatusBadges = computed(() => {
+  const agent = overlayAgent.value
+  const capabilities = agent?.capabilities
+  if (!agent || !capabilities) {
+    return []
+  }
+
+  const badges = [capabilities.memoryEnabled ? '长期记忆' : '无记忆']
+  if (capabilities.conversationOnly) {
+    badges.push('仅对话')
+  } else {
+    if (capabilities.fileControlEnabled) {
+      badges.push('文件控制')
+    }
+    if (capabilities.softwareControlEnabled) {
+      badges.push('软件控制')
+    }
+    if (capabilities.mcpEnabled) {
+      badges.push('MCP')
+    }
+    if (capabilities.skillEnabled) {
+      badges.push('Skill')
+    }
+  }
+
+  badges.push(settings.value.ttsEnabled
+    ? (agent.tts.autoPlayReplies ? '自动播报' : '手动播报')
+    : 'TTS 已关闭')
+
+  return badges
+})
+const overlaySpeechHint = computed(() => {
+  if (!settings.value.ttsEnabled) {
+    return '当前全局 TTS 已关闭，Live2D 仍可继续对话，但不会自动播报回复。'
+  }
+
+  if (overlayAgent.value?.tts.autoPlayReplies) {
+    return '当前角色会优先自动播报回复，适合悬浮陪伴和边聊边操作。'
+  }
+
+  return '当前角色保留手动播报，你可以在 AI 悬浮窗或主窗口按需播放语音。'
+})
 const toolVisible = ref(false)
 const modelPickerVisible = ref(false)
 const modelReady = ref(false)
@@ -125,9 +169,6 @@ const viewportSize = ref({ width: window.innerWidth, height: window.innerHeight 
 const toolboxRef = ref<HTMLElement | null>(null)
 const drawerRef = ref<HTMLElement | null>(null)
 const errorPanelRef = ref<HTMLElement | null>(null)
-const aiChatRef = ref<InstanceType<typeof AIChatDialog> | null>(null)
-const aiChatVisible = ref(false)
-const chatDragCapturing = ref(false)
 const interactionCapturing = ref(false)
 let lastIgnoreMouseEvents: boolean | null = null
 
@@ -260,25 +301,8 @@ function getModelRect(): RectLike | null {
   }
 }
 
-function getAiChatRect() {
-  const chatInstance = aiChatRef.value as (InstanceType<typeof AIChatDialog> & {
-    getRootElement?: () => HTMLElement | null
-    hasBlockingOverlay?: () => boolean
-  }) | null
-
-  return getElementRect(chatInstance?.getRootElement?.() ?? null)
-}
-
-function hasAiChatBlockingOverlay() {
-  const chatInstance = aiChatRef.value as (InstanceType<typeof AIChatDialog> & {
-    hasBlockingOverlay?: () => boolean
-  }) | null
-
-  return chatInstance?.hasBlockingOverlay?.() ?? false
-}
-
 function buildWindowShapeRects() {
-  if (interactionCapturing.value || chatDragCapturing.value || hasAiChatBlockingOverlay()) {
+  if (interactionCapturing.value) {
     const viewportRect = toWindowShapeRect(getViewportRect())
     return viewportRect ? [viewportRect] : []
   }
@@ -287,8 +311,7 @@ function buildWindowShapeRects() {
     toWindowShapeRect(getModelRect()),
     toWindowShapeRect(getElementRect(toolboxRef.value)),
     toWindowShapeRect(getElementRect(drawerRef.value)),
-    toWindowShapeRect(getElementRect(errorPanelRef.value)),
-    toWindowShapeRect(getAiChatRect())
+    toWindowShapeRect(getElementRect(errorPanelRef.value))
   ].filter((item): item is WindowShapeRect => Boolean(item))
 }
 
@@ -347,20 +370,6 @@ const drawerStyle = computed(() => {
   }
 })
 
-const aiChatStyle = computed(() => {
-  const chatWidth = resolvePanelDimension(760, viewportSize.value.width, 560)
-  const chatHeight = resolvePanelDimension(760, viewportSize.value.height, 460)
-  const placement = resolveSidePanelPosition(chatWidth, chatHeight)
-
-  return {
-    position: 'absolute' as const,
-    left: `${placement.left}px`,
-    top: `${placement.top}px`,
-    width: `${chatWidth}px`,
-    maxHeight: `${chatHeight}px`
-  }
-})
-
 function sourceLabel(source: Live2DModelSource) {
   return sourceLabelMap[source]
 }
@@ -381,14 +390,27 @@ function syncViewportSize() {
 function closeFloatingUi() {
   toolVisible.value = false
   modelPickerVisible.value = false
-  aiChatVisible.value = false
-  chatDragCapturing.value = false
   syncOverlayWindowInteractivity()
 }
 
 function openMainWindow() {
   closeFloatingUi()
   window.electronAPI?.showMainWindow()
+}
+
+function openMainWindowToAgent() {
+  closeFloatingUi()
+  const sessionId = aiStore.getActiveSessionId('live2d')
+  const targetPath = sessionId
+    ? `/ai?scope=live2d&sessionId=${encodeURIComponent(sessionId)}`
+    : '/ai?scope=live2d'
+
+  if (window.electronAPI?.navigateMainWindow) {
+    window.electronAPI.navigateMainWindow(targetPath)
+    return
+  }
+
+  window.location.hash = targetPath
 }
 
 async function hideLive2D() {
@@ -412,31 +434,16 @@ async function useModel(model: Live2DLibraryItem) {
 
 function toggleModelPicker() {
   modelPickerVisible.value = !modelPickerVisible.value
-  if (modelPickerVisible.value) aiChatVisible.value = false
 }
 
-function toggleAiChat() {
-  aiChatVisible.value = !aiChatVisible.value
-  if (aiChatVisible.value) modelPickerVisible.value = false
-}
-
-function handleChatDragStateChange(active: boolean) {
-  chatDragCapturing.value = active
-  syncOverlayWindowInteractivity()
-}
-
-function openMainWindowToSettings() {
+function openAiOverlayWindow() {
   closeFloatingUi()
-  window.electronAPI?.navigateMainWindow?.('/settings')
-}
+  if (window.electronAPI?.showAIOverlayWindow) {
+    window.electronAPI.showAIOverlayWindow()
+    return
+  }
 
-function openMainWindowToAI() {
-  closeFloatingUi()
-  const sessionId = aiStore.getActiveSessionId('live2d')
-  const targetPath = sessionId
-    ? `/ai?scope=live2d&sessionId=${encodeURIComponent(sessionId)}`
-    : '/ai?scope=live2d'
-  window.electronAPI?.navigateMainWindow?.(targetPath)
+  window.electronAPI?.navigateMainWindow?.('/ai?scope=live2d')
 }
 
 function handleModelReady() {
@@ -467,10 +474,8 @@ function handleModelTap() {
   toolVisible.value = !toolVisible.value
   if (toolVisible.value) {
     modelPickerVisible.value = false
-    aiChatVisible.value = false
   } else {
     modelPickerVisible.value = false
-    aiChatVisible.value = false
   }
 
   syncOverlayWindowInteractivity()
@@ -493,11 +498,14 @@ watch([
   syncOverlayWindowInteractivity()
 })
 
-watch(() => [toolVisible.value, modelPickerVisible.value, aiChatVisible.value, modelReady.value, modelErrorMessage.value, modelBounds.value, chatDragCapturing.value, interactionCapturing.value], () => {
+watch(() => [toolVisible.value, modelPickerVisible.value, modelReady.value, modelErrorMessage.value, modelBounds.value, interactionCapturing.value], () => {
   syncOverlayWindowInteractivity()
 }, { flush: 'post' })
 
 onMounted(() => {
+  if (!aiStore.loaded) {
+    void aiStore.init()
+  }
   syncViewportSize()
   window.addEventListener('resize', syncViewportSize)
   setWindowMousePassthrough(true)
@@ -587,6 +595,46 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.78);
   box-shadow: 0 18px 48px rgba(117, 86, 106, 0.24);
   backdrop-filter: blur(20px);
+}
+
+.drawer-agent-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 195, 215, 0.24), transparent 34%),
+    rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+}
+
+.drawer-agent-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.drawer-agent-copy span,
+.drawer-agent-note {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.drawer-agent-pills,
+.drawer-agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drawer-agent-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #7d324d;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .overlay-error {

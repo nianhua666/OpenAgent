@@ -726,10 +726,14 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
     aiStore.updateSessionSummary(sessionId, nextSummary)
   }
 
-  const sessionScope = aiStore.resolveSessionScope(sessionId)
-  memoryList.forEach(memory => {
-    aiStore.addMemory(memory.content, memory.category, 'ai', sessionScope)
-  })
+  const currentSession = aiStore.getSessionById(sessionId)
+  const sessionScope = currentSession?.scope || aiStore.resolveSessionScope(sessionId)
+  const sessionAgent = currentSession ? aiStore.getSessionAgent(currentSession) : null
+  if (currentSession && aiStore.getEffectiveAgentCapabilities(currentSession).memoryEnabled) {
+    memoryList.forEach(memory => {
+      aiStore.addMemory(memory.content, memory.category, 'ai', sessionScope, sessionAgent?.id)
+    })
+  }
 
   aiStore.recordCompression(sessionId)
   aiStore.updateRuntimeContext(sessionId, aiStore.getContextMetrics(sessionId))
