@@ -67,8 +67,10 @@
           <IDEPlanPanel
             :plans="workspacePlans"
             :selected-plan-id="selectedPlanId"
+            :replanning="replanningPlan"
             @select-plan="selectedPlanId = $event"
             @create-plan="createGeneratedPlanDraft"
+            @replan-plan="handleReplanPlan"
           />
 
           <IDEDevLog :plan="selectedPlan" />
@@ -100,7 +102,7 @@ import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
 import { workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
-import { flushPlanToWorkspace, generateInitialPlanPhases } from '@/utils/aiPlanEngine'
+import { flushPlanToWorkspace, generateInitialPlanPhases, recordPlanWorkspaceSnapshot, replanProjectPlan } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
 
 interface EditorTabState {
@@ -122,6 +124,7 @@ const activeFilePath = ref('')
 const terminalScripts = ref<Array<{ name: string; command: string }>>([])
 const selectedPlanId = ref('')
 const refreshingWorkspace = ref(false)
+const replanningPlan = ref(false)
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspacePlans = computed(() => {
@@ -414,6 +417,10 @@ async function createGeneratedPlanDraft(payload: { goal: string; overview: strin
     },
   })
 
+  await recordPlanWorkspaceSnapshot(workspace.value, currentPlan.id, {
+    reason: 'initial-plan',
+    content: `为项目计划「${currentPlan.goal}」记录工作区基线，供后续基于 diff、失败反馈与上下文信号动态重规划。`,
+  })
   await flushPlanToWorkspace(workspace.value, currentPlan)
   selectedPlanId.value = currentPlan.id
   showToast(
@@ -437,9 +444,57 @@ async function createPlanDraft(payload: { goal: string; overview: string; techSt
     metadata: { workspaceId: workspace.value.id },
   })
 
+  await recordPlanWorkspaceSnapshot(workspace.value, plan.id, {
+    reason: 'draft-plan',
+    content: `为计划草案「${plan.goal}」记录当前工作区基线，避免后续真实代码差异无法被识别。`,
+  })
   await flushPlanToWorkspace(workspace.value, plan)
   selectedPlanId.value = plan.id
   showToast('success', '项目计划草案已创建')
+}
+
+async function handleReplanPlan(planId: string) {
+  if (!workspace.value) {
+    return
+  }
+
+  const targetPlan = workspacePlans.value.find(plan => plan.id === planId) ?? selectedPlan.value
+  if (!targetPlan) {
+    showToast('error', '当前没有可重规划的项目计划')
+    return
+  }
+
+  replanningPlan.value = true
+  try {
+    const contextSummary = [
+      activeFilePath.value ? `当前聚焦文件：${activeFilePath.value}` : '',
+      dirtyFileCount.value > 0 ? `当前仍有 ${dirtyFileCount.value} 个未保存文件` : '',
+      targetPlan.overview,
+    ].filter(Boolean).join('；')
+
+    const result = await replanProjectPlan(workspace.value, targetPlan.id, {
+      reason: 'manual-ide-panel',
+      contextSummary,
+    })
+
+    if (!result) {
+      showToast('error', '动态重规划失败，请稍后重试')
+      return
+    }
+
+    selectedPlanId.value = result.plan.id
+    const changedCount = result.diff.added.length + result.diff.modified.length + result.diff.removed.length
+    showToast(
+      'success',
+      changedCount > 0
+        ? `动态重规划已完成，已吸收 ${changedCount} 处真实代码差异`
+        : '动态重规划已完成，计划已按当前上下文重新校准',
+    )
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '动态重规划失败')
+  } finally {
+    replanningPlan.value = false
+  }
 }
 </script>
 

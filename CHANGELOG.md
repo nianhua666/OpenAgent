@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- IDE Mode 终端链路已升级为多标签交互式终端：Electron 运行时优先走 `node-pty` 提供真实 PTY，会话可持续写入 stdin，并保留 Pipe fallback 兜底；同时新增 `rebuild:native` / `postinstall` 自动重建原生依赖，降低 native 模块失配风险。
+- IDE 项目计划已支持基于真实工作区快照、diff、失败反馈与上下文摘要的动态重规划：新增 `ide_replan_plan` 工具、失败任务自动重规划逻辑，以及 IDE 面板手动重规划入口，计划创建时也会自动记录工作区基线。
 - IDE Mode 终端面板从命令甲板升级为真实 shell 执行链路：现在可以在工作区内直接运行脚本或自定义命令，查看实时输出，并取消当前进程；脚本命令也会按 `packageManager` / lockfile 自动识别 `npm`、`pnpm`、`yarn`、`bun`。
 - IDE 项目计划创建不再只是空草稿：现在会结合工作区结构、`package.json` 脚本、框架/语言与目标关键词自动生成初始阶段和任务，且 IDE 面板与 `ide_create_plan` 工具已统一复用同一条生成链路；生成失败时会自动回退为草稿并写入日志。
 - Agent 上下文主链路已切到快照 + 语义优先装配：长对话会优先保留高信号历史，并在装配异常时自动回退旧滑窗，避免对话链路因新装配器异常而中断。

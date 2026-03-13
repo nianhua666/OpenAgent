@@ -15,6 +15,12 @@
       </select>
     </div>
 
+    <div v-if="selectedPlan" class="plan-actions">
+      <button class="btn btn-secondary btn-sm" :disabled="replanning" type="button" @click="emit('replan-plan', selectedPlan.id)">
+        {{ replanning ? '重规划中...' : '动态重规划' }}
+      </button>
+    </div>
+
     <div v-if="selectedPlan" class="plan-body">
       <div class="plan-summary">
         <strong>{{ selectedPlan.goal }}</strong>
@@ -70,11 +76,13 @@ import type { ProjectPlan } from '@/types'
 const props = defineProps<{
   plans: ProjectPlan[]
   selectedPlanId: string
+  replanning?: boolean
 }>()
 
 const emit = defineEmits<{
   (event: 'select-plan', planId: string): void
   (event: 'create-plan', payload: { goal: string; overview: string; techStack: string[] }): void
+  (event: 'replan-plan', planId: string): void
 }>()
 
 const goal = ref('')
@@ -83,6 +91,7 @@ const techStack = ref('')
 
 const selectedPlan = computed(() => props.plans.find(plan => plan.id === props.selectedPlanId) ?? props.plans[0] ?? null)
 const canCreatePlan = computed(() => goal.value.length > 0 && overview.value.length > 0 && techStack.value.length > 0)
+const replanning = computed(() => props.replanning === true)
 
 function statusLabel(status: string) {
   const map: Record<string, string> = {
@@ -161,6 +170,11 @@ function submitPlan() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.plan-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .plan-body {

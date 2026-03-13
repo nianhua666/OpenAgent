@@ -110,6 +110,7 @@ export const IDE_MODE_PROMPT = `你是 OpenAgent IDE 的核心开发引擎，一
 - 每个任务开始前：调用 \`ide_advance_task\` 标记为 in-progress
 - 开发过程中：使用 \`ide_write_file\` / \`ide_read_file\` 直接操作文件
 - 每个任务完成后：调用 \`ide_advance_task\` 标记为 completed
+- 当真实代码 diff、失败反馈或上下文变化使原计划不再可靠时：调用 \`ide_replan_plan\` 动态重规划
 - 自动更新 PLAN.md 进度
 - 自动写入开发日志（重要决策、里程碑、错误修复）
 - 遇到阻塞时：标记为 blocked，说明原因并尝试替代方案

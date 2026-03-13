@@ -2,7 +2,7 @@
 
 > **创建时间**: 2026-03-13  
 > **当前阶段**: Phase 8 - 测试 + 优化  
-> **总进度**: 98%
+> **总进度**: 99%
 
 ---
 
@@ -81,17 +81,16 @@
 | # | 任务 | 状态 | 涉及文件 |
 |---|------|------|----------|
 | 8.1 | 构建验证 | 已完成 | `npm.cmd run build` |
-| 8.2 | 功能测试 | 未开始 | - |
-| 8.3 | 代码巡检 | 已完成 | `src/App.vue`, `src/components/Sidebar.vue`, `src/router/index.ts` |
+| 8.2 | 功能测试 | 进行中 | `/ai`, `/ide`, `/ai-overlay`, `/sub2api`, `node-pty`, `electron/main.ts` |
+| 8.3 | 代码巡检 | 已完成 | `electron/main.ts`, `src/components/ide/IDETerminal.vue`, `src/utils/aiPlanEngine.ts`, `src/utils/aiTools.ts`, `src/views/IDEView.vue` |
 
 ---
 
 ## 当前剩余缺口
 
-- `IDETerminal` 已接入真实 shell 执行、输出流与取消能力，但还不支持交互式 PTY、多标签终端和 stdin 持久会话。
-- IDE 项目计划现在会基于工作区结构、`package.json`、脚本命令、框架/语言与目标关键词自动生成初始 `phase` / `task`，但还不支持基于真实 diff、失败反馈和上下文快照的动态重规划。
-- 上下文引擎已接入 `buildContextMessages()` 主链路，但还缺一轮长对话、多工具调用、跨模式切换的真实回归验证。
-- 还缺一轮面向 `/ai`、`/ide`、Overlay、Sub2API 的真实交互回归测试。
+- `IDETerminal` 已支持多标签、持久 shell、stdin 持续输入，并在 Electron 运行时优先走 `node-pty`；当前剩余风险主要是缺少 TUI/全屏命令（如 `vim`、`top`）层面的人工回归。
+- IDE 项目计划已支持基于真实工作区快照、diff、失败反馈和上下文摘要的动态重规划，并新增 `ide_replan_plan` 工具与面板入口；剩余工作是继续观察真实长链路开发中的计划稳定性。
+- `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 已完成本地预览路由可达性烟测，Electron 内也已完成 `node-pty` 装载与 PTY spawn 烟测；但 Playwright 浏览器自动化在本机 Chrome 启动阶段退出（exit code 13），所以完整自动化 UI 回归仍待补。
 
 ---
 
@@ -138,3 +137,8 @@
 | 2026-03-13 | code | Phase 8: `aiPlanEngine.ts` 重建初始计划生成链路，基于工作区结构、脚本与技术栈推断自动生成阶段/任务；`IDEView.vue` 与 `aiTools.ts` 统一接入同一套计划创建逻辑，避免再次产出空草稿 |
 | 2026-03-13 | review | Phase 8 巡检：复核 IDE 计划链路与 store 状态归一化，确认 `setProjectPlanPhases()` + `addProjectPhase()` 会统一规范 `phaseId` / order；当前无新增阻断项，剩余风险收敛为 PTY 能力与真实交互回归 |
 | 2026-03-13 | build | Phase 8 计划生成链路收口后 `npm.cmd run build` 通过 |
+| 2026-03-13 | code | Phase 8: `electron/main.ts` 接入 `node-pty` 优先的交互式 PTY，多标签终端在 Electron 运行时支持真实 PTY / 回退 Pipe 双通道；`package.json` 新增 `rebuild:native` / `postinstall` 自动重建原生依赖 |
+| 2026-03-13 | code | Phase 8: `aiPlanEngine.ts` / `aiTools.ts` / `ai.ts` / `aiPrompts.ts` 接入基于工作区快照、diff、失败反馈和上下文摘要的动态重规划；`IDEPlanPanel.vue` 与 `IDEView.vue` 新增手动动态重规划入口 |
+| 2026-03-13 | review | Phase 8 巡检：收口 `stores/ai.ts` 计划进度计算重复逻辑，并复核 `IDETerminal`、主进程终端会话管理、动态重规划插入阶段与日志快照链路的一致性 |
+| 2026-03-13 | test | Phase 8 烟测：`npm.cmd run build` 通过；`Invoke-WebRequest` 验证 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 本地预览均返回 200；Electron 运行时完成 `node-pty` import 与 PTY spawn smoke |
+| 2026-03-13 | risk | Phase 8 风险记录：Playwright 浏览器自动化在本机 Chrome 启动阶段退出（exit code 13），因此本轮 UI 回归以路由烟测 + Electron PTY 运行时验证 + 代码巡检为主，后续需补自动化 UI 验证 |

@@ -3,34 +3,66 @@
     <div class="terminal-head">
       <div>
         <p class="terminal-eyebrow">Workspace Shell</p>
-        <h3>终端面板</h3>
+        <h3>终端工作台</h3>
       </div>
-      <span class="terminal-status" :class="`is-${statusTone}`">{{ statusLabel }}</span>
+
+      <div class="head-actions">
+        <span class="terminal-status" :class="`is-${statusTone}`">{{ statusLabel }}</span>
+        <button class="btn btn-secondary btn-sm" :disabled="!canCreateSession" @click="createShellTab">
+          新建终端
+        </button>
+      </div>
     </div>
 
     <div class="terminal-summary">
       <span class="summary-chip">工作区：{{ workspacePath || '未打开' }}</span>
       <span class="summary-chip">当前文件：{{ activeFilePath || '未选择' }}</span>
       <span class="summary-chip">待保存：{{ dirtyCount }}</span>
+      <span class="summary-chip">会话：{{ terminalTabs.length }}</span>
+    </div>
+
+    <div v-if="terminalTabs.length > 0" class="terminal-tab-strip">
+      <button
+        v-for="tab in terminalTabs"
+        :key="tab.id"
+        class="terminal-tab"
+        :class="{ active: tab.id === activeTabId }"
+        @click="activeTabId = tab.id"
+      >
+        <span class="tab-copy">
+          <strong>{{ tab.title }}</strong>
+          <small>{{ formatTabMeta(tab) }}</small>
+        </span>
+        <span class="tab-actions">
+          <button
+            class="tab-action"
+            type="button"
+            :disabled="tab.status === 'running' && tab.mode === 'command'"
+            @click.stop="closeTerminalTab(tab.id)"
+          >
+            {{ tab.status === 'running' ? '停止' : '关闭' }}
+          </button>
+        </span>
+      </button>
     </div>
 
     <div class="terminal-controls">
       <label class="command-input">
-        <span>命令</span>
+        <span>命令输入</span>
         <input
           v-model="commandInput"
           type="text"
           placeholder="例如 npm run build"
-          :disabled="!supportsNativeTerminal || !workspacePath || isLaunching"
-          @keydown.enter.exact.prevent="runCustomCommand"
+          :disabled="!canTypeIntoActiveTab"
+          @keydown.enter.exact.prevent="sendCommandToActiveTab"
         />
       </label>
 
       <div class="command-actions">
-        <button class="btn btn-primary btn-sm" :disabled="!canRunCommand" @click="runCustomCommand">运行</button>
-        <button class="btn btn-secondary btn-sm" :disabled="!runningSession" @click="stopRunningCommand()">停止</button>
-        <button class="btn btn-ghost btn-sm" :disabled="!selectedSession || selectedSession.lines.length === 0" @click="copySelectedOutput">复制输出</button>
-        <button class="btn btn-ghost btn-sm" :disabled="!terminalSessions.length || Boolean(runningSession)" @click="clearTerminalHistory">清空</button>
+        <button class="btn btn-primary btn-sm" :disabled="!canSendCommand" @click="sendCommandToActiveTab">发送</button>
+        <button class="btn btn-secondary btn-sm" :disabled="!canStopActiveTab" @click="stopActiveTab">停止</button>
+        <button class="btn btn-ghost btn-sm" :disabled="!selectedTab || selectedTab.lines.length === 0" @click="copySelectedOutput">复制输出</button>
+        <button class="btn btn-ghost btn-sm" :disabled="!canClearTabs" @click="clearClosedTabs">清理已结束</button>
       </div>
     </div>
 
@@ -39,7 +71,7 @@
         v-for="script in scripts"
         :key="script.name"
         class="script-chip"
-        :disabled="!supportsNativeTerminal || !workspacePath || isLaunching || Boolean(runningSession)"
+        :disabled="!canTypeIntoActiveTab"
         @click="runPreset(script.command)"
       >
         <strong>{{ script.name }}</strong>
@@ -47,50 +79,40 @@
       </button>
     </div>
 
-    <div v-if="terminalSessions.length > 0" class="terminal-session-list">
-      <button
-        v-for="session in terminalSessions"
-        :key="session.id"
-        class="session-chip"
-        :class="{ active: session.id === selectedSessionId }"
-        @click="selectedSessionId = session.id"
-      >
-        <strong>{{ session.command }}</strong>
-        <span>{{ formatSessionMeta(session) }}</span>
-      </button>
-    </div>
-
-    <div ref="consoleRef" class="terminal-console" :class="{ 'terminal-console--empty': !selectedSession }">
-      <template v-if="selectedSession">
+    <div ref="consoleRef" class="terminal-console" :class="{ 'terminal-console--empty': !selectedTab }">
+      <template v-if="selectedTab">
         <div class="console-headline">
-          <strong>{{ selectedSession.command }}</strong>
-          <span>{{ formatSessionState(selectedSession) }}</span>
+          <div>
+            <strong>{{ selectedTab.title }}</strong>
+            <p>{{ selectedTab.cwd }}</p>
+          </div>
+          <span>{{ formatSessionState(selectedTab) }}</span>
         </div>
 
         <pre
-          v-for="line in selectedSession.lines"
+          v-for="line in selectedTab.lines"
           :key="line.id"
           class="console-line"
           :class="`is-${line.stream}`"
         >{{ line.text }}</pre>
 
-        <div v-if="selectedSession.lines.length === 0" class="terminal-empty">
-          <p>命令已启动，但暂时还没有输出。</p>
+        <div v-if="selectedTab.lines.length === 0" class="terminal-empty">
+          <p>终端会话已经启动，等待输出。</p>
         </div>
       </template>
 
       <div v-else class="terminal-empty">
-        <p v-if="!supportsNativeTerminal">当前环境不支持 Electron 终端执行链路。</p>
-        <p v-else-if="!workspacePath">先打开工作区，再运行脚本或自定义命令。</p>
-        <p v-else>可以直接运行 `package.json` scripts，也可以输入任意 shell 命令。</p>
+        <p v-if="!supportsNativeTerminal">当前环境不支持 Electron 终端链路。</p>
+        <p v-else-if="!workspacePath">先打开工作区，再创建终端会话。</p>
+        <p v-else>创建一个终端标签后，就可以持续输入命令、查看输出和切换会话。</p>
       </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { IDETerminalEvent, IDETerminalStatus, IDETerminalStream } from '@/types'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { IDETerminalEvent, IDETerminalSessionInfo, IDETerminalSessionMode, IDETerminalStatus, IDETerminalStream } from '@/types'
 import { showToast } from '@/utils/toast'
 
 const props = defineProps<{
@@ -107,27 +129,30 @@ interface TerminalLine {
   timestamp: number
 }
 
-interface TerminalSessionView {
+interface TerminalTabView {
   id: string
-  command: string
+  title: string
   cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
   status: IDETerminalStatus | 'starting'
   startedAt: number
   finishedAt?: number
   exitCode?: number | null
   signal?: string | null
   error?: string
+  lastCommand?: string
   lines: TerminalLine[]
 }
 
 const ANSI_ESCAPE_PATTERN = /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g
-const MAX_TERMINAL_LINES = 400
-const MAX_TERMINAL_SESSIONS = 8
+const MAX_TERMINAL_LINES = 800
+const MAX_TERMINAL_TABS = 10
 
 const commandInput = ref('')
-const isLaunching = ref(false)
-const terminalSessions = ref<TerminalSessionView[]>([])
-const selectedSessionId = ref('')
+const activeTabId = ref('')
+const creatingTerminal = ref(false)
+const terminalTabs = ref<TerminalTabView[]>([])
 const consoleRef = ref<HTMLElement | null>(null)
 const ignoredSessionIds = new Set<string>()
 
@@ -139,41 +164,40 @@ const supportsNativeTerminal = computed(() => {
   const electronAPI = getElectronAPI()
   return Boolean(
     electronAPI
-    && typeof electronAPI.ideRunCommand === 'function'
+    && typeof electronAPI.ideCreateTerminalSession === 'function'
+    && typeof electronAPI.ideWriteTerminalInput === 'function'
+    && typeof electronAPI.ideCloseTerminalSession === 'function'
     && typeof electronAPI.ideCancelCommand === 'function'
     && typeof electronAPI.onIdeTerminalEvent === 'function'
   )
 })
-const runningSession = computed(() => terminalSessions.value.find(session => session.status === 'starting' || session.status === 'running') ?? null)
-const selectedSession = computed(() => {
-  return terminalSessions.value.find(session => session.id === selectedSessionId.value) ?? terminalSessions.value[0] ?? null
+const selectedTab = computed(() => terminalTabs.value.find(tab => tab.id === activeTabId.value) ?? terminalTabs.value[0] ?? null)
+const canCreateSession = computed(() => Boolean(supportsNativeTerminal.value && props.workspacePath && !creatingTerminal.value))
+const canTypeIntoActiveTab = computed(() => {
+  return Boolean(
+    supportsNativeTerminal.value
+    && props.workspacePath
+    && selectedTab.value
+    && selectedTab.value.mode === 'shell'
+    && selectedTab.value.status === 'running'
+    && !creatingTerminal.value,
+  )
 })
-const canRunCommand = computed(() => {
-  return Boolean(props.workspacePath && commandInput.value.trim() && supportsNativeTerminal.value && !isLaunching.value && !runningSession.value)
-})
+const canSendCommand = computed(() => Boolean(canTypeIntoActiveTab.value && commandInput.value.trim()))
+const canStopActiveTab = computed(() => Boolean(selectedTab.value && selectedTab.value.status === 'running'))
+const canClearTabs = computed(() => terminalTabs.value.some(tab => tab.status !== 'running' && tab.status !== 'starting'))
 const statusLabel = computed(() => {
-  if (!supportsNativeTerminal.value) {
-    return '当前环境不可用'
-  }
-
-  if (runningSession.value) {
-    return '命令执行中'
-  }
-
-  if (selectedSession.value?.status === 'failed') {
-    return '最近一次执行失败'
-  }
-
-  if (selectedSession.value?.status === 'cancelled') {
-    return '最近一次已取消'
-  }
-
-  return '真实 shell 已接入'
+  if (!supportsNativeTerminal.value) return '当前环境不可用'
+  if (creatingTerminal.value) return '正在启动终端'
+  if (selectedTab.value?.status === 'failed') return '当前会话执行失败'
+  if (selectedTab.value?.status === 'cancelled') return '当前会话已停止'
+  if (selectedTab.value?.status === 'running') return selectedTab.value.mode === 'shell' ? '交互终端在线' : '命令执行中'
+  return '终端已就绪'
 })
 const statusTone = computed(() => {
   if (!supportsNativeTerminal.value) return 'blocked'
-  if (runningSession.value) return 'running'
-  if (selectedSession.value?.status === 'failed') return 'failed'
+  if (selectedTab.value?.status === 'failed') return 'failed'
+  if (selectedTab.value?.status === 'running' || creatingTerminal.value) return 'running'
   return 'ready'
 })
 
@@ -186,28 +210,27 @@ watch(
       return
     }
 
-    if (runningSession.value) {
-      ignoredSessionIds.add(runningSession.value.id)
-      await stopRunningCommand(false)
-    }
+    await resetTerminalTabs()
 
-    terminalSessions.value = []
-    selectedSessionId.value = ''
-    commandInput.value = ''
+    if (nextPath) {
+      void ensureShellTab()
+    }
   },
 )
 
-const electronAPI = getElectronAPI()
-if (supportsNativeTerminal.value && electronAPI) {
-  removeTerminalListener = electronAPI.onIdeTerminalEvent(handleTerminalEvent)
-}
-
-onBeforeUnmount(() => {
-  if (runningSession.value) {
-    ignoredSessionIds.add(runningSession.value.id)
-    void stopRunningCommand(false)
+onMounted(() => {
+  const electronAPI = getElectronAPI()
+  if (supportsNativeTerminal.value && electronAPI) {
+    removeTerminalListener = electronAPI.onIdeTerminalEvent(handleTerminalEvent)
   }
 
+  if (props.workspacePath) {
+    void ensureShellTab()
+  }
+})
+
+onBeforeUnmount(() => {
+  void resetTerminalTabs()
   removeTerminalListener?.()
   removeTerminalListener = null
 })
@@ -216,98 +239,310 @@ function normalizeChunk(text: string) {
   return text.replace(ANSI_ESCAPE_PATTERN, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 }
 
-function findSession(sessionId: string) {
-  return terminalSessions.value.find(session => session.id === sessionId) ?? null
+function findTab(sessionId: string) {
+  return terminalTabs.value.find(tab => tab.id === sessionId) ?? null
 }
 
-function ensureSession(payload: {
+function ensureTabSession(payload: {
   sessionId: string
-  command: string
+  title: string
   cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
   timestamp: number
 }) {
-  let session = findSession(payload.sessionId)
-  if (!session) {
-    session = {
+  let tab = findTab(payload.sessionId)
+  if (!tab) {
+    tab = {
       id: payload.sessionId,
-      command: payload.command,
+      title: payload.title,
       cwd: payload.cwd,
+      mode: payload.mode,
+      shell: payload.shell,
       status: 'starting',
       startedAt: payload.timestamp,
       lines: [],
     }
-    terminalSessions.value.unshift(session)
-    if (!selectedSessionId.value) {
-      selectedSessionId.value = session.id
-    }
+    terminalTabs.value.unshift(tab)
+    trimTerminalTabs()
   }
 
-  session.command = payload.command
-  session.cwd = payload.cwd
-  session.startedAt = payload.timestamp
-  promoteSession(session.id)
-  trimSessionHistory()
-  return session
+  tab.title = payload.title
+  tab.cwd = payload.cwd
+  tab.mode = payload.mode
+  tab.shell = payload.shell
+  tab.startedAt = payload.timestamp
+
+  if (!activeTabId.value) {
+    activeTabId.value = tab.id
+  }
+
+  promoteTab(tab.id)
+  return tab
 }
 
-function promoteSession(sessionId: string) {
-  const index = terminalSessions.value.findIndex(session => session.id === sessionId)
+function promoteTab(sessionId: string) {
+  const index = terminalTabs.value.findIndex(tab => tab.id === sessionId)
   if (index <= 0) {
     return
   }
 
-  const [session] = terminalSessions.value.splice(index, 1)
-  terminalSessions.value.unshift(session)
+  const [tab] = terminalTabs.value.splice(index, 1)
+  terminalTabs.value.unshift(tab)
 }
 
-function trimSessionHistory() {
-  if (terminalSessions.value.length <= MAX_TERMINAL_SESSIONS) {
+function trimTerminalTabs() {
+  if (terminalTabs.value.length <= MAX_TERMINAL_TABS) {
     return
   }
 
-  terminalSessions.value.splice(MAX_TERMINAL_SESSIONS)
+  const removable = terminalTabs.value
+    .map((tab, index) => ({ tab, index }))
+    .reverse()
+    .find(item => item.tab.status !== 'running' && item.tab.status !== 'starting')
+
+  if (removable) {
+    terminalTabs.value.splice(removable.index, 1)
+    return
+  }
+
+  terminalTabs.value.splice(MAX_TERMINAL_TABS)
 }
 
-function appendLine(session: TerminalSessionView, stream: IDETerminalStream, text: string, timestamp: number) {
+function appendLine(tab: TerminalTabView, stream: IDETerminalStream, text: string, timestamp: number) {
   const normalized = normalizeChunk(text)
   if (!normalized) {
     return
   }
 
-  session.lines.push({
-    id: `${session.id}-${session.lines.length + 1}-${timestamp}`,
+  tab.lines.push({
+    id: `${tab.id}-${tab.lines.length + 1}-${timestamp}`,
     stream,
     text: normalized,
     timestamp,
   })
 
-  if (session.lines.length > MAX_TERMINAL_LINES) {
-    const overflow = session.lines.length - MAX_TERMINAL_LINES
-    session.lines.splice(0, overflow)
-    session.lines.unshift({
-      id: `${session.id}-truncated-${timestamp}`,
+  if (tab.lines.length > MAX_TERMINAL_LINES) {
+    const overflow = tab.lines.length - MAX_TERMINAL_LINES
+    tab.lines.splice(0, overflow)
+    tab.lines.unshift({
+      id: `${tab.id}-truncated-${timestamp}`,
       stream: 'system',
-      text: '[system] 早期终端输出已裁剪，避免面板占用过多内存。',
+      text: '[system] 早期终端输出已裁剪，避免面板占用过多内存。\n',
       timestamp,
     })
-    if (session.lines.length > MAX_TERMINAL_LINES) {
-      session.lines.splice(1, session.lines.length - MAX_TERMINAL_LINES)
+    if (tab.lines.length > MAX_TERMINAL_LINES) {
+      tab.lines.splice(1, tab.lines.length - MAX_TERMINAL_LINES)
     }
   }
 
-  if (selectedSessionId.value === session.id) {
+  if (activeTabId.value === tab.id) {
     void scrollConsoleToBottom()
   }
 }
 
-function appendSystemLine(session: TerminalSessionView, text: string) {
-  appendLine(session, 'system', text, Date.now())
+function appendSystemLine(tab: TerminalTabView, text: string) {
+  appendLine(tab, 'system', text.endsWith('\n') ? text : `${text}\n`, Date.now())
 }
 
 async function scrollConsoleToBottom() {
   await nextTick()
   if (consoleRef.value) {
     consoleRef.value.scrollTop = consoleRef.value.scrollHeight
+  }
+}
+
+async function ensureShellTab() {
+  const existingRunningShell = terminalTabs.value.find(tab => tab.mode === 'shell' && tab.status === 'running')
+  if (existingRunningShell) {
+    activeTabId.value = existingRunningShell.id
+    return existingRunningShell
+  }
+
+  return await createShellTab()
+}
+
+async function createShellTab() {
+  const electronAPI = getElectronAPI()
+  if (!supportsNativeTerminal.value || !electronAPI || !props.workspacePath) {
+    return null
+  }
+
+  creatingTerminal.value = true
+  try {
+    const session = await electronAPI.ideCreateTerminalSession({
+      cwd: props.workspacePath,
+      title: `Terminal ${terminalTabs.value.filter(tab => tab.mode === 'shell').length + 1}`,
+    })
+
+    const tab = ensureTabSession({
+      sessionId: session.sessionId,
+      title: session.title,
+      cwd: session.cwd,
+      mode: session.mode,
+      shell: session.shell,
+      timestamp: session.startedAt,
+    })
+
+    tab.status = 'running'
+    activeTabId.value = tab.id
+    appendSystemLine(tab, `[system] 已连接交互式终端：${session.shell}`)
+    return tab
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '终端初始化失败')
+    return null
+  } finally {
+    creatingTerminal.value = false
+  }
+}
+
+async function sendCommandToActiveTab() {
+  const normalizedCommand = commandInput.value.trim()
+  if (!normalizedCommand) {
+    return
+  }
+
+  const currentTab = selectedTab.value
+  const targetTab = !currentTab || currentTab.mode !== 'shell' || currentTab.status !== 'running'
+    ? await ensureShellTab()
+    : currentTab
+
+  if (!targetTab) {
+    showToast('error', '当前没有可写入的终端会话，请先创建终端')
+    return
+  }
+
+  const electronAPI = getElectronAPI()
+  if (!electronAPI) {
+    return
+  }
+
+  const wrote = await electronAPI.ideWriteTerminalInput({
+    sessionId: targetTab.id,
+    input: `${normalizedCommand}\r\n`,
+  })
+
+  if (!wrote) {
+    showToast('error', '命令发送失败，请重新创建终端会话')
+    return
+  }
+
+  targetTab.lastCommand = normalizedCommand
+  appendSystemLine(targetTab, `$ ${normalizedCommand}`)
+  commandInput.value = ''
+  activeTabId.value = targetTab.id
+}
+
+async function runPreset(command: string) {
+  commandInput.value = command
+  await sendCommandToActiveTab()
+}
+
+async function stopActiveTab() {
+  if (!selectedTab.value) {
+    return
+  }
+
+  const electronAPI = getElectronAPI()
+  if (!electronAPI) {
+    return
+  }
+
+  const stopped = selectedTab.value.mode === 'shell'
+    ? await electronAPI.ideCloseTerminalSession(selectedTab.value.id)
+    : await electronAPI.ideCancelCommand(selectedTab.value.id)
+
+  if (!stopped) {
+    showToast('error', '终止终端失败，请稍后重试')
+    return
+  }
+
+  appendSystemLine(selectedTab.value, '[system] 已发送停止请求，等待进程退出...')
+}
+
+async function closeTerminalTab(sessionId: string) {
+  const tab = findTab(sessionId)
+  if (!tab) {
+    return
+  }
+
+  if (tab.status === 'running') {
+    ignoredSessionIds.add(sessionId)
+    const electronAPI = getElectronAPI()
+    const stopped = tab.mode === 'shell'
+      ? await electronAPI?.ideCloseTerminalSession(sessionId)
+      : await electronAPI?.ideCancelCommand(sessionId)
+
+    if (!stopped) {
+      ignoredSessionIds.delete(sessionId)
+      showToast('error', '关闭终端失败，请稍后重试')
+      return
+    }
+  }
+
+  removeTab(sessionId)
+}
+
+function removeTab(sessionId: string) {
+  const currentIndex = terminalTabs.value.findIndex(tab => tab.id === sessionId)
+  if (currentIndex === -1) {
+    return
+  }
+
+  terminalTabs.value.splice(currentIndex, 1)
+  if (activeTabId.value === sessionId) {
+    activeTabId.value = terminalTabs.value[currentIndex]?.id || terminalTabs.value[currentIndex - 1]?.id || terminalTabs.value[0]?.id || ''
+  }
+}
+
+async function resetTerminalTabs() {
+  const sessionIds = terminalTabs.value
+    .filter(tab => tab.status === 'running')
+    .map(tab => tab.id)
+  for (const sessionId of sessionIds) {
+    ignoredSessionIds.add(sessionId)
+    const tab = findTab(sessionId)
+    const electronAPI = getElectronAPI()
+    if (tab?.mode === 'shell') {
+      await electronAPI?.ideCloseTerminalSession(sessionId)
+    } else {
+      await electronAPI?.ideCancelCommand(sessionId)
+    }
+  }
+
+  terminalTabs.value = []
+  activeTabId.value = ''
+  commandInput.value = ''
+}
+
+function clearClosedTabs() {
+  const runningIds = new Set(
+    terminalTabs.value
+      .filter(tab => tab.status === 'running' || tab.status === 'starting')
+      .map(tab => tab.id),
+  )
+
+  terminalTabs.value = terminalTabs.value.filter(tab => runningIds.has(tab.id))
+  if (!activeTabId.value || !runningIds.has(activeTabId.value)) {
+    activeTabId.value = terminalTabs.value[0]?.id || ''
+  }
+}
+
+async function copySelectedOutput() {
+  if (!selectedTab.value) {
+    return
+  }
+
+  const content = selectedTab.value.lines.map(line => line.text).join('')
+  if (!content) {
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(content)
+    showToast('success', '终端输出已复制')
+  } catch {
+    showToast('error', '复制终端输出失败')
   }
 }
 
@@ -319,169 +554,79 @@ function handleTerminalEvent(event: IDETerminalEvent) {
     return
   }
 
-  const session = ensureSession({
+  const tab = ensureTabSession({
     sessionId: event.sessionId,
-    command: event.command,
+    title: event.title || event.command,
     cwd: event.cwd,
+    mode: event.mode || 'command',
+    shell: event.shell || 'shell',
     timestamp: event.timestamp,
   })
 
-  if (!selectedSessionId.value) {
-    selectedSessionId.value = session.id
-  }
-
   if (event.type === 'start') {
-    session.status = 'running'
-    session.error = undefined
-    appendSystemLine(session, `[system] 已启动命令：${event.command}`)
+    tab.status = 'running'
+    tab.error = undefined
     return
   }
 
   if (event.type === 'data' && event.chunk) {
-    appendLine(session, event.stream || 'stdout', event.chunk, event.timestamp)
+    appendLine(tab, event.stream || 'stdout', event.chunk, event.timestamp)
     return
   }
 
-  session.finishedAt = event.timestamp
-  session.exitCode = typeof event.exitCode === 'number' ? event.exitCode : null
-  session.signal = event.signal ?? null
+  tab.finishedAt = event.timestamp
+  tab.exitCode = typeof event.exitCode === 'number' ? event.exitCode : null
+  tab.signal = event.signal ?? null
 
   if (event.type === 'error') {
-    session.status = event.status || 'failed'
-    session.error = event.error || '终端执行失败'
-    appendSystemLine(session, `[system] ${session.error}`)
-    showToast('error', session.error)
+    tab.status = event.status || 'failed'
+    tab.error = event.error || '终端执行失败'
+    appendSystemLine(tab, `[system] ${tab.error}`)
     return
   }
 
-  session.status = event.status || 'completed'
-  if (session.status === 'completed') {
-    appendSystemLine(session, `[system] 命令执行完成，退出码 ${session.exitCode ?? 0}`)
-  } else if (session.status === 'cancelled') {
-    appendSystemLine(session, '[system] 命令已取消')
+  tab.status = event.status || 'completed'
+  if (tab.status === 'completed') {
+    appendSystemLine(tab, `[system] 会话已结束，exit ${tab.exitCode ?? 0}`)
+  } else if (tab.status === 'cancelled') {
+    appendSystemLine(tab, '[system] 会话已停止')
   } else {
-    appendSystemLine(session, `[system] 命令执行失败，退出码 ${session.exitCode ?? 'unknown'}`)
+    appendSystemLine(tab, `[system] 会话异常结束，exit ${tab.exitCode ?? 'unknown'}`)
   }
 }
 
-async function executeCommand(command: string) {
-  const electronAPI = getElectronAPI()
-  if (!supportsNativeTerminal.value || !electronAPI) {
-    showToast('error', '当前环境不支持真实终端执行')
-    return
-  }
+function formatTabMeta(tab: TerminalTabView) {
+  const suffix = tab.mode === 'shell'
+    ? tab.status === 'running'
+      ? '交互'
+      : '已结束'
+    : tab.status === 'running'
+      ? '执行中'
+      : `exit ${tab.exitCode ?? 'unknown'}`
 
-  const normalizedCommand = command.trim()
-  if (!normalizedCommand || !props.workspacePath) {
-    return
-  }
-
-  isLaunching.value = true
-  try {
-    const result = await electronAPI.ideRunCommand({
-      command: normalizedCommand,
-      cwd: props.workspacePath,
-    })
-
-    const session = ensureSession({
-      sessionId: result.sessionId,
-      command: result.command,
-      cwd: result.cwd,
-      timestamp: result.startedAt,
-    })
-
-    session.status = 'running'
-    selectedSessionId.value = session.id
-    commandInput.value = normalizedCommand
-    await scrollConsoleToBottom()
-  } catch (error) {
-    showToast('error', error instanceof Error ? error.message : '终端命令启动失败')
-  } finally {
-    isLaunching.value = false
-  }
+  return `${tab.shell} · ${suffix}`
 }
 
-async function runCustomCommand() {
-  await executeCommand(commandInput.value)
-}
-
-async function runPreset(command: string) {
-  commandInput.value = command
-  await executeCommand(command)
-}
-
-async function stopRunningCommand(notify = true) {
-  const electronAPI = getElectronAPI()
-  if (!runningSession.value || !electronAPI) {
-    return
-  }
-
-  const session = runningSession.value
-  const cancelled = await electronAPI.ideCancelCommand(session.id)
-  if (!cancelled) {
-    showToast('error', '终止命令失败，请稍后重试')
-    return
-  }
-
-  appendSystemLine(session, '[system] 已发送终止请求，等待进程退出...')
-  if (notify) {
-    showToast('info', '已请求停止当前终端命令')
-  }
-}
-
-async function copySelectedOutput() {
-  if (!selectedSession.value) {
-    return
-  }
-
-  const text = selectedSession.value.lines.map(line => line.text).join('')
-  if (!text) {
-    return
-  }
-
-  try {
-    await navigator.clipboard.writeText(text)
-    showToast('success', '终端输出已复制')
-  } catch {
-    showToast('error', '复制终端输出失败')
-  }
-}
-
-function clearTerminalHistory() {
-  terminalSessions.value = []
-  selectedSessionId.value = ''
-}
-
-function formatSessionMeta(session: TerminalSessionView) {
-  const exitSummary = session.status === 'running' || session.status === 'starting'
-    ? '运行中'
-    : session.status === 'completed'
-      ? `退出 ${session.exitCode ?? 0}`
-      : session.status === 'cancelled'
-        ? '已取消'
-        : `失败 ${session.exitCode ?? 'unknown'}`
-
-  return `${new Date(session.startedAt).toLocaleTimeString()} · ${exitSummary}`
-}
-
-function formatSessionState(session: TerminalSessionView) {
-  const duration = session.finishedAt
-    ? ` · ${(Math.max(session.finishedAt - session.startedAt, 0) / 1000).toFixed(1)}s`
+function formatSessionState(tab: TerminalTabView) {
+  const duration = tab.finishedAt
+    ? ` · ${(Math.max(tab.finishedAt - tab.startedAt, 0) / 1000).toFixed(1)}s`
     : ''
 
-  if (session.status === 'running' || session.status === 'starting') {
-    return `执行中${duration}`
+  if (tab.status === 'running' || tab.status === 'starting') {
+    return tab.mode === 'shell'
+      ? `交互终端在线${duration}`
+      : `命令执行中${duration}`
   }
 
-  if (session.status === 'completed') {
-    return `已完成 · exit ${session.exitCode ?? 0}${duration}`
+  if (tab.status === 'completed') {
+    return `已完成 · exit ${tab.exitCode ?? 0}${duration}`
   }
 
-  if (session.status === 'cancelled') {
-    return `已取消${duration}`
+  if (tab.status === 'cancelled') {
+    return `已停止${duration}`
   }
 
-  return `执行失败 · exit ${session.exitCode ?? 'unknown'}${duration}`
+  return `执行失败 · exit ${tab.exitCode ?? 'unknown'}${duration}`
 }
 </script>
 
@@ -490,7 +635,7 @@ function formatSessionState(session: TerminalSessionView) {
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  min-height: 280px;
+  min-height: 320px;
   padding: $spacing-md;
 }
 
@@ -510,6 +655,13 @@ function formatSessionState(session: TerminalSessionView) {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
 }
 
 .terminal-status {
@@ -545,6 +697,74 @@ function formatSessionState(session: TerminalSessionView) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.terminal-tab-strip {
+  display: flex;
+  gap: $spacing-xs;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-xs;
+  min-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: $border-radius-sm;
+  background: rgba(255, 255, 255, 0.5);
+  text-align: left;
+  color: var(--text-primary);
+  transition: transform $transition-fast, border-color $transition-fast, background $transition-fast;
+
+  &.active {
+    border-color: var(--border-active);
+    background: rgba(58, 96, 255, 0.08);
+    transform: translateY(-1px);
+  }
+}
+
+.tab-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+
+  strong,
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  small {
+    color: var(--text-muted);
+  }
+}
+
+.tab-actions {
+  display: flex;
+  align-items: center;
+}
+
+.tab-action {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-secondary);
+  font-size: $font-xs;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
 }
 
 .terminal-controls {
@@ -590,15 +810,13 @@ function formatSessionState(session: TerminalSessionView) {
   flex-wrap: wrap;
 }
 
-.terminal-script-list,
-.terminal-session-list {
+.terminal-script-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: $spacing-sm;
 }
 
-.script-chip,
-.session-chip {
+.script-chip {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -612,6 +830,17 @@ function formatSessionState(session: TerminalSessionView) {
   cursor: pointer;
   transition: transform $transition-fast, border-color $transition-fast, background $transition-fast;
 
+  &:hover:enabled {
+    transform: translateY(-1px);
+    border-color: var(--border-active);
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
   strong,
   span {
     display: block;
@@ -621,102 +850,98 @@ function formatSessionState(session: TerminalSessionView) {
     white-space: nowrap;
   }
 
-  strong {
-    font-size: $font-sm;
-  }
-
   span {
-    font-family: 'Cascadia Code', 'Consolas', monospace;
+    color: var(--text-muted);
     font-size: $font-xs;
-    color: var(--text-secondary);
   }
-
-  &:hover:not(:disabled) {
-    transform: translateY(-1px);
-    border-color: var(--border-active);
-    background: rgba(255, 255, 255, 0.8);
-  }
-
-  &:disabled {
-    opacity: 0.56;
-    cursor: not-allowed;
-  }
-}
-
-.session-chip.active {
-  border-color: rgba(34, 109, 246, 0.4);
-  background: rgba(34, 109, 246, 0.08);
 }
 
 .terminal-console {
-  display: flex;
-  min-height: 220px;
+  min-height: 240px;
   max-height: 360px;
-  flex-direction: column;
-  gap: 8px;
   overflow: auto;
-  border: 1px solid rgba(14, 20, 32, 0.3);
-  border-radius: $border-radius-md;
+  padding: $spacing-md;
+  border-radius: $border-radius-sm;
   background:
-    linear-gradient(180deg, rgba(17, 23, 35, 0.98), rgba(9, 13, 21, 0.98)),
-    radial-gradient(circle at top right, rgba(53, 103, 255, 0.16), transparent 32%);
-  padding: 12px;
-  color: #dbe5ff;
+    linear-gradient(180deg, rgba(10, 15, 26, 0.96), rgba(14, 20, 35, 0.98)),
+    radial-gradient(circle at top right, rgba(72, 149, 239, 0.18), transparent 38%);
+  color: #f8fafc;
   font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
 
-  &--empty {
-    justify-content: center;
-  }
+.terminal-console--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .console-headline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: $spacing-sm;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(219, 229, 255, 0.12);
-  color: #f7f9ff;
-  font-size: $font-xs;
+  margin-bottom: $spacing-sm;
+  padding-bottom: $spacing-sm;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+
+  strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  p {
+    color: rgba(226, 232, 240, 0.72);
+    font-size: 12px;
+  }
+
+  span {
+    color: rgba(191, 219, 254, 0.92);
+    font-size: 12px;
+    white-space: nowrap;
+  }
 }
 
 .console-line {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.5;
-  font-size: $font-xs;
 
   &.is-stdout {
-    color: #dbe5ff;
+    color: #f8fafc;
   }
 
   &.is-stderr {
-    color: #ffb0a8;
+    color: #fca5a5;
   }
 
   &.is-system {
-    color: #9ec2ff;
+    color: #93c5fd;
   }
 }
 
 .terminal-empty {
-  color: rgba(219, 229, 255, 0.76);
-  line-height: 1.7;
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: rgba(226, 232, 240, 0.76);
+
+  p {
+    max-width: 420px;
+    line-height: 1.8;
+  }
 }
 
 @media (max-width: 960px) {
-  .terminal-controls {
-    align-items: stretch;
-  }
-
-  .command-actions {
-    width: 100%;
-    justify-content: flex-start;
+  .terminal-tab {
+    min-width: 180px;
   }
 
   .terminal-console {
-    max-height: 300px;
+    max-height: 320px;
   }
 }
 </style>

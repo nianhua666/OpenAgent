@@ -12,7 +12,7 @@ import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSyst
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import { createSub2ApiDesktopManager } from './sub2apiDesktop'
-import type { AppSettings, IDETerminalEvent, IDETerminalRunRequest, IDETerminalRunResult, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
+import type { AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -37,6 +37,29 @@ import {
   normalizeTTSEngine,
   normalizeTTSModelId
 } from '../src/utils/ttsCatalog'
+
+type NodePtyProcess = {
+  pid: number
+  write(data: string): void
+  onData(listener: (data: string) => void): void
+  onExit(listener: (event: { exitCode: number; signal: number }) => void): void
+  kill(signal?: string): void
+}
+
+type NodePtySpawn = (
+  file: string,
+  args: string[],
+  options: {
+    name?: string
+    cwd: string
+    env: NodeJS.ProcessEnv
+    cols?: number
+    rows?: number
+  },
+) => NodePtyProcess
+
+let nodePtySpawnPromise: Promise<NodePtySpawn | null> | null = null
+let nodePtyLoadError = ''
 
 type RuntimeDataStorageMode = 'auto' | 'custom'
 type WindowDragPoint = { x: number; y: number }
@@ -514,14 +537,18 @@ let lastLive2DCursorKey = ''
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 const activeWindowDrags = new Map<number, { startCursor: WindowDragPoint; startPosition: [number, number] }>()
 const ideTerminalTrackedOwners = new Set<number>()
-const ideTerminalOwnerSessions = new Map<number, string>()
+const ideTerminalOwnerSessions = new Map<number, Set<string>>()
 const ideTerminalProcesses = new Map<string, {
   sessionId: string
   owner: Electron.WebContents
   command: string
+  title: string
   cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
   startedAt: number
-  child: ChildProcess
+  child?: ChildProcess
+  pty?: NodePtyProcess
   cancelRequested: boolean
 }>()
 
@@ -541,17 +568,80 @@ function getSafeKey(key: string) {
   return key.replace(/[^a-zA-Z0-9_-]/g, '_')
 }
 
+async function getNodePtySpawn() {
+  if (!nodePtySpawnPromise) {
+    nodePtySpawnPromise = import('node-pty')
+      .then(module => module.spawn as NodePtySpawn)
+      .catch(error => {
+        nodePtyLoadError = error instanceof Error ? error.message : String(error)
+        return null
+      })
+  }
+
+  return await nodePtySpawnPromise
+}
+
+function assertValidIdeWorkingDirectory(cwd: string | null) {
+  if (!cwd || !existsSync(cwd)) {
+    throw new Error('终端工作目录无效或不存在')
+  }
+
+  const cwdStat = statSync(cwd)
+  if (!cwdStat.isDirectory()) {
+    throw new Error('终端工作目录不是有效文件夹')
+  }
+
+  return cwd
+}
+
 function buildIdeShellCommand(command: string) {
   if (process.platform === 'win32') {
     return {
       file: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', command]
+      args: ['/d', '/s', '/c', command],
+      shell: 'Command Prompt'
     }
   }
 
   return {
     file: process.env.SHELL || '/bin/sh',
-    args: ['-lc', command]
+    args: ['-lc', command],
+    shell: process.env.SHELL || '/bin/sh'
+  }
+}
+
+function buildIdeInteractiveShell() {
+  if (process.platform === 'win32') {
+    return {
+      file: process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/q'],
+      shell: 'Command Prompt'
+    }
+  }
+
+  const shellPath = process.env.SHELL || '/bin/sh'
+  return {
+    file: shellPath,
+    args: ['-i'],
+    shell: shellPath
+  }
+}
+
+function trackIdeTerminalSession(ownerId: number, sessionId: string) {
+  const sessionIds = ideTerminalOwnerSessions.get(ownerId) ?? new Set<string>()
+  sessionIds.add(sessionId)
+  ideTerminalOwnerSessions.set(ownerId, sessionIds)
+}
+
+function untrackIdeTerminalSession(ownerId: number, sessionId: string) {
+  const sessionIds = ideTerminalOwnerSessions.get(ownerId)
+  if (!sessionIds) {
+    return
+  }
+
+  sessionIds.delete(sessionId)
+  if (sessionIds.size === 0) {
+    ideTerminalOwnerSessions.delete(ownerId)
   }
 }
 
@@ -562,7 +652,7 @@ function ensureIdeTerminalOwnerCleanup(owner: Electron.WebContents) {
 
   ideTerminalTrackedOwners.add(owner.id)
   owner.once('destroyed', () => {
-    stopIdeTerminalSessionByOwner(owner.id)
+    stopIdeTerminalSessionsByOwner(owner.id)
     ideTerminalTrackedOwners.delete(owner.id)
   })
 }
@@ -571,7 +661,10 @@ function emitIdeTerminalEvent(entry: {
   owner: Electron.WebContents
   sessionId: string
   command: string
+  title: string
   cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
 }, payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) {
   if (entry.owner.isDestroyed()) {
     return
@@ -581,6 +674,9 @@ function emitIdeTerminalEvent(entry: {
     sessionId: entry.sessionId,
     command: entry.command,
     cwd: entry.cwd,
+    title: entry.title,
+    mode: entry.mode,
+    shell: entry.shell,
     ...payload
   }
 
@@ -594,9 +690,7 @@ function cleanupIdeTerminalSession(sessionId: string) {
   }
 
   ideTerminalProcesses.delete(sessionId)
-  if (ideTerminalOwnerSessions.get(entry.owner.id) === sessionId) {
-    ideTerminalOwnerSessions.delete(entry.owner.id)
-  }
+  untrackIdeTerminalSession(entry.owner.id, sessionId)
 }
 
 function stopIdeTerminalSession(sessionId: string) {
@@ -606,6 +700,19 @@ function stopIdeTerminalSession(sessionId: string) {
   }
 
   entry.cancelRequested = true
+
+  if (entry.pty) {
+    try {
+      entry.pty.kill()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  if (!entry.child) {
+    return false
+  }
 
   if (entry.child.exitCode !== null || entry.child.killed) {
     return true
@@ -631,13 +738,159 @@ function stopIdeTerminalSession(sessionId: string) {
   }
 }
 
-function stopIdeTerminalSessionByOwner(ownerId: number) {
-  const sessionId = ideTerminalOwnerSessions.get(ownerId)
-  if (!sessionId) {
+function stopIdeTerminalSessionsByOwner(ownerId: number) {
+  const sessionIds = ideTerminalOwnerSessions.get(ownerId)
+  if (!sessionIds || sessionIds.size === 0) {
     return false
   }
 
-  return stopIdeTerminalSession(sessionId)
+  let stopped = false
+  for (const sessionId of [...sessionIds]) {
+    stopped = stopIdeTerminalSession(sessionId) || stopped
+  }
+  return stopped
+}
+
+function registerIdeTerminalProcess(entry: {
+  sessionId: string
+  owner: Electron.WebContents
+  command: string
+  title: string
+  cwd: string
+  mode: IDETerminalSessionMode
+  shell: string
+  startedAt: number
+  child?: ChildProcess
+  pty?: NodePtyProcess
+  cancelRequested: boolean
+}) {
+  ideTerminalProcesses.set(entry.sessionId, entry)
+  trackIdeTerminalSession(entry.owner.id, entry.sessionId)
+
+  let finalized = false
+  const finalize = (payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) => {
+    if (finalized) {
+      return
+    }
+
+    finalized = true
+    emitIdeTerminalEvent(entry, payload)
+    cleanupIdeTerminalSession(entry.sessionId)
+  }
+
+  emitIdeTerminalEvent(entry, {
+    type: 'start',
+    timestamp: entry.startedAt,
+    status: 'running'
+  })
+
+  if (entry.pty) {
+    entry.pty.onData((chunk: string) => {
+      if (!chunk) {
+        return
+      }
+
+      emitIdeTerminalEvent(entry, {
+        type: 'data',
+        timestamp: Date.now(),
+        stream: 'stdout',
+        chunk
+      })
+    })
+
+    entry.pty.onExit(({ exitCode, signal }) => {
+      finalize({
+        type: 'exit',
+        timestamp: Date.now(),
+        status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+        exitCode,
+        signal: typeof signal === 'number' && signal > 0 ? String(signal) : null
+      })
+    })
+
+    return
+  }
+
+  if (!entry.child?.stdout || !entry.child.stderr) {
+    throw new Error('终端输出管道初始化失败')
+  }
+
+  entry.child.stdout.setEncoding('utf8')
+  entry.child.stderr.setEncoding('utf8')
+
+  entry.child.stdout.on('data', (chunk: string) => {
+    if (!chunk) {
+      return
+    }
+
+    emitIdeTerminalEvent(entry, {
+      type: 'data',
+      timestamp: Date.now(),
+      stream: 'stdout',
+      chunk
+    })
+  })
+
+  entry.child.stderr.on('data', (chunk: string) => {
+    if (!chunk) {
+      return
+    }
+
+    emitIdeTerminalEvent(entry, {
+      type: 'data',
+      timestamp: Date.now(),
+      stream: 'stderr',
+      chunk
+    })
+  })
+
+  entry.child.on('error', error => {
+    finalize({
+      type: 'error',
+      timestamp: Date.now(),
+      status: entry.cancelRequested ? 'cancelled' : 'failed',
+      error: error.message
+    })
+  })
+
+  entry.child.on('close', (exitCode, signal) => {
+    finalize({
+      type: 'exit',
+      timestamp: Date.now(),
+      status: entry.cancelRequested ? 'cancelled' : exitCode === 0 ? 'completed' : 'failed',
+      exitCode,
+      signal: signal ?? null
+    })
+  })
+}
+
+function createIdeTerminalEntry(
+  owner: Electron.WebContents,
+  runtime: { child?: ChildProcess; pty?: NodePtyProcess },
+  payload: {
+    command: string
+    title: string
+    cwd: string
+    mode: IDETerminalSessionMode
+    shell: string
+  },
+) {
+  const entry = {
+    sessionId: randomUUID(),
+    owner,
+    command: payload.command,
+    title: payload.title,
+    cwd: payload.cwd,
+    mode: payload.mode,
+    shell: payload.shell,
+    startedAt: Date.now(),
+    child: runtime.child,
+    pty: runtime.pty,
+    cancelRequested: false
+  }
+
+  registerIdeTerminalProcess(entry)
+  return entry
 }
 
 function getDataFilePath(key: string) {
@@ -2337,13 +2590,117 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('ide:runCommand', (event, payload?: Partial<IDETerminalRunRequest>) => {
+  ipcMain.handle('ide:createTerminalSession', async (event, payload?: Partial<IDETerminalSessionCreateRequest>) => {
     ensureIdeTerminalOwnerCleanup(event.sender)
 
-    const existingSessionId = ideTerminalOwnerSessions.get(event.sender.id)
-    if (existingSessionId && ideTerminalProcesses.has(existingSessionId)) {
-      throw new Error('当前已有正在运行的 IDE 终端命令，请先停止后再启动新的命令')
+    const cwd = assertValidIdeWorkingDirectory(sanitizeIdePath(payload?.cwd))
+    const launch = buildIdeInteractiveShell()
+    const env = {
+      ...process.env,
+      FORCE_COLOR: '0',
+      npm_config_color: 'false'
     }
+    const ptySpawn = await getNodePtySpawn()
+    const ownerSessions = ideTerminalOwnerSessions.get(event.sender.id)
+    const ownerSessionCount = ownerSessions instanceof Set ? ownerSessions.size : 0
+    const normalizedTitle = typeof payload?.title === 'string' && payload.title.trim()
+      ? payload.title.trim().slice(0, 80)
+      : `Terminal ${ownerSessionCount + 1}`
+
+    let entry: ReturnType<typeof createIdeTerminalEntry>
+    let shellLabel = launch.shell
+
+    if (ptySpawn) {
+      const pty = ptySpawn(launch.file, launch.args, {
+        name: process.platform === 'win32' ? 'xterm-color' : 'xterm-256color',
+        cwd,
+        env,
+        cols: 120,
+        rows: 30
+      })
+      shellLabel = `${launch.shell} · PTY`
+      entry = createIdeTerminalEntry(event.sender, { pty }, {
+        command: normalizedTitle,
+        title: normalizedTitle,
+        cwd,
+        mode: 'shell',
+        shell: shellLabel
+      })
+    } else {
+      const child = spawn(launch.file, launch.args, {
+        cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true
+      })
+
+      if (!child.stdin || !child.stdout || !child.stderr) {
+        throw new Error(nodePtyLoadError ? `交互式终端初始化失败：${nodePtyLoadError}` : '交互式终端初始化失败')
+      }
+
+      child.stdin.setDefaultEncoding('utf8')
+      shellLabel = `${launch.shell} · Pipe`
+      entry = createIdeTerminalEntry(event.sender, { child }, {
+        command: normalizedTitle,
+        title: normalizedTitle,
+        cwd,
+        mode: 'shell',
+        shell: shellLabel
+      })
+    }
+
+    const result: IDETerminalSessionInfo = {
+      sessionId: entry.sessionId,
+      cwd: entry.cwd,
+      title: entry.title,
+      mode: entry.mode,
+      shell: entry.shell,
+      startedAt: entry.startedAt
+    }
+
+    return result
+  })
+
+  ipcMain.handle('ide:writeTerminalInput', (event, payload?: Partial<IDETerminalInputRequest>) => {
+    const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
+    const input = typeof payload?.input === 'string' ? payload.input : ''
+    if (!sessionId || !input || Buffer.byteLength(input, 'utf-8') > 8192) {
+      return false
+    }
+
+    const entry = ideTerminalProcesses.get(sessionId)
+    if (!entry || entry.owner.id !== event.sender.id || entry.mode !== 'shell') {
+      return false
+    }
+
+    if (entry.pty) {
+      entry.pty.write(input)
+      return true
+    }
+
+    if (!entry.child?.stdin || entry.child.stdin.destroyed) {
+      return false
+    }
+
+    entry.child.stdin.write(input)
+    return true
+  })
+
+  ipcMain.handle('ide:closeTerminalSession', (event, sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return false
+    }
+
+    const entry = ideTerminalProcesses.get(sessionId)
+    if (!entry || entry.owner.id !== event.sender.id || entry.mode !== 'shell') {
+      return false
+    }
+
+    return stopIdeTerminalSession(sessionId)
+  })
+
+  ipcMain.handle('ide:runCommand', (event, payload?: Partial<IDETerminalRunRequest>) => {
+    ensureIdeTerminalOwnerCleanup(event.sender)
 
     const command = typeof payload?.command === 'string' ? payload.command.trim() : ''
     const cwd = sanitizeIdePath(payload?.cwd)
@@ -2386,14 +2743,17 @@ app.whenReady().then(() => {
       sessionId,
       owner: event.sender,
       command,
+      title: command,
       cwd,
+      mode: 'command' as const,
+      shell: launch.shell,
       startedAt,
       child,
       cancelRequested: false
     }
 
     ideTerminalProcesses.set(sessionId, entry)
-    ideTerminalOwnerSessions.set(event.sender.id, sessionId)
+    trackIdeTerminalSession(event.sender.id, sessionId)
 
     let finalized = false
     const finalize = (payload: Omit<IDETerminalEvent, 'sessionId' | 'command' | 'cwd'>) => {

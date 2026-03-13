@@ -16,7 +16,14 @@ import { coerceToolArguments } from '@/utils/aiToolArgs'
 import { routeModel, recommendSubAgentModel } from '@/utils/aiModelRouter'
 import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
-import { advanceTask, renderPlanToMarkdown, flushPlanToWorkspace, generateInitialPlanPhases } from '@/utils/aiPlanEngine'
+import {
+  advanceTask,
+  renderPlanToMarkdown,
+  flushPlanToWorkspace,
+  generateInitialPlanPhases,
+  recordPlanWorkspaceSnapshot,
+  replanProjectPlan,
+} from '@/utils/aiPlanEngine'
 import * as devLogger from '@/utils/aiDevLogger'
 
 interface ToolExecutionResult {
@@ -241,7 +248,9 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
     case 'ide_create_plan':
       return ideCreatePlanToolV2(args)
     case 'ide_advance_task':
-      return ideAdvanceTaskTool(args)
+      return ideAdvanceTaskTool(args, context)
+    case 'ide_replan_plan':
+      return ideReplanPlanTool(args, context)
     case 'ide_get_plan':
       return ideGetPlanTool(args)
     case 'ide_log':
@@ -1286,6 +1295,10 @@ async function ideCreatePlanToolV2(args: Record<string, unknown>): Promise<ToolE
     },
   })
 
+  await recordPlanWorkspaceSnapshot(workspace, currentPlan.id, {
+    reason: 'initial-plan',
+    content: `为项目计划「${currentPlan.goal}」记录工作区基线，后续可基于真实 diff、失败反馈与上下文摘要动态重规划。`,
+  })
   await flushPlanToWorkspace(workspace, currentPlan)
 
   return successResult(generationError ? '项目计划草稿已创建，自动任务生成已回退' : '项目计划已创建', {
@@ -1314,6 +1327,10 @@ async function ideCreatePlanTool(args: Record<string, unknown>): Promise<ToolExe
     metadata: { workspaceId: workspace.id },
   })
 
+  await recordPlanWorkspaceSnapshot(workspace, plan.id, {
+    reason: 'initial-plan',
+    content: `为项目计划「${plan.goal}」记录工作区基线，供后续差异识别与动态重规划复用。`,
+  })
   await flushPlanToWorkspace(workspace, plan)
 
   return successResult('项目计划已创建', {
@@ -1322,7 +1339,10 @@ async function ideCreatePlanTool(args: Record<string, unknown>): Promise<ToolExe
   })
 }
 
-async function ideAdvanceTaskTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+async function ideAdvanceTaskTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext = {},
+): Promise<ToolExecutionResult> {
   const planId = normalizeTextValue(args.planId)
   const taskId = normalizeTextValue(args.taskId)
   const statusValue = normalizeTextValue(args.status)
@@ -1349,13 +1369,75 @@ async function ideAdvanceTaskTool(args: Record<string, unknown>): Promise<ToolEx
     return errorResult('更新后未找到当前工作区下的项目计划', { planId })
   }
 
-  await flushPlanToWorkspace(workspace, updatedPlan)
+  let replan: Awaited<ReturnType<typeof replanProjectPlan>> = null
+  if (status === 'failed') {
+    replan = await replanProjectPlan(workspace, planId, {
+      reason: 'task-failed',
+      taskId,
+      failureOutput: output,
+      sessionId: context.sessionId,
+    })
+  }
 
-  return successResult('任务状态已更新', {
+  const effectivePlan = replan?.plan ?? updatedPlan
+  if (!replan) {
+    await flushPlanToWorkspace(workspace, updatedPlan)
+  }
+
+  return successResult(replan ? '任务已标记失败，并已基于失败反馈动态重规划' : '任务状态已更新', {
     planId,
     taskId,
     status,
-    progress: updatedPlan.progress,
+    progress: effectivePlan.progress,
+    ...(replan
+      ? {
+          replan: {
+            summary: replan.summary,
+            diff: replan.diff,
+            createdTasks: replan.createdTasks,
+          },
+        }
+      : {}),
+  })
+}
+
+async function ideReplanPlanTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext = {},
+): Promise<ToolExecutionResult> {
+  const planId = normalizeTextValue(args.planId)
+  const reason = normalizeTextValue(args.reason) || 'manual-tool'
+  const taskId = normalizeTextValue(args.taskId)
+  const failureOutput = normalizeTextValue(args.failureOutput)
+  const contextSummary = normalizeTextValue(args.contextSummary)
+  const { workspace, plan } = planId ? getPlanInActiveWorkspace(planId) : { workspace: null, plan: null }
+
+  if (!workspace || !planId) {
+    return errorResult('动态重规划需要 planId，并且已打开工作区')
+  }
+
+  if (!plan) {
+    return errorResult('未找到当前工作区下的项目计划', { planId })
+  }
+
+  const result = await replanProjectPlan(workspace, planId, {
+    reason,
+    taskId: taskId || undefined,
+    failureOutput: failureOutput || undefined,
+    contextSummary: contextSummary || undefined,
+    sessionId: context.sessionId,
+  })
+
+  if (!result) {
+    return errorResult('项目动态重规划失败', { planId })
+  }
+
+  return successResult('项目计划已完成动态重规划', {
+    plan: result.plan,
+    markdown: renderPlanToMarkdown(result.plan),
+    diff: result.diff,
+    summary: result.summary,
+    createdTasks: result.createdTasks,
   })
 }
 

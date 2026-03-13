@@ -1749,22 +1749,7 @@ export const useAIStore = defineStore('ai', () => {
       }
     }
 
-    // 同步阶段状态
-    for (const phase of plan.phases) {
-      const allCompleted = phase.tasks.length > 0 && phase.tasks.every(t => t.status === 'completed' || t.status === 'skipped')
-      const anyInProgress = phase.tasks.some(t => t.status === 'in-progress')
-      const anyFailed = phase.tasks.some(t => t.status === 'failed')
-
-      if (allCompleted) phase.status = 'completed'
-      else if (anyFailed) phase.status = 'blocked'
-      else if (anyInProgress) phase.status = 'in-progress'
-    }
-
-    // 计算总进度
-    const allTasks = plan.phases.flatMap(p => p.tasks)
-    const doneTasks = allTasks.filter(t => t.status === 'completed' || t.status === 'skipped')
-    plan.progress = allTasks.length > 0 ? Math.round((doneTasks.length / allTasks.length) * 100) : 0
-
+    recalculateProjectPlanProgress(plan)
     plan.updatedAt = Date.now()
     scheduleSave('ai_project_plans', projectPlans.value)
   }

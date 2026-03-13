@@ -12,7 +12,7 @@ import type {
   ProjectTaskStatus,
 } from '@/types'
 import { useAIStore } from '@/stores/ai'
-import { readWorkspaceFile, workspaceFileExists } from '@/utils/aiIDEWorkspace'
+import { readWorkspaceFile, refreshWorkspaceStructure, workspaceFileExists } from '@/utils/aiIDEWorkspace'
 import { genId } from '@/utils/helpers'
 
 type PlanSeed = {
@@ -44,6 +44,52 @@ type PlanningSignals = {
   hasElectron: boolean
   hasTests: boolean
 }
+
+type PlanWorkspaceSnapshotFile = {
+  path: string
+  size: number
+  hash?: string
+}
+
+type PlanWorkspaceSnapshot = {
+  version: 1
+  createdAt: number
+  totalFiles: number
+  files: PlanWorkspaceSnapshotFile[]
+}
+
+type PlanWorkspaceDiff = {
+  added: string[]
+  removed: string[]
+  modified: string[]
+  baselineMissing: boolean
+}
+
+type ReplanProjectOptions = {
+  reason?: string
+  taskId?: string
+  failureOutput?: string
+  contextSummary?: string
+  sessionId?: string
+}
+
+type ReplanProjectResult = {
+  plan: ProjectPlan
+  diff: PlanWorkspaceDiff
+  snapshot: PlanWorkspaceSnapshot
+  summary: string
+  createdTasks: string[]
+}
+
+type SnapshotLogOptions = {
+  reason?: string
+  title?: string
+  content?: string
+}
+
+const PLAN_WORKSPACE_SNAPSHOT_KEY = 'workspace-plan-snapshot'
+const SNAPSHOT_HASH_LIMIT = 80
+const SNAPSHOT_HASH_SIZE_LIMIT = 64 * 1024
 
 // ========== Plan Markdown 渲染 ==========
 
@@ -202,6 +248,87 @@ export async function generateInitialPlanPhases(
       [phase4Task1],
     ),
   ]
+}
+
+export async function recordPlanWorkspaceSnapshot(
+  workspace: IDEWorkspace,
+  planId: string,
+  options: SnapshotLogOptions = {},
+): Promise<PlanWorkspaceSnapshot | null> {
+  const aiStore = useAIStore()
+  const plan = aiStore.getProjectPlan(planId)
+  if (!plan || plan.workspaceId !== workspace.id) {
+    return null
+  }
+
+  const snapshot = await capturePlanWorkspaceSnapshot(workspace, plan)
+  aiStore.addDevLog(planId, {
+    type: 'plan',
+    title: options.title || '记录工作区基线快照',
+    content: options.content || `为计划「${plan.goal}」记录当前工作区基线，共覆盖 ${snapshot.files.length} 个文件。`,
+    metadata: {
+      snapshotKind: PLAN_WORKSPACE_SNAPSHOT_KEY,
+      snapshotReason: options.reason || 'manual',
+      snapshot,
+    },
+  })
+  return snapshot
+}
+
+export async function replanProjectPlan(
+  workspace: IDEWorkspace,
+  planId: string,
+  options: ReplanProjectOptions = {},
+): Promise<ReplanProjectResult | null> {
+  const aiStore = useAIStore()
+  const plan = aiStore.getProjectPlan(planId)
+  if (!plan || plan.workspaceId !== workspace.id) {
+    return null
+  }
+
+  const previousSnapshot = getLatestPlanWorkspaceSnapshot(plan)
+  const currentSnapshot = await capturePlanWorkspaceSnapshot(workspace, plan)
+  const contextSummary = resolveReplanContextSummary(options)
+  const diff = diffPlanWorkspaceSnapshots(previousSnapshot, currentSnapshot)
+  const nextPhases = buildReplannedPhases(plan, diff, {
+    ...options,
+    contextSummary,
+  })
+  const updatedPlan = aiStore.setProjectPlanPhases(planId, nextPhases)
+  if (!updatedPlan) {
+    return null
+  }
+
+  const summary = buildReplanSummary(plan, diff, {
+    ...options,
+    contextSummary,
+  })
+
+  aiStore.addDevLog(planId, {
+    type: 'plan',
+    title: '动态重规划',
+    content: summary,
+    metadata: {
+      snapshotKind: PLAN_WORKSPACE_SNAPSHOT_KEY,
+      snapshotReason: options.reason || 'manual-replan',
+      snapshot: currentSnapshot,
+      diff,
+      taskId: options.taskId || undefined,
+      failureOutput: sanitizeLogText(options.failureOutput, 1200) || undefined,
+      contextSummary: contextSummary || undefined,
+    },
+  })
+
+  await flushPlanToWorkspace(workspace, updatedPlan)
+
+  const replanPhase = updatedPlan.phases.find(phase => phase.name === '动态重规划')
+  return {
+    plan: updatedPlan,
+    diff,
+    snapshot: currentSnapshot,
+    summary,
+    createdTasks: replanPhase?.tasks.map(task => task.title) ?? [],
+  }
 }
 
 /** 获取下一个可执行的任务（依赖全部完成 + 状态为 pending） */
@@ -615,6 +742,468 @@ function createPlanTask(
     status: 'pending',
     order,
   }
+}
+
+async function capturePlanWorkspaceSnapshot(
+  workspace: IDEWorkspace,
+  plan: ProjectPlan,
+): Promise<PlanWorkspaceSnapshot> {
+  await refreshWorkspaceStructure(workspace)
+
+  const structureFiles = (workspace.structure?.files ?? [])
+    .filter(file => file.type === 'file')
+    .map(file => ({
+      path: file.path.replace(/\\/g, '/'),
+      size: Number(file.size || 0) || 0,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path))
+
+  const trackedPaths = getPlanTrackedPaths(plan)
+  const allPaths = uniquePaths([
+    ...trackedPaths,
+    ...structureFiles.map(file => file.path),
+  ], 2400)
+  const pathMeta = new Map(structureFiles.map(file => [file.path, file]))
+  const hashPriorityPaths = new Set(
+    uniquePaths(
+      [
+        ...trackedPaths,
+        ...structureFiles
+          .map(file => file.path)
+          .filter(path => isSnapshotPriorityPath(path)),
+      ],
+      SNAPSHOT_HASH_LIMIT,
+    ),
+  )
+
+  let hashBudget = SNAPSHOT_HASH_LIMIT
+  const files: PlanWorkspaceSnapshotFile[] = []
+
+  for (const path of allPaths) {
+    const meta = pathMeta.get(path)
+    const nextFile: PlanWorkspaceSnapshotFile = {
+      path,
+      size: meta?.size ?? 0,
+    }
+
+    if (hashBudget > 0 && hashPriorityPaths.has(path) && shouldHashSnapshotFile(path, nextFile.size)) {
+      const content = await readWorkspaceFile(workspace, path)
+      if (content !== null) {
+        nextFile.hash = createTextFingerprint(content)
+        hashBudget -= 1
+      }
+    }
+
+    files.push(nextFile)
+  }
+
+  return {
+    version: 1,
+    createdAt: Date.now(),
+    totalFiles: structureFiles.length,
+    files,
+  }
+}
+
+function getLatestPlanWorkspaceSnapshot(plan: ProjectPlan): PlanWorkspaceSnapshot | null {
+  for (let index = plan.devLog.length - 1; index >= 0; index -= 1) {
+    const entry = plan.devLog[index]
+    const metadata = entry.metadata
+    if (!metadata || metadata.snapshotKind !== PLAN_WORKSPACE_SNAPSHOT_KEY) {
+      continue
+    }
+
+    const snapshot = metadata.snapshot
+    if (isPlanWorkspaceSnapshot(snapshot)) {
+      return snapshot
+    }
+  }
+
+  return null
+}
+
+function diffPlanWorkspaceSnapshots(
+  previous: PlanWorkspaceSnapshot | null,
+  current: PlanWorkspaceSnapshot,
+): PlanWorkspaceDiff {
+  if (!previous) {
+    return {
+      added: [],
+      removed: [],
+      modified: [],
+      baselineMissing: true,
+    }
+  }
+
+  const previousMap = new Map(previous.files.map(file => [file.path, file]))
+  const currentMap = new Map(current.files.map(file => [file.path, file]))
+  const added: string[] = []
+  const removed: string[] = []
+  const modified: string[] = []
+
+  for (const [path, currentFile] of currentMap) {
+    const previousFile = previousMap.get(path)
+    if (!previousFile) {
+      added.push(path)
+      continue
+    }
+
+    const sizeChanged = previousFile.size !== currentFile.size
+    const hashChanged = Boolean(previousFile.hash && currentFile.hash && previousFile.hash !== currentFile.hash)
+    if (sizeChanged || hashChanged) {
+      modified.push(path)
+    }
+  }
+
+  for (const path of previousMap.keys()) {
+    if (!currentMap.has(path)) {
+      removed.push(path)
+    }
+  }
+
+  return {
+    added: uniquePaths(added, 12),
+    removed: uniquePaths(removed, 12),
+    modified: uniquePaths(modified, 12),
+    baselineMissing: false,
+  }
+}
+
+function buildReplannedPhases(
+  plan: ProjectPlan,
+  diff: PlanWorkspaceDiff,
+  options: ReplanProjectOptions,
+): ProjectPhase[] {
+  const phases = plan.phases.map(phase => ({
+    ...phase,
+    tasks: phase.tasks.map(task => ({
+      ...task,
+      files: [...task.files],
+      dependencies: [...task.dependencies],
+    })),
+  }))
+
+  const focusedTask = getFocusedTask(plan, options.taskId)
+  const nextTask = getNextExecutableTask(plan)
+  const trackedPaths = new Set(getPlanTrackedPaths(plan))
+  const fallbackPaths = uniquePaths([
+    ...(focusedTask?.files ?? []),
+    ...(nextTask?.files ?? []),
+    ...diff.modified,
+    ...diff.added,
+    'package.json',
+    'src/stores/ai.ts',
+    'src/utils/aiPlanEngine.ts',
+    'src/utils/aiTools.ts',
+    'src/views/IDEView.vue',
+    'docs/tasks/TASKS.md',
+    'CHANGELOG.md',
+  ], 8)
+  const impactedPaths = uniquePaths([
+    ...(focusedTask?.files ?? []),
+    ...diff.modified,
+    ...diff.added,
+    ...fallbackPaths,
+  ], 8)
+  const untrackedPaths = uniquePaths(
+    [...diff.modified, ...diff.added].filter(path => !trackedPaths.has(path)),
+    8,
+  )
+
+  const replanPhaseId = phases.find(phase => phase.name === '动态重规划')?.id || genId()
+  const replanTasks: ProjectTask[] = []
+
+  replanTasks.push(createPlanTask(
+    replanPhaseId,
+    1,
+    focusedTask ? `修复失败任务链路：${focusedTask.title}` : '重新校准当前执行路径',
+    buildReplanFixTaskDescription(diff, options, focusedTask, nextTask),
+    focusedTask?.type || (diff.modified.length > 0 ? 'modify' : 'refactor'),
+    impactedPaths,
+  ))
+
+  if (untrackedPaths.length > 0 || diff.removed.length > 0 || diff.baselineMissing) {
+    replanTasks.push(createPlanTask(
+      replanPhaseId,
+      replanTasks.length + 1,
+      '吸收工作区新增差异并收口集成边界',
+      buildReplanDiffTaskDescription(diff, untrackedPaths),
+      'refactor',
+      uniquePaths([...untrackedPaths, ...diff.removed, ...fallbackPaths], 8),
+      [replanTasks[0].id],
+    ))
+  }
+
+  const validationDependencies = replanTasks.map(task => task.id)
+  replanTasks.push(createPlanTask(
+    replanPhaseId,
+    replanTasks.length + 1,
+    '回归验证动态重规划结果',
+    buildReplanValidationTaskDescription(diff, options),
+    'test',
+    uniquePaths([...impactedPaths, ...fallbackPaths], 8),
+    validationDependencies,
+  ))
+
+  replanTasks.push(createPlanTask(
+    replanPhaseId,
+    replanTasks.length + 1,
+    '同步任务文档与交接记录',
+    '根据动态重规划后的执行路径更新 PLAN、任务文档与关键交付说明，避免计划再次和真实代码脱节。',
+    'docs',
+    uniquePaths(['docs/tasks/TASKS.md', 'CHANGELOG.md', '.openagent/PLAN.md'], 6),
+    [replanTasks[replanTasks.length - 1].id],
+  ))
+
+  const existingIndex = phases.findIndex(phase => phase.name === '动态重规划')
+  const replanPhase = createPlanPhase(
+    replanPhaseId,
+    existingIndex >= 0 ? phases[existingIndex].order : phases.length + 1,
+    '动态重规划',
+    buildReplanPhaseDescription(diff, options, focusedTask),
+    replanTasks,
+  )
+
+  if (existingIndex >= 0) {
+    phases.splice(existingIndex, 1, replanPhase)
+  } else {
+    phases.splice(findReplanInsertIndex(phases), 0, replanPhase)
+  }
+
+  return phases.map((phase, phaseIndex) => ({
+    ...phase,
+    order: phaseIndex + 1,
+    tasks: phase.tasks.map((task, taskIndex) => ({
+      ...task,
+      phaseId: phase.id,
+      order: taskIndex + 1,
+    })),
+  }))
+}
+
+function getFocusedTask(plan: ProjectPlan, taskId?: string) {
+  if (taskId) {
+    const exactTask = findTaskById(plan, taskId)
+    if (exactTask) {
+      return exactTask
+    }
+  }
+
+  return [...plan.phases]
+    .reverse()
+    .flatMap(phase => [...phase.tasks].reverse())
+    .find(task => task.status === 'failed') ?? null
+}
+
+function findTaskById(plan: ProjectPlan, taskId: string) {
+  for (const phase of plan.phases) {
+    const task = phase.tasks.find(item => item.id === taskId)
+    if (task) {
+      return task
+    }
+  }
+
+  return null
+}
+
+function getPlanTrackedPaths(plan: ProjectPlan) {
+  return uniquePaths(
+    plan.phases.flatMap(phase => phase.tasks.flatMap(task => task.files.map(file => file.replace(/\\/g, '/')))),
+    2400,
+  )
+}
+
+function resolveReplanContextSummary(options: ReplanProjectOptions) {
+  if (options.contextSummary?.trim()) {
+    return options.contextSummary.trim()
+  }
+
+  const aiStore = useAIStore()
+  const sessionId = options.sessionId || aiStore.activeSessionId
+  if (!sessionId) {
+    return ''
+  }
+
+  const snapshot = aiStore.getLatestContextSnapshot(sessionId)
+  if (!snapshot) {
+    return ''
+  }
+
+  const parts = [
+    snapshot.summary,
+    snapshot.activeGoals.length > 0 ? `当前目标：${snapshot.activeGoals.join('、')}` : '',
+    snapshot.keyFacts.length > 0 ? `关键事实：${snapshot.keyFacts.slice(0, 3).join('；')}` : '',
+  ].filter(Boolean)
+
+  return parts.join('；')
+}
+
+function buildReplanSummary(
+  plan: ProjectPlan,
+  diff: PlanWorkspaceDiff,
+  options: ReplanProjectOptions,
+) {
+  const focusedTask = getFocusedTask(plan, options.taskId)
+  const summaryParts: string[] = []
+
+  if (focusedTask) {
+    summaryParts.push(`以任务「${focusedTask.title}」为锚点重新校准后续执行路径。`)
+  } else {
+    summaryParts.push('根据最新工作区状态重新校准后续执行路径。')
+  }
+
+  if (diff.baselineMissing) {
+    summaryParts.push('之前没有可复用的工作区快照，本次已先建立新的差异基线。')
+  } else {
+    summaryParts.push(`检测到 ${diff.added.length} 个新增、${diff.modified.length} 个修改、${diff.removed.length} 个移除文件。`)
+  }
+
+  if (options.failureOutput?.trim()) {
+    summaryParts.push(`失败反馈：${sanitizeLogText(options.failureOutput, 220)}。`)
+  }
+
+  if (options.contextSummary?.trim()) {
+    summaryParts.push(`上下文摘要：${sanitizeLogText(options.contextSummary, 220)}。`)
+  }
+
+  return summaryParts.join(' ')
+}
+
+function buildReplanPhaseDescription(
+  diff: PlanWorkspaceDiff,
+  options: ReplanProjectOptions,
+  focusedTask: ProjectTask | null,
+) {
+  const headline = focusedTask
+    ? `围绕任务「${focusedTask.title}」吸收失败反馈、代码差异与上下文信号。`
+    : '围绕真实代码差异、失败反馈与上下文信号重新排列后续执行步骤。'
+  const diffSummary = diff.baselineMissing
+    ? '当前为首次建立工作区差异基线。'
+    : `当前检测到新增 ${diff.added.length}、修改 ${diff.modified.length}、移除 ${diff.removed.length} 个文件。`
+  const contextSummary = options.contextSummary?.trim()
+    ? `上下文重点：${sanitizeLogText(options.contextSummary, 180)}。`
+    : ''
+
+  return [headline, diffSummary, contextSummary].filter(Boolean).join(' ')
+}
+
+function buildReplanFixTaskDescription(
+  diff: PlanWorkspaceDiff,
+  options: ReplanProjectOptions,
+  focusedTask: ProjectTask | null,
+  nextTask: ProjectTask | null,
+) {
+  const anchor = focusedTask
+    ? `优先修复任务「${focusedTask.title}」暴露出的阻塞点`
+    : nextTask
+      ? `围绕下一步任务「${nextTask.title}」重新校准执行边界`
+      : '围绕当前计划重新校准执行边界'
+  const failure = options.failureOutput?.trim()
+    ? `失败反馈：${sanitizeLogText(options.failureOutput, 220)}。`
+    : ''
+  const diffSummary = diff.baselineMissing
+    ? '当前缺少历史快照，先按最新工作区基线重新确认关键文件与依赖。'
+    : `优先核对 ${diff.modified.length + diff.added.length} 个变化文件与现有任务描述是否一致。`
+
+  return [anchor, diffSummary, failure].filter(Boolean).join(' ')
+}
+
+function buildReplanDiffTaskDescription(diff: PlanWorkspaceDiff, untrackedPaths: string[]) {
+  if (diff.baselineMissing) {
+    return '当前计划之前没有差异基线，需要先把最新工作区结构纳入计划，再确认新增文件、移除文件和实际依赖关系。'
+  }
+
+  const parts: string[] = []
+  if (untrackedPaths.length > 0) {
+    parts.push(`将当前计划尚未覆盖的文件纳入执行范围：${untrackedPaths.join('、')}。`)
+  }
+  if (diff.removed.length > 0) {
+    parts.push(`同步处理已移除文件对引用链路的影响：${diff.removed.join('、')}。`)
+  }
+
+  return parts.join(' ') || '吸收最新代码差异，避免新增改动游离在计划之外。'
+}
+
+function buildReplanValidationTaskDescription(
+  diff: PlanWorkspaceDiff,
+  options: ReplanProjectOptions,
+) {
+  const parts = [
+    '基于重规划后的任务结果重新执行构建、关键脚本与高风险交互回归。',
+    diff.baselineMissing
+      ? '重点确认新基线已经正确覆盖当前工作区。'
+      : `重点覆盖新增 ${diff.added.length}、修改 ${diff.modified.length}、移除 ${diff.removed.length} 个文件对应的风险路径。`,
+    options.failureOutput?.trim() ? '需要回归验证失败反馈中提到的问题已被真正修复。' : '',
+  ].filter(Boolean)
+
+  return parts.join(' ')
+}
+
+function findReplanInsertIndex(phases: ProjectPhase[]) {
+  const docsPhaseIndex = phases.findIndex(phase => {
+    if (/文档|交接/.test(phase.name)) {
+      return true
+    }
+
+    return phase.tasks.length > 0 && phase.tasks.every(task => task.type === 'docs')
+  })
+
+  return docsPhaseIndex >= 0 ? docsPhaseIndex : phases.length
+}
+
+function isPlanWorkspaceSnapshot(value: unknown): value is PlanWorkspaceSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const snapshot = value as Partial<PlanWorkspaceSnapshot>
+  return snapshot.version === 1
+    && typeof snapshot.createdAt === 'number'
+    && typeof snapshot.totalFiles === 'number'
+    && Array.isArray(snapshot.files)
+}
+
+function isSnapshotPriorityPath(path: string) {
+  return path === 'package.json'
+    || path === 'CHANGELOG.md'
+    || path === 'docs/tasks/TASKS.md'
+    || path.startsWith('src/')
+    || path.startsWith('electron/')
+    || path.startsWith('docs/')
+    || path.startsWith('.github/')
+    || path.startsWith('.openagent/')
+}
+
+function shouldHashSnapshotFile(path: string, size: number) {
+  if (size <= 0 || size > SNAPSHOT_HASH_SIZE_LIMIT) {
+    return false
+  }
+
+  return /\.(?:vue|ts|tsx|js|jsx|json|md|scss|css|html|yml|yaml|ps1|cjs|mjs)$/i.test(path)
+    || path === 'package.json'
+}
+
+function createTextFingerprint(content: string) {
+  let hash = 2166136261
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+function sanitizeLogText(content: string | undefined, limit: number) {
+  if (!content) {
+    return ''
+  }
+
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= limit) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, limit).trim()}…`
 }
 
 async function readWorkspacePackageJson(workspace: IDEWorkspace): Promise<WorkspacePackageJson | null> {

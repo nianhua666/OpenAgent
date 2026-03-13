@@ -2959,7 +2959,7 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
         type: 'function',
         function: {
           name: 'ide_advance_task',
-          description: '更新项目计划中某个任务的状态。自动同步阶段进度和开发日志。',
+          description: '更新项目计划中某个任务的状态。自动同步阶段进度和开发日志；若任务失败，会结合失败反馈和当前上下文自动触发动态重规划。',
           parameters: {
             type: 'object',
             properties: {
@@ -2969,6 +2969,24 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
               output: { type: 'string', description: '任务输出或说明' }
             },
             required: ['planId', 'taskId', 'status']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ide_replan_plan',
+          description: '基于真实代码 diff、失败反馈与上下文摘要重新规划当前项目计划。适合计划已漂移、任务失败或需要重新排序执行路径时调用。',
+          parameters: {
+            type: 'object',
+            properties: {
+              planId: { type: 'string', description: '计划 ID' },
+              reason: { type: 'string', description: '触发重规划的原因，如 task-failed、manual-review、workspace-drift' },
+              taskId: { type: 'string', description: '可选：关联的任务 ID' },
+              failureOutput: { type: 'string', description: '可选：失败日志、构建报错或回归现象' },
+              contextSummary: { type: 'string', description: '可选：希望纳入重规划的上下文摘要' }
+            },
+            required: ['planId']
           }
         }
       },
