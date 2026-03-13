@@ -115,7 +115,7 @@
               <Sub2ApiAgentBridge />
             </div>
 
-            <div ref="messagesRef" class="chat-panel-scroll">
+            <div ref="messagesRef" class="chat-panel-scroll" @click="handleRichTextClick">
               <details v-if="currentTask" class="task-board">
                 <summary class="task-board-summary">
                   <div class="task-board-header">
@@ -174,7 +174,7 @@
                       {{ roleLabel(msg.role) }}
                     </div>
                     <div class="msg-text">
-                      <div v-html="renderMarkdown(msg.content)"></div>
+                      <div v-html="renderRichTextContent(msg.content)"></div>
                       <div v-if="canPlayAssistantReply(msg)" class="msg-inline-actions">
                         <button class="voice-btn" :class="{ active: playingMessageId === msg.id }" @click="playAssistantMessage(msg)">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -185,7 +185,7 @@
                       </div>
                       <details v-if="msg.reasoningContent" class="msg-reasoning">
                         <summary>模型思考过程</summary>
-                        <div v-html="renderMarkdown(msg.reasoningContent)"></div>
+                        <div v-html="renderRichTextContent(msg.reasoningContent)"></div>
                       </details>
                       <div v-if="msg.attachments?.length" class="msg-attachment-grid">
                         <button v-for="attachment in msg.attachments" :key="attachment.id" class="msg-attachment-card" @click="openAttachmentPreview(attachment)">
@@ -210,10 +210,10 @@
               <div v-if="aiStore.streaming" class="detail-msg is-assistant is-streaming">
                 <div class="msg-role-badge is-assistant">AI</div>
                 <div class="msg-text">
-                  <div v-html="renderMarkdown(streamingContent)"></div>
+                  <div v-html="renderRichTextContent(streamingContent)"></div>
                   <details v-if="streamingReasoningContent" class="msg-reasoning is-live" open>
                     <summary>模型思考过程</summary>
-                    <div v-html="renderMarkdown(streamingReasoningContent)"></div>
+                    <div v-html="renderRichTextContent(streamingReasoningContent)"></div>
                   </details>
                   <div class="streaming-indicator">
                     <span></span>
@@ -278,8 +278,8 @@
                 <div class="composer-control-content">
                   <div class="composer-model-row">
                     <span class="control-label">当前模型</span>
-                    <select class="control-select" :value="aiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
-                      <option v-if="!aiConfig.model" value="">请先选择模型</option>
+                    <select class="control-select" :value="runtimeAiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
+                      <option v-if="!runtimeAiConfig.model" value="">请先选择模型</option>
                       <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
                         {{ model.label }}
                       </option>
@@ -406,6 +406,7 @@ import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 import dayjs from 'dayjs'
@@ -440,6 +441,7 @@ type SessionListItem = AIChatSession & {
 }
 
 const aiConfig = computed(() => aiStore.config)
+const workspaceRoot = computed(() => aiStore.ideWorkspace?.rootPath || '')
 const mainSessions = computed(() => aiStore.getSortedSessions('main'))
 const live2dSessions = computed(() => aiStore.getSortedSessions('live2d'))
 const combinedSessions = computed<SessionListItem[]>(() => {
@@ -463,6 +465,7 @@ const combinedSessions = computed<SessionListItem[]>(() => {
   return [...normalizedLive2D, ...normalizedMain]
 })
 const currentSession = computed(() => selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null)
+const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || selectedScope.value))
 const currentTask = computed(() => currentSession.value ? aiStore.getLatestTaskForSession(currentSession.value.id) : null)
 const streamingContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.content : ''))
 const streamingReasoningContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.reasoningContent : ''))
@@ -491,21 +494,21 @@ const canRefreshModels = computed(() => {
   return aiConfig.value.apiKey.trim().length > 0
 })
 const currentModelMeta = computed(() => {
-  const matchedModel = availableAiModels.value.find(model => model.name === aiConfig.value.model)
+  const matchedModel = availableAiModels.value.find(model => model.name === runtimeAiConfig.value.model || model.id === runtimeAiConfig.value.model)
   if (matchedModel) {
     return matchedModel
   }
 
-  if (!aiConfig.value.model.trim()) {
+  if (!runtimeAiConfig.value.model.trim()) {
     return null
   }
 
   return {
-    id: aiConfig.value.model,
-    name: aiConfig.value.model,
-    label: aiConfig.value.model,
-    capabilities: inferModelCapabilities(aiConfig.value.model, aiConfig.value.protocol),
-    limits: inferModelLimits(aiConfig.value.model, aiConfig.value.protocol)
+    id: runtimeAiConfig.value.model,
+    name: runtimeAiConfig.value.model,
+    label: runtimeAiConfig.value.model,
+    capabilities: inferModelCapabilities(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol),
+    limits: inferModelLimits(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol)
   } satisfies AIProviderModel
 })
 const currentModelBadges = computed(() => {
@@ -525,8 +528,8 @@ const currentModelBadges = computed(() => {
     ...getModelLimitLabels(currentModelMeta.value?.limits)
   ]
 })
-const currentModelLabel = computed(() => currentModelMeta.value?.label || aiConfig.value.model.trim() || '未选择')
-const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(aiConfig.value))
+const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
+const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
     return false
@@ -655,6 +658,10 @@ function renderMarkdown(content: string): string {
     .replace(/\n/g, '<br>')
 }
 
+function handleRichTextClick(event: MouseEvent) {
+  void handleRichTextActivation(event, { workspaceRoot: workspaceRoot.value })
+}
+
 function scrollToBottom() {
   nextTick(() => {
     requestAnimationFrame(() => {
@@ -727,15 +734,24 @@ async function refreshModelOptions() {
 
 async function handleModelChange(modelName: string) {
   const nextModel = modelName.trim()
-  if (!nextModel || nextModel === aiConfig.value.model) {
+  if (!nextModel || nextModel === runtimeAiConfig.value.model) {
     return
   }
 
   const previousRecommended = recommendedAutoSteps.value
-  await aiStore.updateConfig({ model: nextModel })
+  const currentAgent = currentSession.value ? aiStore.getSessionAgent(currentSession.value) : aiStore.getSelectedAgent(selectedScope.value)
+  if (currentAgent) {
+    await aiStore.upsertAgentProfile({
+      ...currentAgent,
+      preferredModel: nextModel
+    })
+    showToast('success', `已为角色 ${currentAgent.name} 切换模型：${nextModel}`)
+  } else {
+    await aiStore.updateConfig({ model: nextModel })
+  }
 
   if (aiStore.preferences.maxAutoSteps === previousRecommended) {
-    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.config) })
+    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.getEffectiveConfig(currentSession.value || selectedScope.value)) })
   }
 }
 
@@ -1792,6 +1808,20 @@ onBeforeUnmount(() => {
     background: rgba(0, 0, 0, 0.06);
     font-size: 11px;
   }
+}
+
+:deep(.oa-rich-link) {
+  color: color-mix(in srgb, var(--primary) 80%, white 12%);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:deep(.oa-rich-link.is-path) {
+  color: #2c7cff;
+}
+
+:deep(.oa-rich-muted) {
+  color: var(--text-muted);
 }
 
 .msg-inline-actions {

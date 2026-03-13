@@ -2888,6 +2888,44 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
         }
       }
     },
+    {
+      type: 'function',
+      function: {
+        name: 'delegate_model_task',
+        description: '为当前 Agent 创建一次受控的模型委派：先结合当前接口支持的模型列表选择或确认目标模型，再让该模型基于当前会话上下文与最近附件完成单轮分析/多模态处理，最后把结果回流给主 Agent 继续对话。',
+        parameters: {
+          type: 'object',
+          properties: {
+            task: { type: 'string', description: '要委派给目标模型处理的任务描述' },
+            model: { type: 'string', description: '可选：显式指定目标模型；未指定时会自动路由' },
+            requiredCapabilities: {
+              type: 'array',
+              items: { type: 'string', enum: ['vision', 'thinking', 'toolUse', 'imageInput', 'taskPlanning', 'mcpControl'] },
+              description: '可选：强约束所需能力'
+            },
+            includeLatestAttachments: { type: 'boolean', description: '是否把当前会话最近一条带附件的消息一并交给目标模型，默认 true' },
+            note: { type: 'string', description: '可选：告诉被委派模型需要特别关注的约束、输出格式或边界' }
+          },
+          required: ['task']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'agent_write_artifact',
+        description: '把 Markdown、计划、报告、脚本或其他文本产物写入当前 Agent 的独立产物目录；如用户指定了目标根目录，也可改写到指定目录。',
+        parameters: {
+          type: 'object',
+          properties: {
+            relativePath: { type: 'string', description: '相对产物路径，例如 reports/review.md 或 prompts/system.txt' },
+            content: { type: 'string', description: '要写入的文本内容' },
+            targetRoot: { type: 'string', description: '可选：用户指定的绝对根目录；未提供时使用当前 Agent 默认产物目录' }
+          },
+          required: ['relativePath', 'content']
+        }
+      }
+    },
   )
 
   if (isAgentMode && agentCapabilities?.fileControlEnabled && aiStore.ideWorkspace) {
@@ -3266,7 +3304,8 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
   const windowsMcpToolNames = new Set(['execute_command', 'read_screen', 'mouse_click', 'keyboard_input', 'list_windows', 'focus_window'])
   const mcpRegistryToolNames = new Set(['install_mcp_server', 'refresh_mcp_server_tools', 'set_mcp_server_enabled', 'remove_mcp_server'])
   const skillRegistryToolNames = new Set(['upsert_ai_skill', 'set_ai_skill_enabled', 'remove_ai_skill'])
-  const blockedAgentModeTools = new Set(['route_model', 'spawn_sub_agent', 'get_sub_agent_status'])
+  const blockedAgentModeTools = new Set(['spawn_sub_agent', 'get_sub_agent_status'])
+  const safeConversationTools = new Set(['route_model', 'delegate_model_task', 'agent_write_artifact'])
 
   return toolList.filter(tool => {
     const name = tool.function.name
@@ -3276,7 +3315,11 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
     }
 
     if (agentCapabilities.conversationOnly) {
-      return name === 'remember' ? agentCapabilities.memoryEnabled : false
+      if (name === 'remember') {
+        return agentCapabilities.memoryEnabled
+      }
+
+      return safeConversationTools.has(name)
     }
 
     if (name === 'remember') {

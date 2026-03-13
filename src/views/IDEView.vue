@@ -10,7 +10,17 @@
       <div class="header-actions">
         <button class="mode-pill ghost" @click="openAgentView">Agent</button>
         <button class="mode-pill active">IDE</button>
-        <button class="btn btn-secondary btn-sm" @click="openWorkspacePicker">{{ workspace ? '切换工作区' : '打开工作区' }}</button>
+        <select
+          v-if="workspaceList.length > 0"
+          class="workspace-select"
+          :value="workspace?.id || ''"
+          @change="handleWorkspaceSwitch(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="item in workspaceList" :key="item.id" :value="item.id">
+            {{ item.name }}
+          </option>
+        </select>
+        <button class="btn btn-secondary btn-sm" @click="openWorkspacePicker">{{ workspace ? '新建工作区' : '打开工作区' }}</button>
         <button class="btn btn-ghost btn-sm" :disabled="!workspace || refreshingWorkspace" @click="refreshWorkspaceState()">刷新结构</button>
       </div>
     </section>
@@ -18,12 +28,21 @@
     <section v-if="!workspace" class="ide-onboarding glass-panel">
       <div class="onboarding-copy">
         <strong>当前还没有绑定工作区</strong>
-        <p>先选择一个项目目录。绑定后，IDE 模式会扫描项目结构、打开文件、同步计划和开发日志。</p>
+        <p>先选择一个项目目录，再选择该工作区的基础产物目录。绑定后，IDE 模式会扫描项目结构、打开文件、同步计划和开发日志，并把产物优先写入独立目录。</p>
       </div>
       <button class="btn btn-primary" @click="openWorkspacePicker">选择项目目录</button>
     </section>
 
     <template v-else>
+      <section class="workspace-overview glass-panel">
+        <div class="workspace-overview-copy">
+          <strong>{{ workspace.name }}</strong>
+          <span>项目目录：{{ workspace.rootPath }}</span>
+          <span>产物目录：{{ workspace.artifactRootPath }}</span>
+          <small>当前共 {{ workspaceList.length }} 个工作区，终端、计划、编辑会话会按工作区独立运行。</small>
+        </div>
+      </section>
+
       <div class="ide-shell">
         <IDEActivityBar
           :workspace-ready="Boolean(workspace)"
@@ -130,6 +149,7 @@ import type { AutonomyRun, IDEEditorSession, PlanStatus, ProjectPlanDriftSummary
 import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
 import { syncAutonomyRunState } from '@/utils/aiAutonomyScheduler'
 import { buildPlanExecutionPacket, flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
+import { getSuggestedWorkspaceArtifactRoot } from '@/utils/runtimeDirectories'
 import { showToast } from '@/utils/toast'
 
 interface EditorTabState {
@@ -195,6 +215,7 @@ let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
 let syncingEditorSession = false
 
 const workspace = computed(() => aiStore.ideWorkspace)
+const workspaceList = computed(() => aiStore.getIDEWorkspaces())
 const workspacePlans = computed(() => {
   if (!workspace.value) {
     return []
@@ -455,6 +476,9 @@ watch(dirtyFileCount, (nextCount, previousCount) => {
 
 onMounted(async () => {
   aiStore.setAgentMode('ide')
+  if (!aiStore.loaded) {
+    await aiStore.init()
+  }
   window.addEventListener('beforeunload', handleBeforeUnload)
   await loadWorkspaceScripts()
   await refreshSelectedPlanDrift({ silent: true })
@@ -482,13 +506,40 @@ function openAgentView() {
   void router.push('/ai')
 }
 
+function getWorkspaceNameFromRootPath(rootPath: string) {
+  return rootPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'workspace'
+}
+
+function shouldConfirmWorkspaceSwitch() {
+  return dirtyFileCount.value > 0
+    && !window.confirm('当前有未保存文件，切换工作区会关闭这些编辑标签。是否继续？')
+}
+
+function handleWorkspaceSwitch(workspaceId: string) {
+  if (!workspaceId || workspaceId === workspace.value?.id) {
+    return
+  }
+
+  if (shouldConfirmWorkspaceSwitch()) {
+    return
+  }
+
+  const nextWorkspace = aiStore.switchIDEWorkspace(workspaceId)
+  if (!nextWorkspace) {
+    showToast('error', '工作区切换失败')
+    return
+  }
+
+  showToast('success', `已切换工作区：${nextWorkspace.name}`)
+}
+
 async function openWorkspacePicker() {
   if (!window.electronAPI?.chooseDirectory) {
     showToast('error', '当前环境不支持打开本地目录')
     return
   }
 
-  if (dirtyFileCount.value > 0 && !window.confirm('当前有未保存文件，切换工作区会关闭这些编辑标签。是否继续？')) {
+  if (shouldConfirmWorkspaceSwitch()) {
     return
   }
 
@@ -497,7 +548,14 @@ async function openWorkspacePicker() {
     return
   }
 
-  const nextWorkspace = await openWorkspace(selectedPath)
+  const suggestedArtifactRoot = await getSuggestedWorkspaceArtifactRoot(getWorkspaceNameFromRootPath(selectedPath))
+  const artifactRootPath = await window.electronAPI.chooseDirectory('选择工作区基础产物目录', suggestedArtifactRoot)
+  if (!artifactRootPath) {
+    showToast('warning', '已取消创建工作区：必须为工作区选择独立的基础产物目录')
+    return
+  }
+
+  const nextWorkspace = await openWorkspace(selectedPath, artifactRootPath)
   if (!nextWorkspace) {
     showToast('error', '工作区打开失败，请确认目录可读')
     return
@@ -1768,6 +1826,16 @@ async function handleReplanPlan(planId: string) {
   justify-content: flex-end;
 }
 
+.workspace-select {
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  font: inherit;
+}
+
 .mode-pill {
   padding: 8px 14px;
   border: 1px solid var(--border);
@@ -1796,6 +1864,25 @@ async function handleReplanPlan(planId: string) {
   justify-content: space-between;
   gap: $spacing-lg;
   padding: $spacing-xl;
+}
+
+.workspace-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-lg;
+  padding: $spacing-md $spacing-lg;
+}
+
+.workspace-overview-copy {
+  display: grid;
+  gap: 6px;
+
+  span,
+  small {
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
 }
 
 .onboarding-copy {

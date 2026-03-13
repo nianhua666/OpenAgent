@@ -2,7 +2,7 @@
  * AI 工具执行器
  * 接收AI返回的工具调用，路由到对应的实际操作
  */
-import type { AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, AIProviderModel, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
+import type { AIChatMessage, AIToolCall, Account, AccountType, AIChatAttachment, AITaskStep, AIProviderModel, DevLogEntry, MCPScreenCaptureInfo, MCPWindowInfo, PlanStatus, ProjectTaskStatus } from '@/types'
 import { useAccountStore } from '@/stores/account'
 import { useAccountTypeStore } from '@/stores/accountType'
 import { useAIStore } from '@/stores/ai'
@@ -15,10 +15,11 @@ import { listLocalLive2DModels } from '@/utils/live2d'
 import { coerceToolArguments } from '@/utils/aiToolArgs'
 import { routeModel, recommendSubAgentModel } from '@/utils/aiModelRouter'
 import { spawnAndRunSubAgent } from '@/utils/aiSubAgent'
-import { fetchAvailableModels } from '@/utils/ai'
+import { chatCompletion, fetchAvailableModels } from '@/utils/ai'
 import { buildSharedContext } from '@/utils/aiContextEngine'
 import { readWorkspaceFile, writeWorkspaceFile, searchFiles } from '@/utils/aiIDEWorkspace'
 import { syncAutonomyRunState } from '@/utils/aiAutonomyScheduler'
+import { joinRuntimePath, resolveAgentStorageLayout, sanitizeDirectorySegment } from '@/utils/runtimeDirectories'
 import {
   advanceTask,
   buildPlanExecutionPacket,
@@ -313,6 +314,10 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
     // Agent 增强工具
     case 'route_model':
       return routeModelTool(args)
+    case 'delegate_model_task':
+      return delegateModelTaskTool(args, context)
+    case 'agent_write_artifact':
+      return agentWriteArtifactTool(args, context)
     case 'spawn_sub_agent':
       return spawnSubAgentTool(args, context)
     case 'get_sub_agent_status':
@@ -1133,6 +1138,185 @@ async function routeModelTool(args: Record<string, unknown>): Promise<ToolExecut
     availableModelCount: modelCatalog.models.length,
     catalogSource: modelCatalog.source,
     ...(modelCatalog.warning ? { warning: modelCatalog.warning } : {}),
+  })
+}
+
+function normalizeRequiredCapabilities(value: unknown) {
+  const allowedCapabilities = new Set(['vision', 'thinking', 'toolUse', 'imageInput', 'taskPlanning', 'mcpControl'])
+  return normalizeStringArray(value).filter(item => allowedCapabilities.has(item))
+}
+
+function normalizeArtifactRelativePath(value: string) {
+  const normalized = value.replace(/\\/g, '/').trim().replace(/^\/+/, '')
+  if (!normalized || normalized.includes('..')) {
+    return ''
+  }
+
+  return normalized
+    .split('/')
+    .filter(Boolean)
+    .map(segment => {
+      const dotIndex = segment.lastIndexOf('.')
+      const stem = dotIndex > 0 ? segment.slice(0, dotIndex) : segment
+      const extension = dotIndex > 0 ? segment.slice(dotIndex).replace(/[^.a-z0-9_-]/gi, '') : ''
+      return `${sanitizeDirectorySegment(stem || 'artifact', 'artifact')}${extension}`
+    })
+    .join('/')
+}
+
+function getToolContextSession(context: ToolExecutionContext) {
+  const aiStore = useAIStore()
+  const sessionId = context.sessionId || aiStore.activeSessionId
+  return sessionId ? aiStore.getSessionById(sessionId) : null
+}
+
+function getLatestAttachmentCarrier(sessionId: string) {
+  const aiStore = useAIStore()
+  const session = aiStore.getSessionById(sessionId)
+  if (!session) {
+    return null
+  }
+
+  return [...session.messages]
+    .reverse()
+    .find(message => Array.isArray(message.attachments) && message.attachments.length > 0) ?? null
+}
+
+async function delegateModelTaskTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const session = getToolContextSession(context)
+  const task = normalizeTextValue(args.task)
+  const requestedModel = normalizeTextValue(args.model)
+  const note = normalizeTextValue(args.note)
+  const includeLatestAttachments = args.includeLatestAttachments !== false
+
+  if (!task) {
+    return errorResult('模型委派需要提供 task')
+  }
+
+  const baseConfig = aiStore.getEffectiveConfig(session || 'main')
+  const modelCatalog = await resolveAvailableModelsForRouting()
+  if (modelCatalog.models.length === 0) {
+    return errorResult('当前接口没有可用模型，无法执行模型委派')
+  }
+
+  const matchedRequestedModel = requestedModel
+    ? modelCatalog.models.find(model => model.id === requestedModel || model.name === requestedModel || model.label === requestedModel) ?? null
+    : null
+  const requiredCapabilities = normalizeRequiredCapabilities(args.requiredCapabilities)
+  const recommended = routeModel(
+    task,
+    modelCatalog.models,
+    baseConfig.protocol,
+    {
+      requiredCapabilities: requiredCapabilities as Array<'vision' | 'thinking' | 'toolUse' | 'imageInput' | 'taskPlanning' | 'mcpControl'>,
+    },
+  )
+
+  const delegatedModel = matchedRequestedModel?.id || recommended?.model || baseConfig.model
+  const selectionMode = matchedRequestedModel ? 'manual' : recommended?.model ? 'router' : 'fallback'
+  const selectionReason = matchedRequestedModel
+    ? `显式指定委派模型：${matchedRequestedModel.label || matchedRequestedModel.id}`
+    : recommended?.reason || `未命中更优路由，回退到当前模型 ${delegatedModel}`
+
+  const delegateMessages: AIChatMessage[] = [
+    {
+      id: 'delegate-system',
+      role: 'system' as const,
+      content: [
+        '你是主 Agent 创建的一次性模型委派执行器。',
+        '只完成当前委派任务，不要调用工具，不要改写用户意图，不要假装已经执行桌面或文件操作。',
+        '输出应尽量结构化，直接给出结论、关键依据、风险与建议下一步。',
+      ].join('\n'),
+      timestamp: 0,
+    },
+    {
+      id: 'delegate-user',
+      role: 'user' as const,
+      content: [
+        `委派任务：${task}`,
+        note ? `补充约束：${note}` : '',
+        session?.summary ? `当前会话长摘要：${session.summary}` : '',
+        session?.id ? `共享上下文：\n${buildSharedContext(session.id)}` : '',
+      ].filter(Boolean).join('\n\n'),
+      timestamp: 0,
+      attachments: [],
+    },
+  ]
+
+  if (session?.id && includeLatestAttachments) {
+    const latestAttachmentCarrier = getLatestAttachmentCarrier(session.id)
+    if (latestAttachmentCarrier?.attachments?.length) {
+      delegateMessages[1].attachments = latestAttachmentCarrier.attachments
+    }
+  }
+
+  const delegatedConfig = {
+    ...baseConfig,
+    model: delegatedModel,
+  }
+
+  const result = await chatCompletion(
+    delegatedConfig,
+    delegateMessages,
+    { ...aiStore.preferences, autoMemory: false },
+    { includeTools: false },
+  )
+
+  return successResult('模型委派已完成', {
+    selectedModel: delegatedModel,
+    selectionMode,
+    selectionReason,
+    availableModelCount: modelCatalog.models.length,
+    catalogSource: modelCatalog.source,
+    content: result.content,
+    reasoningContent: result.reasoningContent || '',
+    requiredCapabilities,
+    attachmentCount: delegateMessages[1].attachments?.length || 0,
+    ...(modelCatalog.warning ? { warning: modelCatalog.warning } : {}),
+  })
+}
+
+async function agentWriteArtifactTool(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolExecutionResult> {
+  const aiStore = useAIStore()
+  const session = getToolContextSession(context)
+  const agent = session ? aiStore.getSessionAgent(session) : aiStore.getSelectedAgent('main')
+  const relativePath = normalizeArtifactRelativePath(normalizeTextValue(args.relativePath))
+  const content = typeof args.content === 'string' ? args.content : ''
+  const requestedRoot = normalizeTextValue(args.targetRoot)
+
+  if (!relativePath) {
+    return errorResult('写入 Agent 产物需要提供合法的 relativePath，且不能包含 ..')
+  }
+
+  if (!window.electronAPI?.ideWriteFile) {
+    return errorResult('当前环境不支持写入本地产物目录')
+  }
+
+  const storage = await resolveAgentStorageLayout(
+    agent?.id || 'agent',
+    agent?.name,
+    requestedRoot || agent?.preferredArtifactRoot,
+  )
+  const targetPath = joinRuntimePath(storage.artifactsDirectory, relativePath)
+  const saved = await window.electronAPI.ideWriteFile(targetPath, content)
+  if (!saved) {
+    return errorResult('Agent 产物写入失败', { path: targetPath })
+  }
+
+  return successResult('Agent 产物已写入', {
+    agentId: agent?.id || 'agent',
+    agentName: agent?.name || 'Agent',
+    path: targetPath,
+    dataDirectory: storage.dataDirectory,
+    artifactsDirectory: storage.artifactsDirectory,
+    bytes: content.length,
   })
 }
 

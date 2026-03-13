@@ -64,7 +64,7 @@
           :streaming="aiStore.streaming"
           :send-disabled="sendButtonDisabled"
           :current-model-label="currentModelLabel"
-          :current-model-name="aiConfig.model"
+          :current-model-name="runtimeAiConfig.model"
           :available-models="availableAiModels"
           :loading-models="loadingAiModels"
           :can-refresh-models="canRefreshModels"
@@ -86,6 +86,7 @@
         <AgentTaskBoard :task="currentTask" :plan="latestPlan" />
         <AgentProfileManager
           :agents="agentProfiles"
+          :available-models="availableAiModels"
           :selected-agent-id="selectedAgentId"
           :current-agent-id="currentSessionAgentId"
           :current-scope="selectedScope"
@@ -171,6 +172,7 @@ const currentTask = computed(() => (currentSession.value ? aiStore.getLatestTask
 const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
 const currentSessionAgentId = computed(() => currentSessionAgent.value?.id || '')
 const currentAgent = computed(() => currentSessionAgent.value || aiStore.getSelectedAgent(selectedScope.value))
+const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || selectedScope.value))
 const currentAgentCapabilities = computed(() => currentSession.value
   ? aiStore.getEffectiveAgentCapabilities(currentSession.value)
   : currentAgent.value?.capabilities || null)
@@ -206,29 +208,29 @@ const canRefreshModels = computed(() => {
   return aiConfig.value.apiKey.trim().length > 0
 })
 const currentModelMeta = computed(() => {
-  const matched = availableAiModels.value.find(model => model.name === aiConfig.value.model)
+  const matched = availableAiModels.value.find(model => model.name === runtimeAiConfig.value.model || model.id === runtimeAiConfig.value.model)
   if (matched) {
     return matched
   }
 
-  if (!aiConfig.value.model.trim()) {
+  if (!runtimeAiConfig.value.model.trim()) {
     return null
   }
 
   return {
-    id: aiConfig.value.model,
-    name: aiConfig.value.model,
-    label: aiConfig.value.model,
-    capabilities: inferModelCapabilities(aiConfig.value.model, aiConfig.value.protocol),
-    limits: inferModelLimits(aiConfig.value.model, aiConfig.value.protocol)
+    id: runtimeAiConfig.value.model,
+    name: runtimeAiConfig.value.model,
+    label: runtimeAiConfig.value.model,
+    capabilities: inferModelCapabilities(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol),
+    limits: inferModelLimits(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol)
   }
 })
 const currentModelBadges = computed(() => [
   ...getModelCapabilityLabels(currentModelMeta.value?.capabilities),
   ...getModelLimitLabels(currentModelMeta.value?.limits)
 ])
-const currentModelLabel = computed(() => currentModelMeta.value?.label || aiConfig.value.model.trim() || '未选择')
-const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(aiConfig.value))
+const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
+const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
     return false
@@ -361,15 +363,23 @@ async function refreshModelOptions() {
 
 async function handleModelChange(modelName: string) {
   const nextModel = modelName.trim()
-  if (!nextModel || nextModel === aiConfig.value.model) {
+  if (!nextModel || nextModel === runtimeAiConfig.value.model) {
     return
   }
 
   const previousRecommended = recommendedAutoSteps.value
-  await aiStore.updateConfig({ model: nextModel })
+  if (currentAgent.value) {
+    await aiStore.upsertAgentProfile({
+      ...currentAgent.value,
+      preferredModel: nextModel
+    })
+    showToast('success', `已为角色 ${currentAgent.value.name} 切换模型：${nextModel}`)
+  } else {
+    await aiStore.updateConfig({ model: nextModel })
+  }
 
   if (aiStore.preferences.maxAutoSteps === previousRecommended) {
-    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.config) })
+    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.getEffectiveConfig(currentSession.value || selectedScope.value)) })
   }
 }
 

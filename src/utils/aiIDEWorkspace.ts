@@ -5,6 +5,7 @@
 
 import type { IDEWorkspace, ProjectStructure, ProjectFile } from '@/types'
 import { useAIStore } from '@/stores/ai'
+import { resolveWorkspaceStorageLayout } from '@/utils/runtimeDirectories'
 
 // 语言推断映射
 const EXT_LANGUAGE_MAP: Record<string, string> = {
@@ -70,7 +71,7 @@ function shouldIgnoreEntry(name: string, isDir: boolean): boolean {
 }
 
 /** 打开工作区：选择目录并初始化 IDEWorkspace */
-export async function openWorkspace(rootPath: string): Promise<IDEWorkspace | null> {
+export async function openWorkspace(rootPath: string, artifactRootPath: string): Promise<IDEWorkspace | null> {
   const api = getApi()
   if (!api) return null
 
@@ -78,12 +79,18 @@ export async function openWorkspace(rootPath: string): Promise<IDEWorkspace | nu
   if (!exists) return null
 
   const name = rootPath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'workspace'
+  const storageLayout = await resolveWorkspaceStorageLayout(createWorkspaceId(rootPath), name, artifactRootPath)
+  const now = Date.now()
 
   const workspace: IDEWorkspace = {
     id: createWorkspaceId(rootPath),
     rootPath,
     name,
-    createdAt: Date.now(),
+    artifactRootPath: storageLayout.artifactRootPath,
+    dataDirectory: storageLayout.dataDirectory,
+    createdAt: now,
+    updatedAt: now,
+    lastOpenedAt: now,
   }
 
   // 扫描项目结构并推断语言/框架

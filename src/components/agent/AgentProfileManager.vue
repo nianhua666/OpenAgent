@@ -3,13 +3,13 @@
     <div class="panel-head">
       <div>
         <p class="eyebrow">Personas</p>
-        <h3>多 Agent</h3>
+        <h3>多角色 Agent</h3>
       </div>
-      <button class="panel-btn primary" :disabled="streaming" @click="startCreate">新角色</button>
+      <button class="panel-btn primary" :disabled="streaming" @click="startCreate">新建角色</button>
     </div>
 
     <p class="panel-copy">
-      当前域支持切换不同角色。每个角色都可以独立设定系统提示词、长期记忆、文件控制、软件控制、MCP 与 Skill 边界。
+      当前域支持切换不同角色。每个角色都可以独立设定系统提示词、长期记忆、文件控制、软件控制、MCP 与 Skill 边界，并覆盖模型、温度和默认产物目录。
     </p>
 
     <div class="scope-bar">
@@ -36,9 +36,21 @@
         <div class="capability-row">
           <span v-for="badge in getCapabilityBadges(agent)" :key="badge" class="capability-pill">{{ badge }}</span>
         </div>
+        <div class="runtime-summary">
+          <span class="runtime-pill">模型 {{ agent.preferredModel || '跟随全局' }}</span>
+          <span class="runtime-pill">温度 {{ formatTemperature(agent.temperature) }}</span>
+          <span class="runtime-pill">目录 {{ agent.preferredArtifactRoot ? '自定义' : '默认' }}</span>
+        </div>
         <div class="agent-card-actions">
           <button class="panel-btn secondary" :disabled="streaming" @click.stop="startEdit(agent)">编辑</button>
-          <button v-if="!agent.isBuiltin" class="panel-btn danger" :disabled="streaming" @click.stop="$emit('delete-agent', agent.id)">删除</button>
+          <button
+            v-if="!agent.isBuiltin"
+            class="panel-btn danger"
+            :disabled="streaming"
+            @click.stop="$emit('delete-agent', agent.id)"
+          >
+            删除
+          </button>
         </div>
       </button>
     </div>
@@ -70,13 +82,46 @@
         <textarea v-model.trim="draft.systemPrompt" rows="8" placeholder="写清角色人设、语气、执行方式、能力边界和禁用事项" />
       </label>
 
+      <div class="runtime-grid">
+        <label class="field">
+          <span>默认模型</span>
+          <select v-model="draft.preferredModel">
+            <option value="">跟随全局模型</option>
+            <option v-for="model in availableModels" :key="model.id" :value="model.name">
+              {{ model.label }}
+            </option>
+          </select>
+          <small class="field-hint">角色可覆盖全局模型；多模态任务仍可通过委派模型工具临时调用更合适的模型。</small>
+        </label>
+
+        <label class="field">
+          <span>温度</span>
+          <input v-model.number="draft.temperature" type="number" min="0" max="1.5" step="0.05" />
+          <small class="field-hint">Agent 模式支持按角色独立控制输出风格；IDE 模式会固定为最佳开发状态。</small>
+        </label>
+
+        <label class="field">
+          <span>默认产物目录</span>
+          <input
+            v-model.trim="draft.preferredArtifactRoot"
+            type="text"
+            placeholder="留空则使用 Agent 默认目录或 D:/OpenAgent"
+          />
+          <small class="field-hint">生成 Markdown、脚本、报告和图片时，优先写入这里；用户显式指定目录时以用户要求为准。</small>
+        </label>
+      </div>
+
       <div class="toggle-grid">
         <label v-for="toggle in capabilityToggles" :key="toggle.key" class="toggle-card">
           <div>
             <strong>{{ toggle.label }}</strong>
             <p>{{ toggle.description }}</p>
           </div>
-          <input :checked="Boolean(draft.capabilities[toggle.key])" type="checkbox" @change="updateCapability(toggle.key, ($event.target as HTMLInputElement).checked)" />
+          <input
+            :checked="Boolean(draft.capabilities[toggle.key])"
+            type="checkbox"
+            @change="updateCapability(toggle.key, ($event.target as HTMLInputElement).checked)"
+          />
         </label>
       </div>
 
@@ -107,7 +152,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import type { AIAgentCapabilitySettings, AIAgentProfile, AIConversationScope } from '@/types'
+import type { AIAgentCapabilitySettings, AIAgentProfile, AIConversationScope, AIProviderModel } from '@/types'
 import { genId } from '@/utils/helpers'
 
 type EditableAgentProfile = {
@@ -115,6 +160,9 @@ type EditableAgentProfile = {
   name: string
   description: string
   systemPrompt: string
+  preferredModel: string
+  temperature: number
+  preferredArtifactRoot: string
   capabilities: AIAgentCapabilitySettings
   tts: {
     autoPlayReplies?: boolean
@@ -126,6 +174,7 @@ type EditableAgentProfile = {
 
 const props = defineProps<{
   agents: AIAgentProfile[]
+  availableModels: AIProviderModel[]
   selectedAgentId: string
   currentAgentId?: string
   currentScope: AIConversationScope
@@ -157,13 +206,13 @@ const isDirty = computed(() => initialSignature.value !== currentDraftSignature(
 
 watch(
   () => props.agents,
-  (agents) => {
+  agents => {
     const source = agents.find(agent => agent.id === draft.id) || agents.find(agent => agent.id === props.selectedAgentId) || agents[0]
     if (source && !draft.name.trim() && !draft.systemPrompt.trim()) {
       applyAgentToDraft(source)
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 
 function createDraft(agent?: AIAgentProfile): EditableAgentProfile {
@@ -172,20 +221,23 @@ function createDraft(agent?: AIAgentProfile): EditableAgentProfile {
     name: agent?.name || '',
     description: agent?.description || '',
     systemPrompt: agent?.systemPrompt || '',
+    preferredModel: agent?.preferredModel || '',
+    temperature: typeof agent?.temperature === 'number' ? agent.temperature : 0.7,
+    preferredArtifactRoot: agent?.preferredArtifactRoot || '',
     capabilities: {
       conversationOnly: agent?.capabilities.conversationOnly ?? false,
       memoryEnabled: agent?.capabilities.memoryEnabled ?? true,
       fileControlEnabled: agent?.capabilities.fileControlEnabled ?? false,
       softwareControlEnabled: agent?.capabilities.softwareControlEnabled ?? true,
       mcpEnabled: agent?.capabilities.mcpEnabled ?? true,
-      skillEnabled: agent?.capabilities.skillEnabled ?? true
+      skillEnabled: agent?.capabilities.skillEnabled ?? true,
     },
     tts: {
       autoPlayReplies: agent?.tts.autoPlayReplies ?? false,
       emotionStyle: agent?.tts.emotionStyle || 'auto',
-      emotionIntensity: agent?.tts.emotionIntensity ?? 1
+      emotionIntensity: agent?.tts.emotionIntensity ?? 1,
     },
-    isBuiltin: agent?.isBuiltin
+    isBuiltin: agent?.isBuiltin,
   }
 }
 
@@ -195,10 +247,17 @@ function currentDraftSignature() {
     name: draft.name,
     description: draft.description,
     systemPrompt: draft.systemPrompt,
+    preferredModel: draft.preferredModel,
+    temperature: draft.temperature,
+    preferredArtifactRoot: draft.preferredArtifactRoot,
     capabilities: draft.capabilities,
     tts: draft.tts,
-    isBuiltin: draft.isBuiltin
+    isBuiltin: draft.isBuiltin,
   })
+}
+
+function syncInitialSignature() {
+  initialSignature.value = currentDraftSignature()
 }
 
 function applyAgentToDraft(agent: AIAgentProfile) {
@@ -241,20 +300,23 @@ function submitDraft() {
     name: draft.name.trim(),
     description: draft.description.trim(),
     systemPrompt: draft.systemPrompt.trim(),
+    preferredModel: draft.preferredModel.trim(),
+    temperature: normalizeTemperature(draft.temperature),
+    preferredArtifactRoot: draft.preferredArtifactRoot.trim(),
     capabilities: {
       conversationOnly: draft.capabilities.conversationOnly,
       memoryEnabled: draft.capabilities.memoryEnabled,
       fileControlEnabled: draft.capabilities.conversationOnly ? false : draft.capabilities.fileControlEnabled,
       softwareControlEnabled: draft.capabilities.conversationOnly ? false : draft.capabilities.softwareControlEnabled,
       mcpEnabled: draft.capabilities.conversationOnly ? false : draft.capabilities.mcpEnabled,
-      skillEnabled: draft.capabilities.conversationOnly ? false : draft.capabilities.skillEnabled
+      skillEnabled: draft.capabilities.conversationOnly ? false : draft.capabilities.skillEnabled,
     },
     tts: {
       autoPlayReplies: draft.tts.autoPlayReplies,
       emotionStyle: draft.tts.emotionStyle,
-      emotionIntensity: draft.tts.emotionIntensity
+      emotionIntensity: draft.tts.emotionIntensity,
     },
-    isBuiltin: draft.isBuiltin
+    isBuiltin: draft.isBuiltin,
   }
 
   emit('save-agent', profile)
@@ -262,23 +324,21 @@ function submitDraft() {
   syncInitialSignature()
 }
 
-function syncInitialSignature() {
-  initialSignature.value = currentDraftSignature()
+function normalizeTemperature(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0.7
+  }
+
+  return Math.min(Math.max(Number(value), 0), 1.5)
+}
+
+function formatTemperature(value?: number) {
+  return normalizeTemperature(typeof value === 'number' ? value : 0.7).toFixed(2)
 }
 
 function resolveBadgeLabel(agent: AIAgentProfile) {
-  const isSelected = props.selectedAgentId === agent.id
-  const isCurrent = props.currentAgentId === agent.id
-  if (isSelected && isCurrent) {
-    return '当前 / 默认'
-  }
-
-  if (isCurrent) {
-    return '当前会话'
-  }
-
-  if (isSelected) {
-    return '默认角色'
+  if (agent.isDefault) {
+    return '默认'
   }
 
   return agent.isBuiltin ? '内置' : '自定义'
@@ -294,7 +354,7 @@ function getCapabilityBadges(agent: AIAgentProfile) {
     agent.capabilities.fileControlEnabled ? '文件' : '无文件',
     agent.capabilities.softwareControlEnabled ? '软件' : '无软件',
     agent.capabilities.mcpEnabled ? 'MCP' : '无 MCP',
-    agent.capabilities.skillEnabled ? 'Skill' : '无 Skill'
+    agent.capabilities.skillEnabled ? 'Skill' : '无 Skill',
   ]
 }
 </script>
@@ -343,7 +403,8 @@ h4 {
 .panel-copy,
 .scope-hint,
 .agent-card p,
-.toggle-card p {
+.toggle-card p,
+.field-hint {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.6;
@@ -355,7 +416,8 @@ h4 {
 
 .scope-pill,
 .agent-badge,
-.capability-pill {
+.capability-pill,
+.runtime-pill {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
@@ -409,13 +471,15 @@ h4 {
   color: var(--text-secondary);
 }
 
-.capability-row {
+.capability-row,
+.runtime-summary {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.capability-pill {
+.capability-pill,
+.runtime-pill {
   padding: 4px 8px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
@@ -463,8 +527,13 @@ h4 {
   border-color: color-mix(in srgb, var(--primary) 70%, white 10%);
 }
 
+.field-hint {
+  font-size: 12px;
+}
+
 .toggle-grid,
-.tts-grid {
+.tts-grid,
+.runtime-grid {
   display: grid;
   gap: 10px;
 }
@@ -473,7 +542,8 @@ h4 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.tts-grid {
+.tts-grid,
+.runtime-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -529,7 +599,8 @@ h4 {
 
 @media (max-width: 960px) {
   .toggle-grid,
-  .tts-grid {
+  .tts-grid,
+  .runtime-grid {
     grid-template-columns: 1fr;
   }
 

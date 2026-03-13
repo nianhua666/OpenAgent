@@ -380,6 +380,9 @@ export interface AIAgentProfile {
   name: string
   description: string
   systemPrompt: string
+  preferredModel?: string
+  temperature?: number
+  preferredArtifactRoot?: string
   capabilities: AIAgentCapabilitySettings
   tts: AIAgentTTSProfile
   isBuiltin?: boolean
@@ -558,10 +561,14 @@ export interface IDEWorkspace {
   id: string
   rootPath: string
   name: string
+  artifactRootPath: string
+  dataDirectory: string
   language?: string
   framework?: string
   structure?: ProjectStructure
   createdAt: number
+  updatedAt?: number
+  lastOpenedAt?: number
 }
 
 export interface ProjectStructure {

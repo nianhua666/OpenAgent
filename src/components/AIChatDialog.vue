@@ -142,7 +142,7 @@
               <Sub2ApiAgentBridge compact settings-mode="emit" @open-settings="openSettings" />
             </div>
 
-            <div class="chat-messages" ref="messagesRef">
+            <div class="chat-messages" ref="messagesRef" @click="handleRichTextClick">
               <details v-if="currentTask" class="task-inline-board">
                 <summary class="task-inline-toggle">
                   <div class="task-inline-head">
@@ -292,8 +292,8 @@
                 </summary>
                 <div class="composer-control-content">
                   <div class="composer-model-row">
-                    <select class="model-select" :value="aiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
-                      <option v-if="!aiConfig.model" value="">请先选择模型</option>
+                    <select class="model-select" :value="runtimeAiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
+                      <option v-if="!runtimeAiConfig.model" value="">请先选择模型</option>
                       <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
                         {{ model.label }}
                       </option>
@@ -339,6 +339,7 @@ import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
 import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 
@@ -389,6 +390,8 @@ const selectedAgentId = computed(() => aiStore.getSelectedAgentId(chatScope.valu
 const selectedAgent = computed(() => aiStore.getSelectedAgent(chatScope.value))
 const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
 const currentAgent = computed(() => currentSessionAgent.value || selectedAgent.value)
+const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || chatScope.value))
+const workspaceRoot = computed(() => aiStore.ideWorkspace?.rootPath || '')
 const currentAgentCapabilities = computed(() => {
   if (currentSession.value) {
     return aiStore.getEffectiveAgentCapabilities(currentSession.value)
@@ -464,21 +467,21 @@ const canRefreshModels = computed(() => {
   return aiConfig.value.apiKey.trim().length > 0
 })
 const currentModelMeta = computed(() => {
-  const matchedModel = availableAiModels.value.find(model => model.name === aiConfig.value.model)
+  const matchedModel = availableAiModels.value.find(model => model.name === runtimeAiConfig.value.model || model.id === runtimeAiConfig.value.model)
   if (matchedModel) {
     return matchedModel
   }
 
-  if (!aiConfig.value.model.trim()) {
+  if (!runtimeAiConfig.value.model.trim()) {
     return null
   }
 
   return {
-    id: aiConfig.value.model,
-    name: aiConfig.value.model,
-    label: aiConfig.value.model,
-    capabilities: inferModelCapabilities(aiConfig.value.model, aiConfig.value.protocol),
-    limits: inferModelLimits(aiConfig.value.model, aiConfig.value.protocol)
+    id: runtimeAiConfig.value.model,
+    name: runtimeAiConfig.value.model,
+    label: runtimeAiConfig.value.model,
+    capabilities: inferModelCapabilities(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol),
+    limits: inferModelLimits(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol)
   } satisfies AIProviderModel
 })
 const currentModelBadges = computed(() => {
@@ -498,8 +501,8 @@ const currentModelBadges = computed(() => {
     ...getModelLimitLabels(currentModelMeta.value?.limits)
   ]
 })
-const currentModelLabel = computed(() => currentModelMeta.value?.label || aiConfig.value.model.trim() || '未选择')
-const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(aiConfig.value))
+const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
+const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
     return false
@@ -635,15 +638,11 @@ async function resetScopedSessions() {
 }
 
 function renderMarkdown(content: string): string {
-  if (!content) return ''
-  return content
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>')
+  return renderRichTextContent(content)
+}
+
+function handleRichTextClick(event: MouseEvent) {
+  void handleRichTextActivation(event, { workspaceRoot: workspaceRoot.value })
 }
 
 function scrollToBottom() {
@@ -713,15 +712,23 @@ async function refreshModelOptions() {
 
 async function handleModelChange(modelName: string) {
   const nextModel = modelName.trim()
-  if (!nextModel || nextModel === aiConfig.value.model) {
+  if (!nextModel || nextModel === runtimeAiConfig.value.model) {
     return
   }
 
   const previousRecommended = recommendedAutoSteps.value
-  await aiStore.updateConfig({ model: nextModel })
+  if (currentAgent.value) {
+    await aiStore.upsertAgentProfile({
+      ...currentAgent.value,
+      preferredModel: nextModel
+    })
+    showToast('success', `已为角色 ${currentAgent.value.name} 切换模型：${nextModel}`)
+  } else {
+    await aiStore.updateConfig({ model: nextModel })
+  }
 
   if (aiStore.preferences.maxAutoSteps === previousRecommended) {
-    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.config) })
+    await aiStore.updatePreferences({ maxAutoSteps: getRecommendedAutoSteps(aiStore.getEffectiveConfig(currentSession.value || chatScope.value)) })
   }
 }
 
@@ -1814,6 +1821,20 @@ onBeforeUnmount(() => {
   :deep(strong) {
     font-weight: 600;
   }
+}
+
+:deep(.oa-rich-link) {
+  color: color-mix(in srgb, var(--primary) 78%, white 16%);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:deep(.oa-rich-link.is-path) {
+  color: #2c7cff;
+}
+
+:deep(.oa-rich-muted) {
+  color: var(--text-muted);
 }
 
 .voice-btn {

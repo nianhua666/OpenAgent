@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ]
   }),
   openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
+  openPath: (targetPath: string) => ipcRenderer.invoke('shell:openPath', targetPath) as Promise<boolean>,
 
   // IDE 文件系统
   ideReadFile: (filePath: string, encoding?: string) => ipcRenderer.invoke('ide:readFile', filePath, encoding),

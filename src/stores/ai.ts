@@ -175,6 +175,7 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
         mcpEnabled: true,
         skillEnabled: true,
       }),
+      temperature: 0.25,
       tts: {
         emotionStyle: 'assistant',
         emotionIntensity: 1
@@ -205,6 +206,7 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
         mcpEnabled: true,
         skillEnabled: true,
       }),
+      temperature: 0.85,
       tts: {
         autoPlayReplies: true,
         emotionStyle: 'affectionate',
@@ -275,6 +277,22 @@ function normalizeAgentCapabilities(data: Partial<AIAgentCapabilitySettings> | n
   })
 }
 
+function normalizeAgentPreferredModel(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function normalizeAgentTemperature(value: unknown, fallback = DEFAULT_AI_CONFIG.temperature) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return fallback
+  }
+
+  return Math.min(Math.max(value, 0), 1.5)
+}
+
+function normalizeAgentArtifactRoot(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
 function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
   const builtins = createBuiltinAgentProfiles()
   const builtinMap = new Map(builtins.map(agent => [agent.id, agent]))
@@ -294,6 +312,9 @@ function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
           systemPrompt: typeof agent.systemPrompt === 'string' && agent.systemPrompt.trim()
             ? agent.systemPrompt
             : builtin?.systemPrompt || '',
+          preferredModel: normalizeAgentPreferredModel(agent.preferredModel) || builtin?.preferredModel,
+          temperature: normalizeAgentTemperature(agent.temperature, builtin?.temperature ?? DEFAULT_AI_CONFIG.temperature),
+          preferredArtifactRoot: normalizeAgentArtifactRoot(agent.preferredArtifactRoot) || builtin?.preferredArtifactRoot,
           capabilities: normalizeAgentCapabilities(agent.capabilities),
           tts: {
             autoPlayReplies: typeof agent.tts?.autoPlayReplies === 'boolean'
@@ -429,7 +450,8 @@ function normalizeAIConfig(saved: Partial<AIConfig> | null | undefined): AIConfi
   }
 
   const limits = inferModelLimits(merged.model, merged.protocol)
-  merged.contextWindow = Math.min(Math.max(Number(merged.contextWindow || limits.maxContextTokens) || limits.maxContextTokens, 4096), limits.maxContextTokens)
+  // 长任务默认锁到模型最大上下文，避免用户手工缩小后打断自治链路。
+  merged.contextWindow = limits.maxContextTokens
   merged.maxTokens = Math.min(Math.max(Number(merged.maxTokens || limits.maxOutputTokens) || limits.maxOutputTokens, 256), limits.maxOutputTokens)
 
   return merged
@@ -803,6 +825,12 @@ function normalizeIDEWorkspace(data: IDEWorkspace | null | undefined): IDEWorksp
     id: typeof data.id === 'string' && data.id ? data.id : `workspace-${Date.now()}`,
     rootPath: normalizedRootPath,
     name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : normalizedRootPath.split(/[\\/]/).filter(Boolean).pop() || 'workspace',
+    artifactRootPath: typeof data.artifactRootPath === 'string' && data.artifactRootPath.trim()
+      ? data.artifactRootPath.trim()
+      : normalizedRootPath,
+    dataDirectory: typeof data.dataDirectory === 'string' && data.dataDirectory.trim()
+      ? data.dataDirectory.trim()
+      : normalizedRootPath,
     language: typeof data.language === 'string' ? data.language : undefined,
     framework: typeof data.framework === 'string' ? data.framework : undefined,
     structure: data.structure && typeof data.structure === 'object'
@@ -824,8 +852,29 @@ function normalizeIDEWorkspace(data: IDEWorkspace | null | undefined): IDEWorksp
           updatedAt: Number(data.structure.updatedAt || Date.now()) || Date.now()
         }
       : undefined,
-    createdAt: Number(data.createdAt || Date.now()) || Date.now()
+    createdAt: Number(data.createdAt || Date.now()) || Date.now(),
+    updatedAt: Number(data.updatedAt || data.createdAt || Date.now()) || Date.now(),
+    lastOpenedAt: Number(data.lastOpenedAt || data.updatedAt || data.createdAt || Date.now()) || Date.now()
   }
+}
+
+function normalizeIDEWorkspaces(data: IDEWorkspace[] | null | undefined) {
+  if (!Array.isArray(data)) {
+    return []
+  }
+
+  const seenIds = new Set<string>()
+  return data
+    .map(workspace => normalizeIDEWorkspace(workspace))
+    .filter((workspace): workspace is IDEWorkspace => Boolean(workspace))
+    .filter(workspace => {
+      if (seenIds.has(workspace.id)) {
+        return false
+      }
+      seenIds.add(workspace.id)
+      return true
+    })
+    .sort((left, right) => (right.lastOpenedAt || right.updatedAt || right.createdAt) - (left.lastOpenedAt || left.updatedAt || left.createdAt))
 }
 
 function normalizeIDEEditorTabSession(
@@ -1015,6 +1064,8 @@ export const useAIStore = defineStore('ai', () => {
   const agentProfiles = ref<AIAgentProfile[]>(normalizeAgentProfiles(createBuiltinAgentProfiles()))
   const selectedAgentIds = ref<AISelectedAgents>({ ...DEFAULT_SELECTED_AGENTS })
   const subAgents = ref<SubAgent[]>([])
+  const ideWorkspaces = ref<IDEWorkspace[]>([])
+  const activeIDEWorkspaceId = ref('')
   const ideWorkspace = ref<IDEWorkspace | null>(null)
   const ideEditorSession = ref<IDEEditorSession | null>(null)
   const projectPlans = ref<ProjectPlan[]>([])
@@ -1088,6 +1139,43 @@ export const useAIStore = defineStore('ai', () => {
       })
   }
 
+  function getEffectiveConfig(target?: AIChatSession | string | AIConversationScope | null) {
+    const resolvedSession = typeof target === 'string'
+      ? getSessionById(target)
+      : (target && typeof target === 'object' && 'messages' in target ? target as AIChatSession : null)
+    const scope = resolvedSession?.scope
+      || (target === 'live2d' || target === 'main' ? target : agentMode.value === 'ide' ? 'main' : 'main')
+    const resolvedAgent = resolvedSession
+      ? getSessionAgent(resolvedSession)
+      : (agentMode.value === 'agent' ? getSelectedAgent(scope) : null)
+
+    const nextConfig: AIConfig = {
+      ...config.value,
+      model: resolvedAgent?.preferredModel || config.value.model,
+      temperature: agentMode.value === 'ide'
+        ? 0.15
+        : normalizeAgentTemperature(resolvedAgent?.temperature, config.value.temperature),
+    }
+
+    const limits = inferModelLimits(nextConfig.model, nextConfig.protocol)
+    nextConfig.contextWindow = limits.maxContextTokens
+    nextConfig.maxTokens = Math.min(Math.max(Number(nextConfig.maxTokens || limits.maxOutputTokens) || limits.maxOutputTokens, 256), limits.maxOutputTokens)
+
+    return nextConfig
+  }
+
+  function getIDEWorkspaces() {
+    return [...ideWorkspaces.value]
+  }
+
+  function getIDEWorkspaceById(workspaceId: string | null | undefined) {
+    if (!workspaceId) {
+      return null
+    }
+
+    return ideWorkspaces.value.find(workspace => workspace.id === workspaceId) ?? null
+  }
+
   function getActiveSessionId(scope: AIConversationScope = 'main') {
     return activeSessionIds.value[scope]
   }
@@ -1148,6 +1236,9 @@ export const useAIStore = defineStore('ai', () => {
       name: profile.name.trim(),
       description: profile.description.trim(),
       systemPrompt: profile.systemPrompt.trim(),
+      preferredModel: normalizeAgentPreferredModel(profile.preferredModel) || existing?.preferredModel,
+      temperature: normalizeAgentTemperature(profile.temperature, existing?.temperature ?? config.value.temperature),
+      preferredArtifactRoot: normalizeAgentArtifactRoot(profile.preferredArtifactRoot) || existing?.preferredArtifactRoot,
       capabilities: normalizeAgentCapabilities(profile.capabilities),
       tts: {
         autoPlayReplies: typeof profile.tts?.autoPlayReplies === 'boolean' ? profile.tts.autoPlayReplies : undefined,
@@ -1267,8 +1358,34 @@ export const useAIStore = defineStore('ai', () => {
     subAgents.value = normalizeSubAgents(snapshot)
   }
 
+  function applyIDEWorkspacesSnapshot(snapshot: IDEWorkspace[] | null | undefined) {
+    ideWorkspaces.value = normalizeIDEWorkspaces(snapshot)
+  }
+
+  function applyActiveIDEWorkspaceSnapshot(snapshot: string | null | undefined) {
+    const normalizedId = typeof snapshot === 'string' ? snapshot.trim() : ''
+    const fallbackWorkspace = ideWorkspaces.value[0] ?? null
+    const resolvedWorkspace = getIDEWorkspaceById(normalizedId) || fallbackWorkspace
+    activeIDEWorkspaceId.value = resolvedWorkspace?.id || ''
+    ideWorkspace.value = resolvedWorkspace
+  }
+
   function applyIDEWorkspaceSnapshot(snapshot: IDEWorkspace | null | undefined) {
-    ideWorkspace.value = normalizeIDEWorkspace(snapshot)
+    const normalized = normalizeIDEWorkspace(snapshot)
+    if (!normalized) {
+      if (!activeIDEWorkspaceId.value) {
+        ideWorkspace.value = null
+      }
+      return
+    }
+
+    const nextWorkspaces = normalizeIDEWorkspaces([
+      normalized,
+      ...ideWorkspaces.value.filter(workspace => workspace.id !== normalized.id)
+    ])
+    ideWorkspaces.value = nextWorkspaces
+    activeIDEWorkspaceId.value = normalized.id
+    ideWorkspace.value = getIDEWorkspaceById(normalized.id) || normalized
   }
 
   function applyIDEEditorSessionSnapshot(snapshot: IDEEditorSession | null | undefined) {
@@ -1331,6 +1448,17 @@ export const useAIStore = defineStore('ai', () => {
 
       if (key === 'ai_sub_agents') {
         applySubAgentsSnapshot(data as SubAgent[])
+        return
+      }
+
+      if (key === 'ai_ide_workspaces') {
+        applyIDEWorkspacesSnapshot(data as IDEWorkspace[])
+        applyActiveIDEWorkspaceSnapshot(activeIDEWorkspaceId.value)
+        return
+      }
+
+      if (key === 'ai_ide_active_workspace') {
+        applyActiveIDEWorkspaceSnapshot(typeof data === 'string' ? data : '')
         return
       }
 
@@ -1417,6 +1545,8 @@ export const useAIStore = defineStore('ai', () => {
     applyAgentProfilesSnapshot(await loadData<AIAgentProfile[]>('ai_agent_profiles', createBuiltinAgentProfiles()))
     applySelectedAgentsSnapshot(await loadData<AISelectedAgents>('ai_selected_agents', DEFAULT_SELECTED_AGENTS))
     applySubAgentsSnapshot(await loadData<SubAgent[]>('ai_sub_agents', []))
+    applyIDEWorkspacesSnapshot(await loadData<IDEWorkspace[]>('ai_ide_workspaces', []))
+    applyActiveIDEWorkspaceSnapshot(await loadData<string>('ai_ide_active_workspace', ''))
     applyIDEWorkspaceSnapshot(await loadData<IDEWorkspace | null>('ai_ide_workspace', null))
     applyIDEEditorSessionSnapshot(await loadData<IDEEditorSession | null>('ai_ide_editor_session', null))
     applyProjectPlansSnapshot(await loadData<ProjectPlan[]>('ai_project_plans', []))
@@ -1925,7 +2055,7 @@ export const useAIStore = defineStore('ai', () => {
     if (!session) return []
 
     const systemContent = buildSystemPromptWithMemory(session)
-    const limits = resolveConfigTokenLimits(config.value)
+    const limits = resolveConfigTokenLimits(getEffectiveConfig(session))
     const inputBudget = limits.recommendedInputBudget
     const scopedMemories = memories.value.filter(memory => memory.scope === session.scope)
     const snapshot = getLatestContextSnapshot(sessionId)
@@ -1972,12 +2102,12 @@ export const useAIStore = defineStore('ai', () => {
     const session = getSessionById(sessionId)
     const compression = compressionStats.value[sessionId]
     if (!session) {
-      return createContextMetrics(0, config.value, compression?.count || 0, compression?.lastCompressedAt)
+      return createContextMetrics(0, getEffectiveConfig(), compression?.count || 0, compression?.lastCompressedAt)
     }
 
     return createContextMetrics(
       buildContextMessages(sessionId).reduce((total, message) => total + estimateMessageTokens(message), 0),
-      config.value,
+      getEffectiveConfig(session),
       compression?.count || 0,
       compression?.lastCompressedAt
     )
@@ -2035,8 +2165,9 @@ export const useAIStore = defineStore('ai', () => {
     const sessionAgent = getSessionAgent(session)
     const capabilities = getEffectiveAgentCapabilities(session)
     const capabilitySummary = formatAgentCapabilityList(capabilities)
-    const runtimeCapabilities = inferModelCapabilities(config.value.model, config.value.protocol)
-    const tokenLimits = resolveConfigTokenLimits(config.value)
+    const effectiveConfig = getEffectiveConfig(session)
+    const runtimeCapabilities = inferModelCapabilities(effectiveConfig.model, effectiveConfig.protocol)
+    const tokenLimits = resolveConfigTokenLimits(effectiveConfig)
     const basePrompt = config.value.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT
     const sections: string[] = [basePrompt]
 
@@ -2093,8 +2224,8 @@ export const useAIStore = defineStore('ai', () => {
         `- 当前账号类型数：${accountTypeStore.typeList.length}`,
         `- Live2D 当前模型：${settingsStore.settings.live2dModelName || '未设置'}`,
         `- Live2D 当前来源：${settingsStore.settings.live2dModelSource || 'unknown'}`,
-        `- 当前 AI 协议：${config.value.protocol}`,
-        `- 当前 AI 模型：${config.value.model || '未设置'}`,
+        `- 当前 AI 协议：${effectiveConfig.protocol}`,
+        `- 当前 AI 模型：${effectiveConfig.model || '未设置'}`,
         '',
         '### 账号类型摘要',
         typeSummary,
@@ -2157,11 +2288,13 @@ export const useAIStore = defineStore('ai', () => {
       `- 模型支持视觉：${runtimeCapabilities.vision ? '是' : '否'}`,
       `- 模型支持思考链路：${runtimeCapabilities.thinking ? '是' : '否'}`,
       `- 模型支持工具调用：${runtimeCapabilities.toolUse ? '是' : '否'}`,
+      `- 当前模型：${effectiveConfig.model || '未设置'}`,
+      `- 当前温度：${effectiveConfig.temperature.toFixed(2)}`,
       `- 思考模式：${preferences.value.thinkingEnabled ? `开启（${preferences.value.thinkingLevel}）` : '关闭'}`,
       `- 规划模式：${preferences.value.planningMode ? '开启' : '关闭'}`,
       `- 自动记忆归档：${preferences.value.autoMemory ? '开启' : '关闭'}`,
       `- 最大自动步数：${preferences.value.maxAutoSteps > 0 ? preferences.value.maxAutoSteps : '无限制'}`,
-      `- 推荐自动步数：${getRecommendedAutoSteps(config.value)}`,
+      `- 推荐自动步数：${getRecommendedAutoSteps(effectiveConfig)}`,
       `- 当前上下文窗口：${tokenLimits.selectedContextTokens}`,
       `- 当前最大输出 Token：${tokenLimits.maxOutputTokens}`
     ].join('\n'))
@@ -2346,8 +2479,54 @@ export const useAIStore = defineStore('ai', () => {
   // ==================== IDE 工作区 ====================
 
   function setIDEWorkspace(workspace: IDEWorkspace | null) {
-    ideWorkspace.value = workspace
-    scheduleSave('ai_ide_workspace', workspace)
+    const normalized = normalizeIDEWorkspace(workspace)
+    if (!normalized) {
+      ideWorkspace.value = null
+      activeIDEWorkspaceId.value = ''
+      scheduleSave('ai_ide_workspace', null)
+      scheduleSave('ai_ide_active_workspace', '')
+      return
+    }
+
+    const now = Date.now()
+    const existing = getIDEWorkspaceById(normalized.id)
+    const nextWorkspace: IDEWorkspace = {
+      ...normalized,
+      createdAt: existing?.createdAt || normalized.createdAt || now,
+      updatedAt: now,
+      lastOpenedAt: now,
+    }
+
+    ideWorkspaces.value = normalizeIDEWorkspaces([
+      nextWorkspace,
+      ...ideWorkspaces.value.filter(item => item.id !== nextWorkspace.id),
+    ])
+    activeIDEWorkspaceId.value = nextWorkspace.id
+    ideWorkspace.value = getIDEWorkspaceById(nextWorkspace.id) || nextWorkspace
+    scheduleSave('ai_ide_workspaces', ideWorkspaces.value)
+    scheduleSave('ai_ide_active_workspace', activeIDEWorkspaceId.value)
+    scheduleSave('ai_ide_workspace', ideWorkspace.value)
+  }
+
+  function switchIDEWorkspace(workspaceId: string) {
+    const target = getIDEWorkspaceById(workspaceId)
+    if (!target) {
+      return null
+    }
+
+    const now = Date.now()
+    target.lastOpenedAt = now
+    target.updatedAt = now
+    ideWorkspaces.value = normalizeIDEWorkspaces([
+      target,
+      ...ideWorkspaces.value.filter(workspace => workspace.id !== target.id),
+    ])
+    activeIDEWorkspaceId.value = target.id
+    ideWorkspace.value = getIDEWorkspaceById(target.id) || target
+    scheduleSave('ai_ide_workspaces', ideWorkspaces.value)
+    scheduleSave('ai_ide_active_workspace', activeIDEWorkspaceId.value)
+    scheduleSave('ai_ide_workspace', ideWorkspace.value)
+    return ideWorkspace.value
   }
 
   function setIDEEditorSession(session: IDEEditorSession | null, options?: { immediate?: boolean }) {
@@ -2363,6 +2542,12 @@ export const useAIStore = defineStore('ai', () => {
   function updateIDEWorkspaceStructure(structure: IDEWorkspace['structure']) {
     if (ideWorkspace.value) {
       ideWorkspace.value.structure = structure
+      ideWorkspace.value.updatedAt = Date.now()
+      ideWorkspaces.value = normalizeIDEWorkspaces([
+        ideWorkspace.value,
+        ...ideWorkspaces.value.filter(workspace => workspace.id !== ideWorkspace.value?.id),
+      ])
+      scheduleSave('ai_ide_workspaces', ideWorkspaces.value)
       scheduleSave('ai_ide_workspace', ideWorkspace.value)
     }
   }
@@ -2638,6 +2823,8 @@ export const useAIStore = defineStore('ai', () => {
     agentProfiles,
     selectedAgentIds,
     subAgents,
+    ideWorkspaces,
+    activeIDEWorkspaceId,
     ideWorkspace,
     ideEditorSession,
     projectPlans,
@@ -2648,6 +2835,9 @@ export const useAIStore = defineStore('ai', () => {
     getAgentProfile,
     getSelectedAgentId,
     getSelectedAgent,
+    getEffectiveConfig,
+    getIDEWorkspaces,
+    getIDEWorkspaceById,
     resolveSessionAgentId,
     getSessionAgent,
     getEffectiveAgentCapabilities,
@@ -2661,6 +2851,7 @@ export const useAIStore = defineStore('ai', () => {
     getSubAgentsForSession,
     cleanupSubAgents,
     setIDEWorkspace,
+    switchIDEWorkspace,
     setIDEEditorSession,
     updateIDEWorkspaceStructure,
     createProjectPlan,

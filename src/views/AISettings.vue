@@ -316,9 +316,10 @@
             min="4096"
             :max="selectedAiModelLimits.maxContextTokens"
             step="1024"
-            @change="handleContextWindowChange(($event.target as HTMLInputElement).value)"
+            readonly
+            disabled
           />
-          <span class="field-tip">当前选择 {{ formatTokenCount(resolvedTokenLimits.selectedContextTokens) }}，模型上限 {{ formatTokenCount(selectedAiModelLimits.maxContextTokens) }}。</span>
+          <span class="field-tip">当前始终锁定为 {{ formatTokenCount(resolvedTokenLimits.selectedContextTokens) }}，会随模型能力自动拉满，不再手动配置。</span>
         </div>
       </div>
 

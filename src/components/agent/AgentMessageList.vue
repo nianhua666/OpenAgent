@@ -1,5 +1,5 @@
 <template>
-  <section ref="scrollRef" class="agent-message-list glass-panel">
+  <section ref="scrollRef" class="agent-message-list glass-panel" @click="handleRichTextClick">
     <div v-if="!session" class="empty-state">
       <p class="empty-eyebrow">Ready</p>
       <h3>当前角色等待任务</h3>
@@ -87,6 +87,8 @@
 import { ref } from 'vue'
 import dayjs from 'dayjs'
 import type { AIChatMessage, AIChatSession } from '@/types'
+import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
+import { useAIStore } from '@/stores/ai'
 
 const props = defineProps<{
   session: AIChatSession | null
@@ -104,6 +106,7 @@ defineEmits<{
 }>()
 
 const scrollRef = ref<HTMLElement | null>(null)
+const aiStore = useAIStore()
 
 defineExpose({
   scrollToBottom,
@@ -140,18 +143,13 @@ function canPlayAssistantReply(message: AIChatMessage) {
 }
 
 function renderMarkdown(content: string) {
-  if (!content) {
-    return '<span class="muted">（空）</span>'
-  }
+  return renderRichTextContent(content)
+}
 
-  return content
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>')
+function handleRichTextClick(event: MouseEvent) {
+  void handleRichTextActivation(event, {
+    workspaceRoot: aiStore.ideWorkspace?.rootPath || ''
+  })
 }
 </script>
 
@@ -294,6 +292,20 @@ p {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 10px;
   padding: 2px 6px;
+}
+
+:deep(.oa-rich-link) {
+  color: #8fd0ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+:deep(.oa-rich-link.is-path) {
+  color: #ffd08a;
+}
+
+:deep(.oa-rich-muted) {
+  color: var(--text-muted);
 }
 
 .message-time {

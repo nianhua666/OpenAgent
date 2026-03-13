@@ -300,13 +300,23 @@ export function buildAgentSystemPrompt(options: {
     ? `\n## 工作区\n当前工作区路径: ${options.workspacePath}\n${options.projectInfo || ''}\n`
     : ''
 
+  const specialTargetSection = options.mode === 'ide'
+    ? `\n## 特殊文本识别\n- 把网页链接、绝对文件路径、工作区相对路径、脚本文件路径、Markdown 文档路径视为可直接操作的结构化线索。\n- 当用户消息里出现 URL、\`D:\\\\...\`、\`./scripts/*.ps1\`、\`docs/TASKS.md\`、\`src/**/*.ts\` 这类文本时，优先判断它们是目标资源，而不是普通描述文字。\n- 涉及工作区相对路径时，默认相对当前激活工作区解析；不确定时先说明解析假设再继续。`
+    : `\n## 特殊文本识别\n- 把网页链接、绝对文件路径、脚本路径、Markdown 文档路径识别为可执行上下文。\n- 当用户消息里出现 URL、\`D:\\\\...\`、\`./scripts/*.ps1\`、\`docs/TASKS.md\`、\`README.md\` 这类文本时，优先判断它们是目标资源、文件线索或运行入口。\n- 遇到图片需求、视觉需求或多模态输入时，可以先用 \`route_model\` 判断合适模型，再用模型委派工具获取结果，并由主 Agent 继续整合回复。`
+
+  const storageSection = options.mode === 'ide'
+    ? `\n## 目录与产物\n- 当前工作区拥有独立的数据目录与基础产物目录；日志、计划、交接文档和中间产物优先写入该工作区对应目录。\n- 新建文件、脚本、报告、Review 文档时，优先落在当前工作区或该工作区产物目录，不要把中间文件散落到未知位置。`
+    : `\n## 目录与产物\n- 每个 Agent 都有独立的数据目录与默认产物目录；生成文件、Markdown、报告或临时产物时，优先写入该角色目录。\n- 如用户明确指定目录，则按用户目录执行；未指定时优先使用 Agent 独立目录或 D 盘默认 OpenAgent 产物目录。`
+
   return [
     basePrompt,
     customSection,
     modelSection,
     mcpSection,
     skillSection,
-    workspaceSection
+    workspaceSection,
+    specialTargetSection,
+    storageSection
   ].filter(Boolean).join('\n')
 }
 

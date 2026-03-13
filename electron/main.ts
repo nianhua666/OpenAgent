@@ -2559,6 +2559,20 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('shell:openPath', async (_event, targetPath: unknown) => {
+    if (typeof targetPath !== 'string' || !targetPath.trim()) {
+      return false
+    }
+
+    const normalizedPath = normalize(targetPath.trim())
+    if (!existsSync(normalizedPath)) {
+      return false
+    }
+
+    const result = await shell.openPath(normalizedPath)
+    return result === ''
+  })
+
   // IDE 文件系统操作（路径遍历防护：规范化后拒绝 '..' 段）
   function sanitizeIdePath(raw: unknown): string | null {
     if (typeof raw !== 'string' || !raw.trim()) return null

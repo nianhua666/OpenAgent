@@ -61,6 +61,7 @@ interface ElectronAPI {
   sub2ApiEnsureDesktopAccess: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>, currentApiKey?: string) => Promise<Sub2ApiDesktopAccessResult>
   sub2ApiChooseBinary: (defaultPath?: string) => Promise<string | null>
   openExternal: (url: string) => void
+  openPath: (targetPath: string) => Promise<boolean>
   // IDE 文件系统
   ideReadFile: (filePath: string, encoding?: string) => Promise<string | null>
   ideWriteFile: (filePath: string, content: string, encoding?: string) => Promise<boolean>

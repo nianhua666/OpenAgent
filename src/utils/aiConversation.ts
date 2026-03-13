@@ -592,7 +592,7 @@ async function reviewToolRound(
 
   try {
     const { content } = await chatCompletion(
-      aiStore.config,
+      aiStore.getEffectiveConfig(sessionId),
       [
         { id: 'tool-review-system', role: 'system', content: reviewSystemPrompt, timestamp: 0 },
         { id: 'tool-review-user', role: 'user', content: reviewUserPrompt, timestamp: 0 }
@@ -693,7 +693,7 @@ async function compressConversationContext(sessionId: string, hooks: AIConversat
   ].filter(Boolean).join('\n\n')
 
   const { content } = await chatCompletion(
-    aiStore.config,
+    aiStore.getEffectiveConfig(sessionId),
     [
       { id: 'compress-system', role: 'system', content: compressionPrompt, timestamp: 0 },
       { id: 'compress-user', role: 'user', content: userPrompt, timestamp: 0 }
@@ -984,7 +984,7 @@ export async function runAIResponseLoop(
         let providerMetadata: Record<string, unknown> | undefined
 
         void streamChat(
-          aiStore.config,
+          aiStore.getEffectiveConfig(sessionId),
           aiStore.buildContextMessages(sessionId),
           {
             onToken(token) {
