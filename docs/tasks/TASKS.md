@@ -1,8 +1,8 @@
 # OpenAgent v3.0 任务进度跟踪
 
 > **创建时间**: 2026-03-13  
-> **当前阶段**: Phase 8 - 测试 + 优化  
-> **总进度**: 99%
+> **当前阶段**: Phase 9 - 前端工作台重构
+> **总进度**: 97%
 
 ---
 
@@ -84,6 +84,19 @@
 | 8.2 | 功能测试 | 进行中 | `/ai`, `/ide`, `/ai-overlay`, `/sub2api`, `node-pty`, `electron/main.ts` |
 | 8.3 | 代码巡检 | 已完成 | `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/types/index.ts`, `src/components/ide/IDETerminal.vue`, `src/components/ide/IDEPlanPanel.vue`, `src/components/ide/IDEExplorer.vue`, `src/utils/aiPlanEngine.ts`, `src/utils/aiTools.ts`, `src/views/IDEView.vue`, `vite.config.mts` |
 
+## Phase 9: 前端工作台重构
+
+| # | 任务 | 状态 | 涉及文件 |
+|---|------|------|----------|
+| 9.1 | 梳理 Agent / IDE 当前可用性问题，补齐错误、布局、字体与缩放层面的真实问题清单 | 进行中 | `docs/tasks/TASKS.md`, `src/views/AgentView.vue`, `src/views/IDEView.vue`, `src/components/ide/IDETerminal.vue`, `src/App.vue`, `src/components/Sidebar.vue` |
+| 9.2 | 修复 `node-pty` / `conpty.node` 原生模块加载问题，确保 IDE 终端可在开发态与打包态正常启动 | 进行中 | `vite.config.mts`, `electron/main.ts`, `electron-builder.config.cjs`, `package.json` |
+| 9.3 | 建立紧凑型设计令牌，整体下调组件尺寸、间距、字号与圆角，收紧玻璃卡片风格的占位体积 | 进行中 | `src/styles/variables.scss`, `src/styles/global.scss`, `src/styles/themes.scss` |
+| 9.4 | 重构 App 外层壳：进入 `/ai` / `/ide` 后自动收缩软件侧边栏，并给工作台视图提供更高可用宽度 | 进行中 | `src/App.vue`, `src/components/Sidebar.vue`, `src/stores/settings.ts` |
+| 9.5 | 重构 IDE 为类 VS Code 布局：左侧资源管理器、左下 MCP / 资源面板、中间编辑器、右侧 Agent、底部终端，支持面板伸缩与折叠 | 进行中 | `src/views/IDEView.vue`, `src/components/ide/*`, `src/stores/ai.ts` |
+| 9.6 | 重构 Agent 为多层级工作台：左侧角色列表 / 会话，顶部工作台动作按钮，中央消息区，侧边抽屉承载角色配置 / 记忆 / MCP / Skill | 进行中 | `src/views/AgentView.vue`, `src/components/agent/*`, `src/stores/ai.ts` |
+| 9.7 | 统一 IDE / Agent 信息密度与可拖拽面板行为，避免“卡片堆叠式页面”继续侵入工作台视图 | 进行中 | `src/views/AgentView.vue`, `src/views/IDEView.vue`, `src/components/ide/*`, `src/components/agent/*` |
+| 9.8 | 做一轮前端专项巡检：验证主要页面可测试、可滚动、可收缩、可切换，补齐任务文档与变更日志 | 进行中 | `docs/tasks/TASKS.md`, `CHANGELOG.md`, `/ai`, `/ide`, `/ai-overlay` |
+
 ---
 
 ## 当前剩余缺口
@@ -128,6 +141,29 @@
 | 2026-03-13 | code | Phase 3.3: 创建 `aiPlanEngine.ts`，支持 Plan Markdown 渲染、任务推进、阶段报告 |
 | 2026-03-13 | code | Phase 3.4: 创建 `aiDevLogger.ts`，支持开发日志 API、工作区文档同步和最终报告生成 |
 | 2026-03-13 | review | Phase 3 审查修复：补齐路径遍历防护、`writeFile` 大小限制、`electronAPI` 空值检查 |
+| 2026-03-14 | code | Phase 9 前端工作台重构：`IDEView` 已重排为资源管理器 / MCP / 编辑器 / 终端 / 右侧 Inspector 骨架，并补上左右列与终端高度拖拽状态。 |
+| 2026-03-14 | code | Phase 9 前端工作台重构：`AgentView` 已切为左侧本地工作台侧栏 + 中央视图，角色 / 会话 / 长期记忆 / 任务切换改为页内侧栏标签，新增 `AgentMemoryPanel.vue`。 |
+| 2026-03-14 | build | Phase 9 巡检：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过；`electron-builder.config.cjs` 已补 `asarUnpack` 以收口 `node-pty` 打包态加载链路。 |
+| 2026-03-14 | code | Phase 9 前端精修第二轮：`IDEActivityBar.vue` 新增资源 / 终端 / Inspector 面板显隐开关，`IDEView.vue` 新增顶部 workbench 工具条、折叠态持久化与更紧凑的骨架变量，继续向可收纳工作台收口。 |
+| 2026-03-14 | code | Phase 9 前端精修第二轮：`AgentView.vue` 新增页内工作台条、侧栏折叠与持久化；`AgentToolbar.vue`、`AgentInputBar.vue`、`AgentSessionList.vue`、`AgentProfileManager.vue`、`AgentTaskBoard.vue` 收紧标题、卡片、按钮与表单密度，减少卡片堆叠感。 |
+| 2026-03-14 | build | Phase 9 精修验证：全局设计令牌进一步下调后再次执行 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，主路由与工作台页面仍保持可构建、可访问。 |
+| 2026-03-14 | code | Phase 9 前端精修第三轮：`IDEView.vue` 把顶部大信息卡收口为窄头部 + workbench 工具条，工作区路径、产物目录、语言/框架和当前文件统一折叠到紧凑胶囊信息里；同时下调 IDE 默认左右栏宽度和终端高度，让编辑区更接近真实工作台比例。 |
+| 2026-03-14 | code | Phase 9 前端精修第三轮：`AgentView.vue` 进一步压缩顶部 hero 与页内侧栏密度，新增上下文胶囊信息，收紧默认侧栏宽度、按钮、输入区和上下文栏尺寸，减少“页面说明区挤占消息区”的问题。 |
+| 2026-03-14 | code | Phase 9 终端加载链收口：`electron/main.ts` 改为使用 `createRequire` 在运行时加载 `node-pty`，并增加多候选路径回退；`vite.config.mts` 同步外置 `node-pty` 子路径，避免原生绑定再次被 Rollup 打进 Electron main bundle。 |
+| 2026-03-14 | build | Phase 9 终端链路验证：执行 `npm.cmd run build:clean` 后重新构建，确认 `dist-electron` 仅产出 `main.js` / `preload.js`，且 `dist-electron/main.js` 已不再包含 `import(\"node-pty\")` 与 `Could not dynamically require` 残留文本；`npm.cmd run smoke:routes` 再次通过。 |
+| 2026-03-14 | code | Phase 9 前端精修第五轮：`IDEView.vue` 把左侧工作区继续收口为可调高的 Explorer / MCP 双区，新增 MCP 独立显隐按钮、左栏内联分割条双击复位与布局持久化，让“左侧资源、左下 MCP”真正成为稳定布局而不是静态堆叠。 |
+| 2026-03-14 | code | Phase 9 前端精修第五轮：`IDEMcpPanel.vue` 补上手动刷新入口与异常计数摘要，`AgentView.vue` 则新增页内侧栏显隐 / 重置栏宽按钮、侧栏分割条双击复位，以及 `scope / sessionId / panel` 路由同步，减少刷新或切页后的工作上下文丢失。 |
+| 2026-03-14 | build | Phase 9 精修验证：本轮交互改动完成后再次执行 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，主路由与工作台页面继续保持可构建、可访问；`git diff --check` 无新增空白符错误，仅保留现有 LF -> CRLF 提示。 |
+| 2026-03-14 | code | Phase 9 前端精修第六轮：新增 `AgentResourcesPanel.vue`，把托管 MCP / Skill 状态、角色授权边界、已启用资源与异常资源摘要接入 Agent 页内侧栏；`AgentView.vue` 新增“资源”工作台标签，让 `9.6` 中要求的“角色配置 / 记忆 / MCP / Skill”抽屉不再缺失 MCP / Skill 这一块。 |
+| 2026-03-14 | build | Phase 9 精修验证：新增 Agent 资源面板后再次执行 `npm.cmd run build`，确认 `AgentView` 侧栏标签扩展与 `AgentResourcesPanel.vue` 引入未破坏类型检查与打包。 |
+| 2026-03-14 | risk | Phase 9 MCP 浏览器复核：本轮按 `playwright-interactive` 工作流再次拉起本地静态预览并尝试用 MCP 浏览器访问 `/ai`，Chrome 仍在启动阶段退出并返回 `exit code 13`；这说明前端 UI 自动化缺口依旧来自本机浏览器环境，而不是页面代码或本地预览服务。 |
+| 2026-03-14 | code | Phase 9 真实 Electron 回归补强：`electron/main.ts` 新增 `--main-route`、`--capture-main-window`、`--capture-delay-ms`、`--capture-quit` 启动参数，`scripts/check-electron-ui.cjs` 可直接导出 `/ai` 与 `/ide` 的真实 Electron PNG 截图，用于在 Chrome 阻塞时继续做人眼回归。 |
+| 2026-03-14 | code | Phase 9 空态工作台精修：`IDEView.vue` 在未绑定工作区时新增 Explorer / MCP / Editor / Runtime / Inspector 空工作台骨架，避免 Electron 截图只剩大片空白；`AgentMessageList.vue` 在“已有会话但尚未发送消息”时新增 session-ready 状态卡，把提示词、会话事实和下一步入口集中到消息区首屏。 |
+| 2026-03-14 | build | Phase 9 Electron 截图验证：执行 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 成功导出 `/ai` 与 `/ide` 的真实 Electron 视图截图；`npm.cmd run build` 与 `npm.cmd run smoke:routes` 继续通过，说明空态精修未破坏主路由与桌面渲染链。 |
+| 2026-03-14 | risk | Phase 9 Chrome 自动化复核：执行 `npm.cmd run check:chrome-automation` 后，plain / remote-debugging / temp-profile 三种 Chrome 启动场景仍全部返回 `exit code 13`；当前 Playwright/MCP 自动化阻塞已进一步确认属于本机 Chrome 运行环境，而不是 OpenAgent 页面代码。 |
+| 2026-03-14 | code | Phase 9 视觉层级精修：`App.vue` 为 immersive 工作台补上更中性的桌面背景层，`IDEView.vue` / `AgentView.vue` 统一增强 glass panel 对比度、边界和阴影，`Sidebar.vue` 收紧工作台态主侧边栏色相与边框，让 `/ai`、`/ide` 从主题化粉白底回到更可持续工作的中性桌面层级。 |
+| 2026-03-14 | code | Phase 9 高频导航精修：`AgentView.vue` 移除页内侧栏头部的多余玻璃卡片感，`AgentSessionList.vue` 强化当前会话选中态，`IDEActivityBar.vue` 与 Agent 页内 rail 新增 active indicator，降低“当前在哪个面板”不够明确的问题。 |
+| 2026-03-14 | build | Phase 9 视觉回归复测：完成对比度与 active state 精修后再次执行 `npm.cmd run build`、`npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 与 `git diff --check`，确认 `/ai`、`/ide` 真实 Electron 截图可继续导出，且未引入新的空白符错误。 |
 | 2026-03-13 | build | Phase 3 构建验证通过（`vue-tsc --noEmit`） |
 | 2026-03-13 | code | Phase 4: `ai.ts` + `aiTools.ts` 新增模型路由、子代理、IDE 文件、计划与日志工具 |
 | 2026-03-13 | review | Phase 4 审查修复：增加 IDE 模式门禁、计划归属校验、日志类型校验 |
@@ -209,9 +245,28 @@
 
 ## Latest Check
 
+- 2026-03-14 Agent 联调修复：`AgentView.vue` 当前已按“角色 / 会话的有效配置”刷新模型列表，而不是继续误用全局 AI 配置；当角色切换导致 `baseUrl`、`apiKey`、协议或模型边界变化时，工作台会自动重拉模型目录，避免前端显示和真实请求目标错位。
+- 2026-03-14 Agent 运行时诊断可视化：`/ai` 主工作台已新增运行时联调卡片，直接展示接口地址、鉴权状态、当前模型与模型列表读取状态，并提供“打开 AI 设置 / 刷新模型列表 / 打开 Sub2API”快捷入口，便于在主界面内快速定位是配置缺失、鉴权缺失还是模型目录读取失败。
+- 2026-03-14 IDE 空工作台入口优化：未绑定工作区时，`IDEView.vue` 右侧已补上最近工作区卡片，清楚区分项目目录和产物目录，支持一键切回最近工作区，减少空工作台重新找项目的摩擦。
+- 2026-03-14 真实 Electron 回归复核：`npm.cmd run smoke:routes`、`npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 与 `npm.cmd run build` 已再次通过；最新 `ai.png` / `ide.png` 已确认这轮新增的联调卡片与最近工作区入口没有破坏工作台布局。
+- 2026-03-14 MCP 浏览器阻塞复现：本轮再次通过 MCP Playwright 浏览器尝试打开本地预览，Chrome 仍在启动阶段直接返回 `exit code 13`；这一缺口继续归因于本机 Chrome 环境，而非 OpenAgent 页面代码。
+
 - 2026-03-13 Live2D 巡检确认：此前 `electron:preview -- --live2d-diagnose` 的失败根因不是 Live2D 代码或资源损坏，而是终端环境残留 `ELECTRON_RUN_AS_NODE=1`，导致 Electron 被错误降级为普通 Node 进程。
 - 2026-03-13 Live2D 真实验证：在清理环境变量后的真实 Electron 环境中，`npm.cmd run check:live2d` 已通过，默认 Shizuku 模型、`live2d://` 资源协议与采样资源请求均诊断成功。
 - 2026-03-13 Sub2API 核心契约验证：新增 `npm.cmd run check:sub2api`，已确认 OpenAgent 依赖的 `/v1/models`、`/v1/responses` 与 responses-only legacy `/v1/chat/completions` 提示契约可用；真实上游模型调用仍需用户自己的网关地址与 API Key 做联调。
 - 2026-03-14 3.0.0 发布验证：`npm.cmd run check:sub2api` 在当前 3.0.0 源码状态下再次通过，mock gateway 已确认模型列表、Responses 主链路与 legacy 兼容提示仍正常。
 - 2026-03-14 桌面打包验证：`npm.cmd run electron:build:clean` 已产出 `release/v3.0.0/OpenAgent Setup 3.0.0.exe`、`release/v3.0.0/OpenAgent Portable 3.0.0.exe` 与 `release/v3.0.0/win-unpacked`，且 `win-unpacked/resources/sub2api-runtime/bin/sub2api.exe -version` 可正常执行。
 - 2026-03-14 打包运行差异记录：`win-unpacked/OpenAgent.exe` 会拒绝开发态使用的 `--live2d-diagnose` 参数并返回 `bad option`，因此本轮打包后验证以安装包产物核对、Sub2API 二进制自检与前端路由烟测为主，后续如需继续保留发布包命令行诊断能力，需要单独调整打包态参数透传。
+- 2026-03-14 终端加载链最新巡检：`electron/main.ts` 已改为通过 `createRequire` 在运行时加载 `node-pty`，并在清理旧构建产物后确认 `dist-electron/main.js` 不再包含 `import("node-pty")` 或 `Could not dynamically require` 文本，Windows `conpty.node` 的旧 bundle 误加载路径已被切断。
+- 2026-03-14 前端工作台重构首轮：已下调全局设计令牌与外壳密度，进入 `/ai` / `/ide` 时软件侧边栏会自动收缩；`IDEView` 已补上左下 MCP 列表和右侧 IDE Agent 面板，`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，但 Agent 页面的多层级侧边栏与 IDE 面板拖拽伸缩仍是下一轮重点。
+- 2026-03-14 前端工作台精修第二轮：`IDE` 现已补上工作台级面板显隐开关，顶部工具条可直接切换资源 / 终端 / Inspector；`Agent` 现已支持页内侧栏折叠与顶部快速切换栏，工作台不再完全依赖外层软件侧栏。
+- 2026-03-14 前端工作台精修第二轮：全局字号、圆角、间距和按钮尺寸继续下调，`Agent` 子面板内部的标题、输入条、表单和任务板也同步收紧；当前剩余前端重点已收敛为真实 Electron 视图的人眼回归与少量面板细节继续抛光。
+- 2026-03-14 前端工作台精修第三轮：`IDE` 顶部已从“大卡片堆叠”改成窄头部 + workbench 信息条，工作区路径与产物目录统一折叠到紧凑路径胶囊；`Agent` 顶部 hero 也改为更短的状态条，模型、上下文和当前会话信息集中到工作台胶囊区，进一步释放中心操作区域。
+- 2026-03-14 前端工作台精修第四轮：统一下调全局设计令牌、按钮/输入/状态条密度与主侧边栏宽度；`/ai` 与 `/ide` 的工作台面板改为更中性的冷色玻璃层，继续压缩页内侧栏、消息卡片、会话卡片、角色表单、终端输入区与状态栏，让整体布局更接近可持续编码的桌面 IDE。
+- 2026-03-14 前端工作台精修第五轮：`IDE` 左栏已进一步对齐“资源管理器在上、MCP 在左下”的结构，Explorer / MCP 现在支持独立显隐、左栏内联拖拽调高与双击复位；`Agent` 工作台则补上 `scope / session / panel` 的 URL 同步和栏宽复位，便于刷新后快速回到原工作上下文。
+- 2026-03-14 前端工作台精修第六轮：`Agent` 工作台已补上托管资源抽屉，当前角色在页内即可查看 MCP / Skill 是否授权、已启用资源数量、异常服务与最近托管技能，无需离开主对话区再跳转到设置页确认能力边界。
+- 2026-03-14 MCP UI 巡检阻塞记录：本机 Playwright MCP 仍然在拉起 Chrome 时直接退出并返回 `exit code 13`，这一轮已复现并确认不是页面脚本报错；因此实际采用 `vite preview` + `npm.cmd run build` + `npm.cmd run smoke:routes` + 代码级样式巡检的替代验证链路继续推进前端收口。
+- 2026-03-14 真实 Electron 视图回归已具备可重复执行链路：`npm.cmd run check:electron-ui -- --out-dir %TEMP%\openagent-electron-ui` 会直接导出 `/ai` 与 `/ide` 的 Electron 实际渲染截图，当前已成功生成 `ai.png` / `ide.png`，后续不再需要完全依赖 Playwright 才能做前端人眼回归。
+- 2026-03-14 空态前端首屏已收口：`/ide` 在未绑定工作区时会显示完整的 Explorer / MCP / Editor / Runtime / Inspector 预览骨架，`/ai` 在已有会话但没有消息时会显示 session-ready 卡片与建议起手 prompt；这两处修正后，Electron 截图不再被大片空白占满，更适合继续做视觉回归和后续抛光。
+- 2026-03-14 Chrome 自动化阻塞进一步确认：`npm.cmd run check:chrome-automation` 再次验证 plain / remote-debugging / temp-profile 三种启动方式均立即退出并返回 `exit code 13`，当前浏览器自动化缺口应继续按“本机 Chrome 环境问题”处理，而不是继续误判为 OpenAgent 页面或预览服务异常。
+- 2026-03-14 工作台视觉层级继续收口：最新 Electron 截图已经能看到 `/ai` 与 `/ide` 的背景、面板边界、当前面板选中态和页内导航锚点明显强于上一轮；当前前端剩余问题已从“大结构失真”收敛为更细的文本对比、卡片内容权重和空态文案抛光。

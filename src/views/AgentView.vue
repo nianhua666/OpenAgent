@@ -1,31 +1,112 @@
 <template>
   <div class="agent-view">
     <section class="agent-hero glass-panel">
-      <div>
-        <p class="hero-eyebrow">OpenAgent v3.0</p>
-        <h1>Agent Mode</h1>
-        <p class="hero-copy">
-          这里现在是多角色 Agent 工作台。主窗口和 Live2D / 悬浮窗都可以绑定不同角色，每个角色都能独立定义提示词、长期记忆、文件控制、软件控制、MCP 与 Skill 边界。
-        </p>
+      <div class="hero-main">
+        <p class="hero-eyebrow">Agent Workbench</p>
+        <h1>{{ currentAgent?.name || '小柔' }}</h1>
+        <div class="hero-title-row">
+          <span class="hero-chip is-mode">Agent</span>
+          <span class="hero-chip">{{ currentModelLabel }}</span>
+          <span class="hero-chip">角色 {{ agentProfiles.length }}</span>
+        </div>
+        <p class="hero-subline">主窗口、悬浮窗和 Live2D 都能独立绑定角色；每个角色的提示词、记忆、权限和模型配置彼此隔离。</p>
       </div>
       <div class="hero-actions">
         <button class="mode-pill active">Agent</button>
         <button class="mode-pill ghost" @click="goToIDEView">IDE</button>
+        <button class="hero-link" @click="toggleAgentSidebar">{{ agentWorkbenchLayout.sidebarCollapsed ? '展开侧栏' : '收起侧栏' }}</button>
         <button class="hero-link" @click="openSettingsPage">AI 设置</button>
       </div>
     </section>
 
-    <div class="agent-layout">
-      <AgentSessionList
-        :sessions="combinedSessions"
-        :selected-session-id="selectedSessionId"
-        :streaming="aiStore.streaming"
-        :create-disabled="!aiStore.isConfigured"
-        @new-session="startNewSession"
-        @select-session="handleSessionSelect"
-        @delete-session="deleteSession"
-        @clear-sessions="clearAllSessions"
-      />
+    <section class="agent-workbench-bar glass-panel">
+      <div class="workbench-bar-copy">
+        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D' : 'Main' }}</span>
+        <span class="workbench-pill">{{ currentAgent?.name || '小柔' }}</span>
+        <span class="workbench-pill">{{ currentModelLabel }}</span>
+        <span class="workbench-pill">上下文 {{ currentContextSummary }}</span>
+        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '新会话' }}</span>
+        <span class="workbench-pill">会话 {{ scopedSessionCount }}</span>
+      </div>
+      <div class="workbench-bar-actions">
+        <button class="workbench-toggle" :class="{ active: !agentWorkbenchLayout.sidebarCollapsed }" @click="toggleAgentSidebar">侧栏</button>
+        <button class="workbench-toggle" :class="{ active: selectedScope === 'main' }" @click="switchAgentScope('main')">主窗口</button>
+        <button class="workbench-toggle" :class="{ active: selectedScope === 'live2d' }" @click="switchAgentScope('live2d')">Live2D</button>
+        <button class="workbench-toggle" :disabled="aiStore.streaming || !aiStore.isConfigured" @click="startNewSession">新会话</button>
+        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'sessions' }" @click="selectAgentSidebarTab('sessions')">会话</button>
+        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'roles' }" @click="selectAgentSidebarTab('roles')">角色</button>
+        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'memory' }" @click="selectAgentSidebarTab('memory')">记忆</button>
+        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'resources' }" @click="selectAgentSidebarTab('resources')">资源</button>
+        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'tasks' }" @click="selectAgentSidebarTab('tasks')">任务</button>
+        <button class="workbench-toggle" @click="resetAgentSidebarLayout">重置栏宽</button>
+      </div>
+    </section>
+
+    <div class="agent-layout" :style="agentWorkbenchStyle">
+      <aside class="agent-sidebar" :class="{ 'is-collapsed': agentWorkbenchLayout.sidebarCollapsed }">
+        <div class="agent-sidebar-rail glass-panel">
+          <button class="sidebar-tab" :class="{ active: agentSidebarTab === 'sessions' }" @click="selectAgentSidebarTab('sessions')">会话</button>
+          <button class="sidebar-tab" :class="{ active: agentSidebarTab === 'roles' }" @click="selectAgentSidebarTab('roles')">角色</button>
+          <button class="sidebar-tab" :class="{ active: agentSidebarTab === 'memory' }" @click="selectAgentSidebarTab('memory')">记忆</button>
+          <button class="sidebar-tab" :class="{ active: agentSidebarTab === 'resources' }" @click="selectAgentSidebarTab('resources')">资源</button>
+          <button class="sidebar-tab" :class="{ active: agentSidebarTab === 'tasks' }" @click="selectAgentSidebarTab('tasks')">任务</button>
+          <button class="sidebar-tab sidebar-tab--ghost" @click="toggleAgentSidebar">{{ agentWorkbenchLayout.sidebarCollapsed ? '>' : '<' }}</button>
+        </div>
+
+        <div class="agent-sidebar-panel" :class="{ 'is-hidden': agentWorkbenchLayout.sidebarCollapsed }">
+          <div class="sidebar-panel-head">
+            <div>
+              <p class="hero-eyebrow">Workspace</p>
+              <strong>{{ currentSidebarTitle }}</strong>
+            </div>
+            <span class="sidebar-scope">{{ selectedScope === 'live2d' ? 'Live2D' : 'Main' }}</span>
+          </div>
+
+          <AgentSessionList
+            v-if="agentSidebarTab === 'sessions'"
+            :sessions="combinedSessions"
+            :selected-session-id="selectedSessionId"
+            :streaming="aiStore.streaming"
+            :create-disabled="!aiStore.isConfigured"
+            @new-session="startNewSession"
+            @select-session="handleSessionSelect"
+            @delete-session="deleteSession"
+            @clear-sessions="clearAllSessions"
+          />
+
+          <AgentProfileManager
+            v-else-if="agentSidebarTab === 'roles'"
+            :agents="agentProfiles"
+            :available-models="availableAiModels"
+            :selected-agent-id="selectedAgentId"
+            :current-agent-id="currentSessionAgentId"
+            :current-scope="selectedScope"
+            :current-session-has-messages="Boolean(currentSession?.messages.length)"
+            :streaming="aiStore.streaming"
+            @select-agent="handleSelectAgent"
+            @save-agent="handleSaveAgent"
+            @delete-agent="handleDeleteAgent"
+          />
+
+          <AgentMemoryPanel
+            v-else-if="agentSidebarTab === 'memory'"
+            :scope="selectedScope"
+            :agent-id="currentSessionAgentId || selectedAgentId"
+            :agent-name="currentAgent?.name"
+          />
+
+          <AgentResourcesPanel
+            v-else-if="agentSidebarTab === 'resources'"
+            :agent-name="currentAgent?.name"
+            :mcp-enabled="Boolean(currentAgentCapabilities?.mcpEnabled)"
+            :skill-enabled="Boolean(currentAgentCapabilities?.skillEnabled)"
+          />
+
+          <AgentTaskBoard v-else :task="currentTask" :plan="latestPlan" />
+        </div>
+      </aside>
+
+      <button class="agent-splitter" type="button" aria-label="resize agent sidebar" @pointerdown="startAgentResize" @dblclick="resetAgentSidebarLayout" />
 
       <div class="agent-center">
         <AgentToolbar
@@ -40,9 +121,42 @@
           @open-settings="openSettingsPage"
         />
 
-        <section v-if="!aiStore.isConfigured" class="agent-warning glass-panel">
+        <section v-if="false" class="agent-warning glass-panel">
           <strong>当前还没有可用模型配置。</strong>
           <p>先在 AI 设置里补齐服务地址、模型和鉴权信息，角色能力边界才会落到真实对话链路里。</p>
+        </section>
+
+        <section v-if="showAgentRuntimeStatus" class="agent-warning glass-panel">
+          <div class="agent-warning-copy">
+            <strong>{{ agentRuntimeNoticeTitle }}</strong>
+            <p>{{ agentRuntimeNoticeDescription }}</p>
+          </div>
+
+          <div class="agent-warning-grid">
+            <article
+              v-for="item in agentRuntimeChecks"
+              :key="item.key"
+              class="agent-warning-card"
+              :class="{ 'is-ready': item.ready, 'is-problem': !item.ready }"
+            >
+              <span class="warning-card-label">{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <span class="warning-card-note">{{ item.note }}</span>
+            </article>
+          </div>
+
+          <div class="agent-warning-actions">
+            <button class="warning-action is-primary" type="button" @click="openSettingsPage">打开 AI 设置</button>
+            <button
+              class="warning-action"
+              type="button"
+              :disabled="!canRefreshModels || loadingAiModels"
+              @click="refreshModelOptions"
+            >
+              {{ loadingAiModels ? '刷新中...' : '刷新模型列表' }}
+            </button>
+            <button class="warning-action" type="button" @click="openSub2ApiPage">Sub2API</button>
+          </div>
         </section>
 
         <AgentMessageList
@@ -80,42 +194,29 @@
           @step-delta="adjustMaxAutoSteps"
           @apply-recommended-steps="applyRecommendedAutoSteps"
         />
-      </div>
 
-      <div class="agent-side">
-        <AgentTaskBoard :task="currentTask" :plan="latestPlan" />
-        <AgentProfileManager
-          :agents="agentProfiles"
-          :available-models="availableAiModels"
-          :selected-agent-id="selectedAgentId"
-          :current-agent-id="currentSessionAgentId"
-          :current-scope="selectedScope"
-          :current-session-has-messages="Boolean(currentSession?.messages.length)"
-          :streaming="aiStore.streaming"
-          @select-agent="handleSelectAgent"
-          @save-agent="handleSaveAgent"
-          @delete-agent="handleDeleteAgent"
+        <AgentContextBar
+          :metrics="currentContextMetrics"
+          :agent-count="agentProfiles.length"
+          :current-agent-name="currentAgent?.name || ''"
+          :memory-enabled="Boolean(currentAgentCapabilities?.memoryEnabled)"
         />
       </div>
-    </div>
 
-    <AgentContextBar
-      :metrics="currentContextMetrics"
-      :agent-count="agentProfiles.length"
-      :current-agent-name="currentAgent?.name || ''"
-      :memory-enabled="Boolean(currentAgentCapabilities?.memoryEnabled)"
-    />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { AIChatAttachment, AIConversationScope, AIAgentProfile, AIProviderModel } from '@/types'
 import AgentContextBar from '@/components/agent/AgentContextBar.vue'
 import AgentInputBar from '@/components/agent/AgentInputBar.vue'
+import AgentMemoryPanel from '@/components/agent/AgentMemoryPanel.vue'
 import AgentMessageList from '@/components/agent/AgentMessageList.vue'
 import AgentProfileManager from '@/components/agent/AgentProfileManager.vue'
+import AgentResourcesPanel from '@/components/agent/AgentResourcesPanel.vue'
 import AgentSessionList from '@/components/agent/AgentSessionList.vue'
 import AgentTaskBoard from '@/components/agent/AgentTaskBoard.vue'
 import AgentToolbar from '@/components/agent/AgentToolbar.vue'
@@ -139,7 +240,13 @@ const availableAiModels = ref<AIProviderModel[]>([])
 const loadingAiModels = ref(false)
 const modelLoadError = ref('')
 const playingMessageId = ref('')
+const agentSidebarTab = ref<'sessions' | 'roles' | 'memory' | 'resources' | 'tasks'>('sessions')
+const agentWorkbenchLayout = ref({
+  sidebarWidth: 288,
+  sidebarCollapsed: false,
+})
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
+let removeAgentResizeListeners: (() => void) | null = null
 
 const starterPrompts = [
   '先帮我拆解需求并给出详细执行计划，暂时先不要动手，等我确认后再持续推进。',
@@ -147,7 +254,6 @@ const starterPrompts = [
   '根据当前角色的人设和能力，直接说明你现在可以替我做什么，以及哪些事情需要我确认。'
 ]
 
-const aiConfig = computed(() => aiStore.config)
 const mainSessions = computed(() => aiStore.getSortedSessions('main'))
 const live2dSessions = computed(() => aiStore.getSortedSessions('live2d'))
 const agentProfiles = computed(() => aiStore.getAgentProfiles())
@@ -167,11 +273,37 @@ const combinedSessions = computed(() => {
     ...mainSessions.value.map(session => ({ ...session, isPinned: false }))
   ]
 })
+const scopedSessionCount = computed(() => aiStore.getSortedSessions(selectedScope.value).length)
 const currentSession = computed(() => (selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null))
 const currentTask = computed(() => (currentSession.value ? aiStore.getLatestTaskForSession(currentSession.value.id) : null))
 const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
 const currentSessionAgentId = computed(() => currentSessionAgent.value?.id || '')
 const currentAgent = computed(() => currentSessionAgent.value || aiStore.getSelectedAgent(selectedScope.value))
+const agentWorkbenchStyle = computed(() => ({
+  '--agent-sidebar-width': agentWorkbenchLayout.value.sidebarCollapsed
+    ? '72px'
+    : `${agentWorkbenchLayout.value.sidebarWidth}px`,
+  '--agent-sidebar-splitter': agentWorkbenchLayout.value.sidebarCollapsed ? '0px' : '6px',
+}))
+const currentSidebarTitle = computed(() => {
+  if (agentSidebarTab.value === 'sessions') {
+    return '会话与角色入口'
+  }
+
+  if (agentSidebarTab.value === 'roles') {
+    return '角色与能力配置'
+  }
+
+  if (agentSidebarTab.value === 'memory') {
+    return '长期记忆管理'
+  }
+
+  if (agentSidebarTab.value === 'resources') {
+    return '托管资源与能力边界'
+  }
+
+  return '当前任务与计划'
+})
 const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || selectedScope.value))
 const currentAgentCapabilities = computed(() => currentSession.value
   ? aiStore.getEffectiveAgentCapabilities(currentSession.value)
@@ -197,15 +329,104 @@ const currentContextMetrics = computed(() => {
   return aiStore.getContextMetrics(currentSession.value.id)
 })
 const canRefreshModels = computed(() => {
-  if (!aiConfig.value.baseUrl.trim()) {
+  if (!runtimeAiConfig.value.baseUrl.trim()) {
     return false
   }
 
-  if (aiConfig.value.protocol === 'ollama-local' || aiConfig.value.protocol === 'custom') {
+  if (runtimeAiConfig.value.protocol === 'ollama-local' || runtimeAiConfig.value.protocol === 'custom') {
     return true
   }
 
-  return aiConfig.value.apiKey.trim().length > 0
+  return runtimeAiConfig.value.apiKey.trim().length > 0
+})
+const apiKeyRequired = computed(() => !['ollama-local', 'custom'].includes(runtimeAiConfig.value.protocol))
+const modelCatalogSummary = computed(() => {
+  if (loadingAiModels.value) {
+    return '读取中'
+  }
+
+  if (modelLoadError.value) {
+    return '读取失败'
+  }
+
+  if (availableAiModels.value.length > 0) {
+    return `${availableAiModels.value.length} 个`
+  }
+
+  return canRefreshModels.value ? '未读取' : '待配置'
+})
+const agentRuntimeChecks = computed(() => [
+  {
+    key: 'base-url',
+    label: '接口地址',
+    value: runtimeAiConfig.value.baseUrl.trim() || '未设置',
+    note: runtimeAiConfig.value.protocol,
+    ready: runtimeAiConfig.value.baseUrl.trim().length > 0,
+  },
+  {
+    key: 'auth',
+    label: '鉴权状态',
+    value: apiKeyRequired.value
+      ? (runtimeAiConfig.value.apiKey.trim().length > 0 ? '已提供 API Key' : '缺少 API Key')
+      : '当前协议可省略',
+    note: apiKeyRequired.value ? '用于远端模型列表与对话请求' : '本地 / 自托管协议',
+    ready: !apiKeyRequired.value || runtimeAiConfig.value.apiKey.trim().length > 0,
+  },
+  {
+    key: 'model',
+    label: '当前模型',
+    value: runtimeAiConfig.value.model.trim() || '未选择',
+    note: currentAgent.value ? `角色 ${currentAgent.value.name}` : '使用全局默认配置',
+    ready: runtimeAiConfig.value.model.trim().length > 0,
+  },
+  {
+    key: 'catalog',
+    label: '模型列表',
+    value: modelCatalogSummary.value,
+    note: modelLoadError.value || (loadingAiModels.value ? '正在拉取接口返回模型' : '用于验证前后端联调'),
+    ready: availableAiModels.value.length > 0 && !modelLoadError.value,
+  }
+])
+const agentRuntimeNoticeTitle = computed(() => {
+  if (!aiStore.isConfigured) {
+    return '当前角色还没有可用的运行配置'
+  }
+
+  if (modelLoadError.value) {
+    return '模型列表读取失败，需要继续联调接口'
+  }
+
+  if (canRefreshModels.value && availableAiModels.value.length === 0) {
+    return '当前接口尚未返回可用模型列表'
+  }
+
+  return '请继续确认 Agent 运行时联调状态'
+})
+const agentRuntimeNoticeDescription = computed(() => {
+  if (modelLoadError.value) {
+    return modelLoadError.value
+  }
+
+  if (!aiStore.isConfigured) {
+    return '先补齐当前角色的接口地址、鉴权信息和模型选择，Agent 才能把角色能力边界真正映射到对话链路里。'
+  }
+
+  if (canRefreshModels.value && availableAiModels.value.length === 0) {
+    return '当前角色已经具备基础连接信息，但模型目录仍未返回结果。建议先刷新模型列表，再决定是否切换到 Sub2API 或设置页继续排查。'
+  }
+
+  return '当前工作台仍建议确认一次模型目录和接口返回，避免角色切换后继续沿用旧的联调结果。'
+})
+const showAgentRuntimeStatus = computed(() => {
+  if (!aiStore.isConfigured) {
+    return true
+  }
+
+  if (modelLoadError.value) {
+    return true
+  }
+
+  return canRefreshModels.value && !loadingAiModels.value && availableAiModels.value.length === 0
 })
 const currentModelMeta = computed(() => {
   const matched = availableAiModels.value.find(model => model.name === runtimeAiConfig.value.model || model.id === runtimeAiConfig.value.model)
@@ -230,6 +451,15 @@ const currentModelBadges = computed(() => [
   ...getModelLimitLabels(currentModelMeta.value?.limits)
 ])
 const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
+const currentContextSummary = computed(() => {
+  if (!currentContextMetrics.value) {
+    return '待装配'
+  }
+
+  const selected = currentContextMetrics.value.selectedContextTokens || 0
+  const estimated = currentContextMetrics.value.estimatedInputTokens || 0
+  return estimated > 0 ? `${selected}/${estimated}` : `${selected}`
+})
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
@@ -253,6 +483,7 @@ const showVoiceActions = computed(() => {
 
   return currentSession.value?.scope === 'live2d' || settingsStore.settings.ttsShowMainReplyButton
 })
+const validSidebarTabs = ['sessions', 'roles', 'memory', 'resources', 'tasks'] as const
 
 watch(
   () => [selectedSessionId.value, currentSession.value?.messages.at(-1)?.id ?? '', aiStore.runtime.updatedAt],
@@ -268,9 +499,23 @@ watch(combinedSessions, () => {
 })
 
 watch(
-  () => [route.query.sessionId, route.query.scope],
+  () => [route.query.sessionId, route.query.scope, route.query.panel],
   () => {
     initializeSelection()
+  }
+)
+
+watch(
+  () => [selectedScope.value, selectedSessionId.value, agentSidebarTab.value],
+  () => {
+    syncAgentWorkbenchRoute()
+  }
+)
+
+watch(
+  () => [runtimeAiConfig.value.baseUrl, runtimeAiConfig.value.apiKey, runtimeAiConfig.value.protocol, currentSessionAgentId.value],
+  () => {
+    void refreshModelOptions()
   }
 )
 
@@ -279,8 +524,13 @@ onMounted(async () => {
   if (!aiStore.loaded) {
     await aiStore.init()
   }
+  loadAgentWorkbenchLayout()
   initializeSelection()
   void refreshModelOptions()
+})
+
+onBeforeUnmount(() => {
+  removeAgentResizeListeners?.()
 })
 
 function getRequestedScope(): AIConversationScope | null {
@@ -289,7 +539,22 @@ function getRequestedScope(): AIConversationScope | null {
     : null
 }
 
+function getRequestedSidebarTab() {
+  if (typeof route.query.panel !== 'string') {
+    return null
+  }
+
+  return validSidebarTabs.includes(route.query.panel as (typeof validSidebarTabs)[number])
+    ? route.query.panel as (typeof validSidebarTabs)[number]
+    : null
+}
+
 function initializeSelection() {
+  const requestedPanel = getRequestedSidebarTab()
+  if (requestedPanel) {
+    agentSidebarTab.value = requestedPanel
+  }
+
   const requestedSessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : ''
   if (requestedSessionId) {
     const session = aiStore.getSessionById(requestedSessionId)
@@ -330,6 +595,45 @@ function initializeSelection() {
   aiStore.switchSession(fallback.id, fallback.scope)
 }
 
+function syncAgentWorkbenchRoute() {
+  const nextSessionId = selectedSessionId.value || ''
+  const nextScope = selectedScope.value === 'live2d' ? 'live2d' : 'main'
+  const nextPanel = agentSidebarTab.value === 'sessions' ? '' : agentSidebarTab.value
+  const currentSessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : ''
+  const currentScope = typeof route.query.scope === 'string' ? route.query.scope : ''
+  const currentPanel = typeof route.query.panel === 'string' ? route.query.panel : ''
+
+  if (
+    currentSessionId === nextSessionId
+    && currentScope === nextScope
+    && currentPanel === nextPanel
+  ) {
+    return
+  }
+
+  const nextQuery = {
+    ...route.query,
+    scope: nextScope,
+  } as Record<string, string>
+
+  if (nextSessionId) {
+    nextQuery.sessionId = nextSessionId
+  } else {
+    delete nextQuery.sessionId
+  }
+
+  if (nextPanel) {
+    nextQuery.panel = nextPanel
+  } else {
+    delete nextQuery.panel
+  }
+
+  void router.replace({
+    path: route.path,
+    query: nextQuery,
+  })
+}
+
 function scrollMessageListToBottom() {
   nextTick(() => {
     requestAnimationFrame(() => {
@@ -352,7 +656,7 @@ async function refreshModelOptions() {
   modelLoadError.value = ''
 
   try {
-    availableAiModels.value = await fetchAvailableModels(aiConfig.value)
+    availableAiModels.value = await fetchAvailableModels(runtimeAiConfig.value)
   } catch (error) {
     availableAiModels.value = []
     modelLoadError.value = error instanceof Error ? error.message : '模型列表读取失败'
@@ -447,6 +751,23 @@ function startNewSession() {
   scrollMessageListToBottom()
 }
 
+function switchAgentScope(scope: AIConversationScope) {
+  if (selectedScope.value === scope && currentSession.value?.scope === scope) {
+    return
+  }
+
+  selectedScope.value = scope
+  const fallback = aiStore.getActiveSession(scope) || aiStore.getSortedSessions(scope)[0] || null
+  if (!fallback) {
+    selectedSessionId.value = ''
+    return
+  }
+
+  selectedSessionId.value = fallback.id
+  aiStore.switchSession(fallback.id, scope)
+  scrollMessageListToBottom()
+}
+
 function handleSessionSelect(sessionId: string) {
   if (aiStore.streaming) {
     return
@@ -524,8 +845,92 @@ async function handleDeleteAgent(agentId: string) {
   }
 }
 
+function loadAgentWorkbenchLayout() {
+  try {
+    const raw = window.localStorage.getItem('openagent.agent.workbench-layout')
+    if (!raw) {
+      return
+    }
+
+    const parsed = JSON.parse(raw) as Partial<typeof agentWorkbenchLayout.value>
+    agentWorkbenchLayout.value.sidebarWidth = clampAgentSidebarWidth(parsed.sidebarWidth, 288)
+    agentWorkbenchLayout.value.sidebarCollapsed = parsed.sidebarCollapsed === true
+  } catch {
+    // 忽略损坏的本地布局缓存，避免阻塞 Agent 页启动
+  }
+}
+
+function persistAgentWorkbenchLayout() {
+  window.localStorage.setItem('openagent.agent.workbench-layout', JSON.stringify(agentWorkbenchLayout.value))
+}
+
+function clampAgentSidebarWidth(value: unknown, fallback: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.min(380, Math.max(232, Math.round(value)))
+}
+
+function toggleAgentSidebar() {
+  agentWorkbenchLayout.value.sidebarCollapsed = !agentWorkbenchLayout.value.sidebarCollapsed
+  persistAgentWorkbenchLayout()
+}
+
+function resetAgentSidebarLayout() {
+  agentWorkbenchLayout.value.sidebarCollapsed = false
+  agentWorkbenchLayout.value.sidebarWidth = 288
+  persistAgentWorkbenchLayout()
+}
+
+function selectAgentSidebarTab(tab: 'sessions' | 'roles' | 'memory' | 'resources' | 'tasks') {
+  agentSidebarTab.value = tab
+  if (agentWorkbenchLayout.value.sidebarCollapsed) {
+    agentWorkbenchLayout.value.sidebarCollapsed = false
+    persistAgentWorkbenchLayout()
+  }
+}
+
+function startAgentResize(event: PointerEvent) {
+  if (window.innerWidth <= 960) {
+    return
+  }
+
+  event.preventDefault()
+  removeAgentResizeListeners?.()
+
+  const startX = event.clientX
+  const startWidth = agentWorkbenchLayout.value.sidebarWidth
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  const handlePointerMove = (moveEvent: PointerEvent) => {
+    agentWorkbenchLayout.value.sidebarCollapsed = false
+    agentWorkbenchLayout.value.sidebarWidth = clampAgentSidebarWidth(startWidth + (moveEvent.clientX - startX), startWidth)
+  }
+
+  const stopResize = () => {
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', stopResize)
+    window.removeEventListener('pointercancel', stopResize)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    persistAgentWorkbenchLayout()
+    removeAgentResizeListeners = null
+  }
+
+  removeAgentResizeListeners = stopResize
+  window.addEventListener('pointermove', handlePointerMove)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
+}
+
 function openSettingsPage() {
   void router.push('/ai-settings')
+}
+
+function openSub2ApiPage() {
+  void router.push('/sub2api')
 }
 
 function goToIDEView() {
@@ -573,32 +978,48 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 
 <style scoped>
 .agent-view {
-  --agent-accent: #ffb703;
+  --agent-accent: #5b8cff;
   display: grid;
-  gap: 18px;
+  gap: 8px;
   min-height: 100%;
+  padding: 4px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.1), transparent 20%),
+    radial-gradient(circle at top right, rgba(250, 204, 21, 0.08), transparent 18%),
+    linear-gradient(180deg, rgba(247, 250, 253, 0.98), rgba(235, 241, 248, 0.95));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+}
+
+.agent-view :deep(.glass-panel) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 247, 251, 0.95));
+  border-color: rgba(148, 163, 184, 0.22);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(16px);
 }
 
 .agent-hero,
 .agent-warning {
-  padding: 18px;
+  padding: 8px 10px;
 }
 
 .agent-hero {
-  align-items: start;
+  align-items: center;
   background:
-    radial-gradient(circle at top right, rgba(255, 183, 3, 0.22), transparent 32%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    radial-gradient(circle at top right, rgba(91, 140, 255, 0.16), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(244, 247, 251, 0.86));
   display: flex;
-  gap: 18px;
+  gap: 8px;
   justify-content: space-between;
 }
 
 .hero-eyebrow {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.16em;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   text-transform: uppercase;
 }
 
@@ -609,30 +1030,60 @@ p {
 }
 
 h1 {
-  font-size: clamp(28px, 3vw, 40px);
+  font-size: clamp(18px, 1.8vw, 22px);
 }
 
-.hero-copy,
-.agent-warning p {
-  color: var(--text-secondary);
-  line-height: 1.7;
-  margin-top: 10px;
-  max-width: 760px;
+.hero-main {
+  display: grid;
+  gap: 4px;
 }
 
+.hero-title-row,
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
+  gap: 5px;
+  align-items: center;
+}
+
+.hero-chip,
+.sidebar-scope {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.hero-chip.is-mode {
+  background: color-mix(in srgb, var(--agent-accent) 24%, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary);
+}
+
+.hero-subline,
+.agent-warning p {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  max-width: 920px;
+}
+
+.hero-subline {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mode-pill,
 .hero-link {
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 10px 14px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .mode-pill {
@@ -641,8 +1092,9 @@ h1 {
 }
 
 .mode-pill.active {
-  background: linear-gradient(135deg, rgba(255, 183, 3, 0.22), rgba(255, 209, 102, 0.18));
+  background: linear-gradient(135deg, rgba(255, 183, 3, 0.34), rgba(255, 209, 102, 0.2));
   color: var(--text-primary);
+  border-color: rgba(245, 158, 11, 0.18);
 }
 
 .hero-link {
@@ -651,49 +1103,413 @@ h1 {
   cursor: pointer;
 }
 
+.agent-workbench-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 251, 0.88));
+}
+
+.workbench-bar-copy,
+.workbench-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.workbench-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  max-width: 220px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-pill.is-mode {
+  background: color-mix(in srgb, var(--agent-accent) 18%, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+
+.workbench-toggle {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workbench-toggle.active {
+  background: color-mix(in srgb, var(--agent-accent) 22%, rgba(255, 255, 255, 0.05));
+  border-color: color-mix(in srgb, var(--agent-accent) 34%, rgba(148, 163, 184, 0.2));
+  color: var(--text-primary);
+}
+
 .agent-layout {
   display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-columns: var(--agent-sidebar-width) var(--agent-sidebar-splitter) minmax(0, 1fr);
+  gap: 6px;
   min-height: 0;
 }
 
-.agent-center,
-.agent-side {
+.agent-sidebar,
+.agent-sidebar-panel,
+.agent-center {
   display: grid;
-  gap: 18px;
+  gap: 6px;
   min-height: 0;
+  min-width: 0;
+}
+
+.agent-sidebar {
+  grid-column: 1;
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
+.agent-sidebar.is-collapsed {
+  grid-template-columns: 1fr;
+}
+
+.agent-sidebar-rail {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 5px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(243, 247, 251, 0.92));
+}
+
+.sidebar-tab {
+  position: relative;
+  min-height: 30px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sidebar-tab.active {
+  background: color-mix(in srgb, var(--agent-accent) 24%, rgba(255, 255, 255, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.18);
+  color: var(--text-primary);
+}
+
+.sidebar-tab.active::after {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 7px;
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 76%, white 24%));
+}
+
+.sidebar-tab--ghost {
+  margin-top: auto;
+}
+
+.agent-sidebar-panel.is-hidden,
+.agent-sidebar.is-collapsed + .agent-splitter {
+  display: none;
+}
+
+.sidebar-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 4px 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-splitter {
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+}
+
+.agent-splitter::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  opacity: 0;
+  transition: opacity 0.18s ease, background 0.18s ease;
+}
+
+.agent-splitter:hover::before,
+.agent-splitter:focus-visible::before {
+  opacity: 1;
+  background: color-mix(in srgb, var(--agent-accent) 58%, rgba(255, 255, 255, 0.1));
 }
 
 .agent-center {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-column: 3;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
 }
 
 .agent-warning {
+  display: grid;
+  gap: 10px;
   border: 1px solid rgba(255, 183, 3, 0.24);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 220, 0.92));
+}
+
+.agent-warning-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-warning-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agent-warning-card {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.agent-warning-card.is-ready {
+  border-color: rgba(34, 197, 94, 0.18);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.88), rgba(220, 252, 231, 0.72));
+}
+
+.agent-warning-card.is-problem {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.94), rgba(254, 243, 199, 0.8));
+}
+
+.warning-card-label,
+.warning-card-note {
+  font-size: 11px;
+}
+
+.warning-card-label {
+  color: var(--text-muted);
+}
+
+.warning-card-note {
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.agent-warning-card strong {
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.agent-warning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.warning-action {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.warning-action.is-primary {
+  border-color: rgba(245, 158, 11, 0.26);
+  background: linear-gradient(135deg, rgba(255, 214, 102, 0.9), rgba(255, 183, 77, 0.82));
+  color: #5c2b00;
+}
+
+.warning-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+:deep(.agent-session-list),
+:deep(.agent-profile-panel),
+:deep(.agent-memory-panel),
+:deep(.agent-resources-panel),
+:deep(.agent-task-board),
+:deep(.agent-toolbar),
+:deep(.agent-message-list),
+:deep(.agent-input-bar),
+:deep(.agent-context-bar) {
+  border-radius: 12px;
+}
+
+:deep(.agent-message-list),
+:deep(.agent-input-bar),
+:deep(.agent-context-bar) {
+  box-shadow: none;
+}
+
+:deep(.agent-session-list),
+:deep(.agent-profile-panel),
+:deep(.agent-resources-panel),
+:deep(.agent-task-board),
+:deep(.agent-toolbar),
+:deep(.agent-message-list),
+:deep(.agent-input-bar) {
+  padding: 8px;
+}
+
+:deep(.agent-session-list .session-card),
+:deep(.agent-profile-panel .agent-card),
+:deep(.agent-message-list .message-card),
+:deep(.agent-message-list .session-summary),
+:deep(.agent-message-list .attachment-card),
+:deep(.agent-message-list .tool-item),
+:deep(.agent-memory-panel .memory-card),
+:deep(.agent-task-board .task-step),
+:deep(.agent-task-board .phase-item),
+:deep(.agent-task-board .plan-next-task) {
+  border-radius: 12px;
+}
+
+:deep(.agent-toolbar h3),
+:deep(.agent-session-list h3),
+:deep(.agent-profile-panel h3),
+:deep(.agent-message-list h3) {
+  font-size: 16px;
+}
+
+:deep(.agent-toolbar .chip),
+:deep(.agent-session-list .action-btn),
+:deep(.agent-session-list .delete-btn),
+:deep(.agent-profile-panel .panel-btn),
+:deep(.agent-memory-panel .panel-btn),
+:deep(.agent-task-board .board-badge),
+:deep(.agent-message-list .starter-btn),
+:deep(.agent-message-list .voice-btn) {
+  min-height: 24px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+:deep(.agent-toolbar),
+:deep(.agent-session-list),
+:deep(.agent-profile-panel),
+:deep(.agent-message-list),
+:deep(.agent-input-bar),
+:deep(.agent-task-board) {
+  gap: 8px;
+}
+
+:deep(.agent-input-bar .message-input) {
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+
+:deep(.agent-input-bar .attachment-pill) {
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+
+:deep(.agent-profile-panel .field input),
+:deep(.agent-profile-panel .field textarea),
+:deep(.agent-profile-panel .field select),
+:deep(.agent-memory-panel .memory-input),
+:deep(.agent-memory-panel .memory-select) {
+  border-radius: 12px;
+}
+
+:deep(.agent-profile-panel .field textarea) {
+  min-height: 118px;
+}
+
+:deep(.agent-context-bar) {
+  grid-template-columns: minmax(0, 1.1fr) minmax(120px, 1fr) auto;
+  padding: 7px 9px;
+  gap: 6px;
+}
+
+:deep(.agent-context-bar .stat-pill),
+:deep(.agent-context-bar .context-label),
+:deep(.agent-context-bar .context-sub) {
+  font-size: 10px;
 }
 
 @media (max-width: 1280px) {
-  .agent-layout {
-    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  .agent-warning-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .agent-side {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .agent-layout {
+    grid-template-columns: minmax(232px, 280px) var(--agent-sidebar-splitter) minmax(0, 1fr);
   }
 }
 
 @media (max-width: 960px) {
-  .agent-hero,
-  .agent-layout,
-  .agent-side {
+  .agent-warning-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-hero,
+  .agent-workbench-bar {
     flex-direction: column;
   }
 
   .hero-actions {
     justify-content: flex-start;
+  }
+
+  .agent-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-sidebar-rail {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .sidebar-tab--ghost {
+    margin-top: 0;
+  }
+
+  .agent-splitter {
+    display: none;
+  }
+
+  .agent-center {
+    grid-column: 1;
   }
 }
 </style>

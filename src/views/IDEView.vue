@@ -2,9 +2,11 @@
   <div class="ide-view">
     <section class="ide-header glass-panel">
       <div class="header-copy">
-        <p class="header-eyebrow">OpenAgent v3.0</p>
-        <h1>IDE Mode</h1>
-        <p>把工作区、文件编辑、项目计划和开发日志放到同一个界面里，并直接在工作区内运行真实 shell 命令。</p>
+        <p class="header-eyebrow">IDE Workbench</p>
+        <h1>{{ workspace?.name || 'OpenAgent IDE' }}</h1>
+        <p class="header-path" :title="workspace?.rootPath || ''">
+          {{ workspace ? `项目目录 ${workspaceRootLabel}` : '先选择一个基础项目目录，再开始编辑、终端调试和 Agent 协作。' }}
+        </p>
       </div>
 
       <div class="header-actions">
@@ -20,6 +22,7 @@
             {{ item.name }}
           </option>
         </select>
+        <button class="btn btn-ghost btn-sm" :disabled="dirtyFileCount === 0" @click="saveAllTabs">保存全部</button>
         <button class="btn btn-secondary btn-sm" @click="openWorkspacePicker">{{ workspace ? '新建工作区' : '打开工作区' }}</button>
         <button class="btn btn-ghost btn-sm" :disabled="!workspace || refreshingWorkspace" @click="refreshWorkspaceState()">刷新结构</button>
       </div>
@@ -33,44 +36,223 @@
       <button class="btn btn-primary" @click="openWorkspacePicker">选择项目目录</button>
     </section>
 
+    <section v-if="!workspace" class="ide-empty-shell" aria-label="IDE 空工作台预览">
+      <IDEActivityBar
+        :workspace-ready="true"
+        :dirty-count="0"
+        :show-left-pane="true"
+        :show-bottom-pane="true"
+        :show-right-pane="true"
+        @open-workspace="openWorkspacePicker"
+        @refresh-workspace="refreshWorkspaceState"
+        @save-all="saveAllTabs"
+        @toggle-left-pane="void 0"
+        @toggle-bottom-pane="void 0"
+        @toggle-right-pane="void 0"
+        @open-agent="openAgentView"
+      />
+
+      <div class="ide-empty-left">
+        <section class="placeholder-panel glass-panel">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Explorer</p>
+              <strong>文件资源管理器</strong>
+            </div>
+            <button class="placeholder-action" type="button" @click="openWorkspacePicker">绑定项目</button>
+          </div>
+          <div class="placeholder-panel-body">
+            <div class="placeholder-tree">
+              <span class="placeholder-line is-strong">src</span>
+              <span class="placeholder-line">components</span>
+              <span class="placeholder-line">views</span>
+              <span class="placeholder-line">utils</span>
+            </div>
+            <ul class="placeholder-list">
+              <li>自动扫描项目目录与脚本入口</li>
+              <li>支持新建、拖拽、批量重命名与计划联动</li>
+              <li>绑定后会恢复编辑标签、终端与任务上下文</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="placeholder-panel glass-panel">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Resources</p>
+              <strong>MCP / Skills</strong>
+            </div>
+            <span class="placeholder-tag">待连接</span>
+          </div>
+          <div class="placeholder-panel-body is-compact">
+            <p>这里会显示当前工作区可见的 MCP 服务、托管 Skill、异常摘要与最近刷新状态。</p>
+            <div class="placeholder-tag-row">
+              <span class="placeholder-tag">MCP Servers</span>
+              <span class="placeholder-tag">Skills</span>
+              <span class="placeholder-tag">Runtime</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="ide-empty-center">
+        <section class="placeholder-panel glass-panel is-editor">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Editor</p>
+              <strong>文件内容区</strong>
+            </div>
+            <div class="placeholder-tab-row">
+              <span class="placeholder-mini-tab is-active">README.md</span>
+              <span class="placeholder-mini-tab">PLAN.md</span>
+              <span class="placeholder-mini-tab">index.ts</span>
+            </div>
+          </div>
+          <div class="placeholder-editor-body">
+            <span class="placeholder-code-line is-wide"></span>
+            <span class="placeholder-code-line"></span>
+            <span class="placeholder-code-line is-short"></span>
+            <span class="placeholder-code-line is-wide"></span>
+            <span class="placeholder-code-line"></span>
+          </div>
+        </section>
+
+        <section class="placeholder-panel glass-panel is-terminal">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Runtime</p>
+              <strong>终端与命令反馈</strong>
+            </div>
+            <span class="placeholder-tag">PTY</span>
+          </div>
+          <div class="placeholder-terminal-row">
+            <code>npm run dev</code>
+            <code>pnpm build</code>
+            <code>git status</code>
+          </div>
+          <p class="placeholder-copy">绑定工作区后会创建真实终端标签、持续回传输出、自动收口超时或交互提示，并把结果同步给 IDE Agent。</p>
+        </section>
+      </div>
+
+      <aside class="ide-empty-right">
+        <section v-if="recentWorkspaces.length > 0" class="placeholder-panel glass-panel">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Recent</p>
+              <strong>最近工作区</strong>
+            </div>
+            <span class="placeholder-tag">{{ recentWorkspaces.length }} 个</span>
+          </div>
+          <div class="recent-workspace-list">
+            <button
+              v-for="item in recentWorkspaces"
+              :key="item.id"
+              type="button"
+              class="recent-workspace-card"
+              @click="handleWorkspaceSwitch(item.id)"
+            >
+              <strong>{{ item.name }}</strong>
+              <span class="recent-workspace-path">
+                项目 {{ compactWorkbenchPath(item.rootPath, 2) }}
+              </span>
+              <span class="recent-workspace-path is-artifact">
+                产物 {{ compactWorkbenchPath(item.artifactRootPath, 2) || '未设置' }}
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <section class="placeholder-panel glass-panel">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Inspector</p>
+              <strong>IDE Agent / 计划 / 日志</strong>
+            </div>
+            <span class="placeholder-tag">Ready</span>
+          </div>
+          <div class="placeholder-card-grid">
+            <article class="placeholder-card">
+              <strong>IDE Agent</strong>
+              <p>负责读代码、提炼上下文、调用工具与持续推进任务。</p>
+            </article>
+            <article class="placeholder-card">
+              <strong>计划面板</strong>
+              <p>基于目录结构、脚本与框架自动生成阶段、任务和执行文档。</p>
+            </article>
+            <article class="placeholder-card">
+              <strong>开发日志</strong>
+              <p>持续记录关键改动、验证结果和上下文接力信息。</p>
+            </article>
+          </div>
+        </section>
+      </aside>
+    </section>
+
     <template v-else>
-      <section class="workspace-overview glass-panel">
-        <div class="workspace-overview-copy">
-          <strong>{{ workspace.name }}</strong>
-          <span>项目目录：{{ workspace.rootPath }}</span>
-          <span>产物目录：{{ workspace.artifactRootPath }}</span>
-          <small>当前共 {{ workspaceList.length }} 个工作区，终端、计划、编辑会话会按工作区独立运行。</small>
+      <section class="workbench-toolbar glass-panel">
+        <div class="workbench-toolbar-copy">
+          <span class="toolbar-pill is-mode">Workbench</span>
+          <span class="toolbar-pill is-path" :title="workspace.rootPath">{{ workspaceRootLabel }}</span>
+          <span class="toolbar-pill" :title="workspace.artifactRootPath">产物 {{ artifactRootLabel }}</span>
+          <span class="toolbar-pill">{{ workspace.language || '未识别语言' }}</span>
+          <span class="toolbar-pill">{{ workspace.framework || '未识别框架' }}</span>
+          <span class="toolbar-pill" :title="activeFilePath || ''">{{ activeFileLabel }}</span>
+          <span class="toolbar-pill">标签 {{ editorTabs.length }}</span>
+          <span class="toolbar-pill">未保存 {{ dirtyFileCount }}</span>
+        </div>
+        <div class="workbench-toolbar-actions">
+          <button class="toolbar-toggle" :class="{ active: !ideWorkbenchLayout.leftCollapsed }" @click="toggleIdePane('left')">资源</button>
+          <button class="toolbar-toggle" :class="{ active: !ideWorkbenchLayout.mcpCollapsed && !ideWorkbenchLayout.leftCollapsed }" @click="toggleIdePane('mcp')">MCP</button>
+          <button class="toolbar-toggle" :class="{ active: !ideWorkbenchLayout.bottomCollapsed }" @click="toggleIdePane('bottom')">终端</button>
+          <button class="toolbar-toggle" :class="{ active: !ideWorkbenchLayout.rightCollapsed }" @click="toggleIdePane('right')">Inspector</button>
+          <button class="toolbar-toggle" :class="{ active: isIdeFocusMode }" @click="toggleIdeFocusMode">{{ isIdeFocusMode ? '退出聚焦' : '聚焦编辑区' }}</button>
+          <button class="toolbar-toggle" @click="resetIdeWorkbenchLayout">重置布局</button>
         </div>
       </section>
 
-      <div class="ide-shell">
+      <div class="ide-shell" :class="ideShellClasses" :style="ideWorkbenchStyle">
         <IDEActivityBar
           :workspace-ready="Boolean(workspace)"
           :dirty-count="dirtyFileCount"
+          :show-left-pane="!ideWorkbenchLayout.leftCollapsed"
+          :show-bottom-pane="!ideWorkbenchLayout.bottomCollapsed"
+          :show-right-pane="!ideWorkbenchLayout.rightCollapsed"
           @open-workspace="openWorkspacePicker"
           @refresh-workspace="refreshWorkspaceState"
           @save-all="saveAllTabs"
+          @toggle-left-pane="toggleIdePane('left')"
+          @toggle-bottom-pane="toggleIdePane('bottom')"
+          @toggle-right-pane="toggleIdePane('right')"
           @open-agent="openAgentView"
         />
 
-        <IDEExplorer
-          :workspace="workspace"
-          :active-path="activeFilePath"
-          :open-paths="openTabPaths"
-          :clipboard-count="clipboardCount"
-          @open-file="openFile"
-          @create-file="handleCreateFile"
-          @create-directory="handleCreateDirectory"
-          @copy-entries="handleCopyEntries"
-          @paste-entries="handlePasteEntries"
-          @rename-entry="handleRenameEntry"
-          @rename-entries="handleRenameEntries"
-          @delete-entry="handleDeleteEntry"
-          @delete-entries="handleDeleteEntries"
-          @move-entries="handleMoveEntries"
-          @refresh="refreshWorkspaceState"
-          @open-workspace="openWorkspacePicker"
-        />
+        <div class="ide-left-column" :class="{ 'is-collapsed': ideWorkbenchLayout.leftCollapsed, 'is-mcp-collapsed': ideWorkbenchLayout.mcpCollapsed }">
+          <IDEExplorer
+            class="ide-explorer-panel"
+            :workspace="workspace"
+            :active-path="activeFilePath"
+            :open-paths="openTabPaths"
+            :clipboard-count="clipboardCount"
+            @open-file="openFile"
+            @create-file="handleCreateFile"
+            @create-directory="handleCreateDirectory"
+            @copy-entries="handleCopyEntries"
+            @paste-entries="handlePasteEntries"
+            @rename-entry="handleRenameEntry"
+            @rename-entries="handleRenameEntries"
+            @delete-entry="handleDeleteEntry"
+            @delete-entries="handleDeleteEntries"
+            @move-entries="handleMoveEntries"
+            @refresh="refreshWorkspaceState"
+            @open-workspace="openWorkspacePicker"
+          />
+
+          <button class="ide-splitter ide-splitter--horizontal is-inline-left" type="button" aria-label="调整 MCP 面板高度" @pointerdown="startIdeResize('mcp', $event)" @dblclick="resetIdePaneSize('mcp')" />
+
+          <IDEMcpPanel class="ide-mcp-panel-slot" />
+        </div>
+
+        <button class="ide-splitter ide-splitter--vertical is-left" type="button" aria-label="调整资源管理器宽度" @pointerdown="startIdeResize('left', $event)" @dblclick="resetIdePaneSize('left')" />
 
         <div class="ide-center">
           <IDEEditor
@@ -85,16 +267,38 @@
             @save-all="saveAllTabs"
           />
 
-          <IDETerminal
-            :workspace-path="workspace.rootPath"
-            :active-file-path="activeFilePath"
-            :dirty-count="dirtyFileCount"
-            :scripts="terminalScripts"
-          />
+          <button class="ide-splitter ide-splitter--horizontal" type="button" aria-label="调整终端高度" @pointerdown="startIdeResize('bottom', $event)" @dblclick="resetIdePaneSize('bottom')" />
+
+          <div class="ide-terminal-slot">
+            <IDETerminal
+              :workspace-path="workspace.rootPath"
+              :active-file-path="activeFilePath"
+              :dirty-count="dirtyFileCount"
+              :scripts="terminalScripts"
+            />
+          </div>
         </div>
 
+        <button class="ide-splitter ide-splitter--vertical is-right" type="button" aria-label="调整右侧面板宽度" @pointerdown="startIdeResize('right', $event)" @dblclick="resetIdePaneSize('right')" />
+
         <div class="ide-sidebar">
+          <div class="inspector-toolbar glass-panel">
+            <div class="inspector-copy">
+              <p class="header-eyebrow">Inspector</p>
+              <strong>{{ ideInspectorTitle }}</strong>
+            </div>
+            <div class="inspector-tabs">
+              <button class="inspector-tab" :class="{ active: ideInspectorTab === 'assistant' }" @click="ideInspectorTab = 'assistant'">Agent</button>
+              <button class="inspector-tab" :class="{ active: ideInspectorTab === 'plan' }" @click="ideInspectorTab = 'plan'">计划</button>
+              <button class="inspector-tab" :class="{ active: ideInspectorTab === 'log' }" @click="ideInspectorTab = 'log'">日志</button>
+            </div>
+          </div>
+
+          <IDEAssistantPanel v-if="ideInspectorTab === 'assistant'" class="ide-assistant-panel-slot" />
+
           <IDEPlanPanel
+            v-else-if="ideInspectorTab === 'plan'"
+            class="ide-plan-panel-slot"
             :plans="workspacePlans"
             :selected-plan-id="selectedPlanId"
             :replanning="replanningPlan"
@@ -114,7 +318,7 @@
             @pause-autonomy-run="handlePauseAutonomyRun"
           />
 
-          <IDEDevLog :plan="selectedPlan" />
+          <IDEDevLog v-else class="ide-devlog-panel-slot" :plan="selectedPlan" />
         </div>
       </div>
 
@@ -138,9 +342,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import IDEActivityBar from '@/components/ide/IDEActivityBar.vue'
+import IDEAssistantPanel from '@/components/ide/IDEAssistantPanel.vue'
 import IDEDevLog from '@/components/ide/IDEDevLog.vue'
 import IDEEditor from '@/components/ide/IDEEditor.vue'
 import IDEExplorer from '@/components/ide/IDEExplorer.vue'
+import IDEMcpPanel from '@/components/ide/IDEMcpPanel.vue'
 import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
@@ -195,6 +401,27 @@ interface EditorSelectionPayload {
 }
 
 type WorkspacePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
+type IdeWorkbenchLayoutState = {
+  leftWidth: number
+  rightWidth: number
+  bottomHeight: number
+  mcpHeight: number
+  leftCollapsed: boolean
+  rightCollapsed: boolean
+  bottomCollapsed: boolean
+  mcpCollapsed: boolean
+}
+
+const DEFAULT_IDE_WORKBENCH_LAYOUT: IdeWorkbenchLayoutState = {
+  leftWidth: 232,
+  rightWidth: 312,
+  bottomHeight: 196,
+  mcpHeight: 156,
+  leftCollapsed: false,
+  rightCollapsed: false,
+  bottomCollapsed: false,
+  mcpCollapsed: false,
+}
 
 const aiStore = useAIStore()
 const router = useRouter()
@@ -204,18 +431,27 @@ const activeFilePath = ref('')
 const terminalScripts = ref<Array<{ name: string; command: string }>>([])
 const explorerClipboardEntries = ref<ExplorerEntryPayload[]>([])
 const selectedPlanId = ref('')
+const ideInspectorTab = ref<'assistant' | 'plan' | 'log'>('assistant')
 const refreshingWorkspace = ref(false)
 const replanningPlan = ref(false)
 const syncingPlanBaseline = ref(false)
 const syncingAutonomyRun = ref(false)
 const updatingPlanStatus = ref(false)
 const selectedPlanDrift = ref<ProjectPlanDriftSummary | null>(null)
+const ideWorkbenchLayout = ref<IdeWorkbenchLayoutState>({ ...DEFAULT_IDE_WORKBENCH_LAYOUT })
+const ideWorkbenchRestoreSnapshot = ref<IdeWorkbenchLayoutState | null>(null)
 let selectedPlanDriftRequestId = 0
 let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
 let syncingEditorSession = false
+let removeIdeResizeListeners: (() => void) | null = null
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspaceList = computed(() => aiStore.getIDEWorkspaces())
+const recentWorkspaces = computed(() => {
+  return [...workspaceList.value]
+    .sort((left, right) => (right.lastOpenedAt || right.updatedAt || 0) - (left.lastOpenedAt || left.updatedAt || 0))
+    .slice(0, 4)
+})
 const workspacePlans = computed(() => {
   if (!workspace.value) {
     return []
@@ -242,6 +478,33 @@ const selectedAutonomyRun = computed<AutonomyRun | null>(() => {
 
   return aiStore.getAutonomyRunByPlan(selectedPlan.value.id)
 })
+const ideWorkbenchStyle = computed(() => ({
+  '--ide-left-width': ideWorkbenchLayout.value.leftCollapsed ? '0px' : `${ideWorkbenchLayout.value.leftWidth}px`,
+  '--ide-right-width': ideWorkbenchLayout.value.rightCollapsed ? '0px' : `${ideWorkbenchLayout.value.rightWidth}px`,
+  '--ide-bottom-height': ideWorkbenchLayout.value.bottomCollapsed ? '0px' : `${ideWorkbenchLayout.value.bottomHeight}px`,
+  '--ide-left-bottom-height': ideWorkbenchLayout.value.leftCollapsed || ideWorkbenchLayout.value.mcpCollapsed ? '0px' : `${ideWorkbenchLayout.value.mcpHeight}px`,
+  '--ide-left-splitter': ideWorkbenchLayout.value.leftCollapsed ? '0px' : '6px',
+  '--ide-right-splitter': ideWorkbenchLayout.value.rightCollapsed ? '0px' : '6px',
+  '--ide-bottom-splitter': ideWorkbenchLayout.value.bottomCollapsed ? '0px' : '6px',
+  '--ide-left-bottom-splitter': ideWorkbenchLayout.value.leftCollapsed || ideWorkbenchLayout.value.mcpCollapsed ? '0px' : '6px',
+}))
+const isIdeFocusMode = computed(() => ideWorkbenchRestoreSnapshot.value !== null)
+const ideShellClasses = computed(() => ({
+  'is-left-collapsed': ideWorkbenchLayout.value.leftCollapsed,
+  'is-right-collapsed': ideWorkbenchLayout.value.rightCollapsed,
+  'is-bottom-collapsed': ideWorkbenchLayout.value.bottomCollapsed,
+}))
+const ideInspectorTitle = computed(() => {
+  if (ideInspectorTab.value === 'assistant') {
+    return 'IDE Agent'
+  }
+
+  if (ideInspectorTab.value === 'plan') {
+    return '项目计划'
+  }
+
+  return '开发日志'
+})
 const openTabPaths = computed(() => editorTabs.value.map(tab => tab.path))
 const clipboardCount = computed(() => explorerClipboardEntries.value.length)
 const dirtyFileCount = computed(() => editorTabs.value.filter(tab => tab.content !== tab.savedContent).length)
@@ -261,6 +524,9 @@ const editorCursorState = computed(() => {
     activeTab.value.selectionEnd,
   )
 })
+const workspaceRootLabel = computed(() => compactWorkbenchPath(workspace.value?.rootPath || '', 2) || '未绑定工作区')
+const artifactRootLabel = computed(() => compactWorkbenchPath(workspace.value?.artifactRootPath || '', 2) || '未设置')
+const activeFileLabel = computed(() => activeFilePath.value ? compactWorkbenchPath(activeFilePath.value, 3) : '未选择文件')
 
 async function withEditorSessionSyncPaused(task: () => void | Promise<void>) {
   syncingEditorSession = true
@@ -289,6 +555,21 @@ function normalizeEditorSelectionRange(content: string, selectionStart: number, 
     selectionStart: Math.min(start, end),
     selectionEnd: Math.max(start, end),
   }
+}
+
+function compactWorkbenchPath(targetPath: string, tailSegments = 2) {
+  const normalized = targetPath.trim().replace(/\\/g, '/')
+  if (!normalized) {
+    return ''
+  }
+
+  const segments = normalized.split('/').filter(Boolean)
+  if (segments.length <= tailSegments + 1) {
+    return normalized
+  }
+
+  const head = /^[A-Za-z]:$/.test(segments[0]) ? `${segments[0]}/` : ''
+  return `${head}.../${segments.slice(-tailSegments).join('/')}`
 }
 
 function deriveEditorCursorState(content: string, selectionStart: number, selectionEnd: number) {
@@ -479,6 +760,7 @@ onMounted(async () => {
   if (!aiStore.loaded) {
     await aiStore.init()
   }
+  loadIdeWorkbenchLayout()
   window.addEventListener('beforeunload', handleBeforeUnload)
   await loadWorkspaceScripts()
   await refreshSelectedPlanDrift({ silent: true })
@@ -490,6 +772,7 @@ onBeforeRouteLeave(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
+  removeIdeResizeListeners?.()
   persistEditorSession({ immediate: true })
   if (selectedPlanDriftTimer) {
     clearTimeout(selectedPlanDriftTimer)
@@ -499,6 +782,162 @@ onBeforeUnmount(() => {
 
 function handleBeforeUnload() {
   persistEditorSession({ immediate: true })
+}
+
+function loadIdeWorkbenchLayout() {
+  try {
+    const raw = window.localStorage.getItem('openagent.ide.workbench-layout')
+    if (!raw) {
+      return
+    }
+
+    const parsed = JSON.parse(raw) as Partial<typeof ideWorkbenchLayout.value>
+    ideWorkbenchLayout.value = {
+      leftWidth: clampWorkbenchSize(parsed.leftWidth, 212, 360, DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth),
+      rightWidth: clampWorkbenchSize(parsed.rightWidth, 276, 420, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
+      bottomHeight: clampWorkbenchSize(parsed.bottomHeight, 150, 320, DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight),
+      mcpHeight: clampWorkbenchSize(parsed.mcpHeight, 112, 240, DEFAULT_IDE_WORKBENCH_LAYOUT.mcpHeight),
+      leftCollapsed: parsed.leftCollapsed === true,
+      rightCollapsed: parsed.rightCollapsed === true,
+      bottomCollapsed: parsed.bottomCollapsed === true,
+      mcpCollapsed: parsed.mcpCollapsed === true,
+    }
+  } catch {
+    // 忽略损坏的本地布局缓存，避免阻塞 IDE 启动
+  }
+}
+
+function persistIdeWorkbenchLayout() {
+  window.localStorage.setItem('openagent.ide.workbench-layout', JSON.stringify(ideWorkbenchLayout.value))
+}
+
+function clearIdeFocusSnapshot() {
+  ideWorkbenchRestoreSnapshot.value = null
+}
+
+function toggleIdePane(target: 'left' | 'right' | 'bottom' | 'mcp') {
+  clearIdeFocusSnapshot()
+  if (target === 'left') {
+    ideWorkbenchLayout.value.leftCollapsed = !ideWorkbenchLayout.value.leftCollapsed
+  } else if (target === 'mcp') {
+    if (ideWorkbenchLayout.value.leftCollapsed) {
+      ideWorkbenchLayout.value.leftCollapsed = false
+      ideWorkbenchLayout.value.mcpCollapsed = false
+    } else {
+      ideWorkbenchLayout.value.mcpCollapsed = !ideWorkbenchLayout.value.mcpCollapsed
+    }
+  } else if (target === 'right') {
+    ideWorkbenchLayout.value.rightCollapsed = !ideWorkbenchLayout.value.rightCollapsed
+  } else {
+    ideWorkbenchLayout.value.bottomCollapsed = !ideWorkbenchLayout.value.bottomCollapsed
+  }
+
+  persistIdeWorkbenchLayout()
+}
+
+function resetIdePaneSize(target: 'left' | 'right' | 'bottom' | 'mcp') {
+  clearIdeFocusSnapshot()
+  if (target === 'left') {
+    ideWorkbenchLayout.value.leftCollapsed = false
+    ideWorkbenchLayout.value.leftWidth = DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth
+  } else if (target === 'mcp') {
+    ideWorkbenchLayout.value.mcpCollapsed = false
+    ideWorkbenchLayout.value.mcpHeight = DEFAULT_IDE_WORKBENCH_LAYOUT.mcpHeight
+  } else if (target === 'right') {
+    ideWorkbenchLayout.value.rightCollapsed = false
+    ideWorkbenchLayout.value.rightWidth = DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth
+  } else {
+    ideWorkbenchLayout.value.bottomCollapsed = false
+    ideWorkbenchLayout.value.bottomHeight = DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight
+  }
+
+  persistIdeWorkbenchLayout()
+}
+
+function resetIdeWorkbenchLayout() {
+  clearIdeFocusSnapshot()
+  ideWorkbenchLayout.value = { ...DEFAULT_IDE_WORKBENCH_LAYOUT }
+  persistIdeWorkbenchLayout()
+}
+
+function toggleIdeFocusMode() {
+  if (ideWorkbenchRestoreSnapshot.value) {
+    ideWorkbenchLayout.value = { ...ideWorkbenchRestoreSnapshot.value }
+    clearIdeFocusSnapshot()
+    persistIdeWorkbenchLayout()
+    return
+  }
+
+  ideWorkbenchRestoreSnapshot.value = { ...ideWorkbenchLayout.value }
+  ideWorkbenchLayout.value.leftCollapsed = true
+  ideWorkbenchLayout.value.rightCollapsed = true
+  ideWorkbenchLayout.value.bottomCollapsed = true
+  ideWorkbenchLayout.value.mcpCollapsed = true
+  persistIdeWorkbenchLayout()
+}
+
+function clampWorkbenchSize(value: unknown, min: number, max: number, fallback: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function startIdeResize(target: 'left' | 'right' | 'bottom' | 'mcp', event: PointerEvent) {
+  if (window.innerWidth <= 860) {
+    return
+  }
+
+  event.preventDefault()
+  clearIdeFocusSnapshot()
+
+  removeIdeResizeListeners?.()
+
+  const startX = event.clientX
+  const startY = event.clientY
+  const startLayout = { ...ideWorkbenchLayout.value }
+  const cursor = target === 'bottom' || target === 'mcp' ? 'row-resize' : 'col-resize'
+  document.body.style.cursor = cursor
+  document.body.style.userSelect = 'none'
+
+  const handlePointerMove = (moveEvent: PointerEvent) => {
+    if (target === 'left') {
+      ideWorkbenchLayout.value.leftCollapsed = false
+      ideWorkbenchLayout.value.leftWidth = clampWorkbenchSize(startLayout.leftWidth + (moveEvent.clientX - startX), 212, 360, startLayout.leftWidth)
+      return
+    }
+
+    if (target === 'right') {
+      ideWorkbenchLayout.value.rightCollapsed = false
+      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 276, 420, startLayout.rightWidth)
+      return
+    }
+
+    if (target === 'mcp') {
+      ideWorkbenchLayout.value.mcpCollapsed = false
+      ideWorkbenchLayout.value.mcpHeight = clampWorkbenchSize(startLayout.mcpHeight - (moveEvent.clientY - startY), 112, 240, startLayout.mcpHeight)
+      return
+    }
+
+    ideWorkbenchLayout.value.bottomCollapsed = false
+    ideWorkbenchLayout.value.bottomHeight = clampWorkbenchSize(startLayout.bottomHeight - (moveEvent.clientY - startY), 150, 320, startLayout.bottomHeight)
+  }
+
+  const stopResize = () => {
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', stopResize)
+    window.removeEventListener('pointercancel', stopResize)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    persistIdeWorkbenchLayout()
+    removeIdeResizeListeners = null
+  }
+
+  removeIdeResizeListeners = stopResize
+  window.addEventListener('pointermove', handlePointerMove)
+  window.addEventListener('pointerup', stopResize)
+  window.addEventListener('pointercancel', stopResize)
 }
 
 function openAgentView() {
@@ -1784,51 +2223,91 @@ async function handleReplanPlan(planId: string) {
 .ide-view {
   display: flex;
   flex-direction: column;
-  gap: $spacing-md;
+  gap: 6px;
   width: 100%;
   height: 100%;
   min-height: 0;
+  padding: 4px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    radial-gradient(circle at top left, rgba(96, 165, 250, 0.12), transparent 22%),
+    radial-gradient(circle at top right, rgba(244, 114, 182, 0.08), transparent 18%),
+    linear-gradient(180deg, rgba(247, 250, 253, 0.98), rgba(235, 241, 248, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.ide-view :deep(.glass-panel) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 247, 251, 0.95));
+  border-color: rgba(148, 163, 184, 0.22);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(16px);
 }
 
 .ide-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: $spacing-lg;
-  padding: $spacing-lg;
+  gap: 8px;
+  padding: 6px 10px;
 }
 
 .header-copy {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 
-  p {
+  > p {
     color: var(--text-secondary);
-    line-height: 1.7;
-    max-width: 760px;
+    line-height: 1.45;
+    max-width: 920px;
   }
+}
+
+.header-copy > p:not(.header-eyebrow):not(.header-path) {
+  display: none;
 }
 
 .header-eyebrow {
   color: var(--text-muted);
   font-size: $font-xs;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.header-copy h1 {
+  font-size: 20px;
+  line-height: 1.05;
+}
+
+.inspector-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.header-path {
+  color: var(--text-muted);
+  font-size: $font-sm;
+  max-width: 680px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .workspace-select {
-  min-width: 200px;
-  padding: 8px 12px;
+  min-width: 144px;
+  padding: 4px 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
@@ -1837,12 +2316,13 @@ async function handleReplanPlan(planId: string) {
 }
 
 .mode-pill {
-  padding: 8px 14px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: $font-sm;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 
@@ -1862,78 +2342,629 @@ async function handleReplanPlan(planId: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: $spacing-lg;
-  padding: $spacing-xl;
+  gap: $spacing-md;
+  padding: 12px 14px;
+  border-color: rgba(251, 191, 36, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 244, 0.92), rgba(255, 248, 236, 0.88));
 }
 
-.workspace-overview {
+.ide-empty-shell {
+  display: grid;
+  grid-template-columns: 52px minmax(220px, 248px) minmax(0, 1fr) minmax(268px, 320px);
+  gap: 6px;
+  flex: 1;
+  min-height: 520px;
+}
+
+.ide-empty-left,
+.ide-empty-center,
+.ide-empty-right {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ide-empty-left {
+  grid-template-rows: minmax(0, 1fr) minmax(128px, 156px);
+}
+
+.ide-empty-center {
+  grid-template-rows: minmax(0, 1fr) minmax(156px, 188px);
+}
+
+.ide-empty-right {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.placeholder-panel {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 250, 0.9));
+}
+
+.placeholder-panel.is-editor {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.placeholder-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: $spacing-lg;
-  padding: $spacing-md $spacing-lg;
+  gap: 8px;
 }
 
-.workspace-overview-copy {
+.placeholder-panel-body {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.placeholder-panel-body.is-compact {
+  gap: 8px;
+}
+
+.placeholder-panel-body p,
+.placeholder-copy,
+.placeholder-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.placeholder-action,
+.placeholder-tag,
+.placeholder-mini-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.placeholder-action {
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 16%, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.placeholder-tag,
+.placeholder-mini-tab {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.placeholder-mini-tab.is-active {
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+
+.placeholder-tab-row,
+.placeholder-tag-row,
+.placeholder-terminal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.placeholder-tree,
+.placeholder-list,
+.placeholder-card-grid,
+.placeholder-editor-body {
+  display: grid;
+  gap: 8px;
+}
+
+.placeholder-tree {
+  padding: 10px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.26), rgba(226, 232, 240, 0.12));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.placeholder-line {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.placeholder-line.is-strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.placeholder-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.placeholder-list li {
+  margin: 0;
+}
+
+.placeholder-card-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.placeholder-card {
   display: grid;
   gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(235, 241, 249, 0.88), rgba(226, 234, 244, 0.64));
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
 
-  span,
-  small {
-    color: var(--text-secondary);
-    line-height: 1.6;
+.placeholder-card strong {
+  font-size: 13px;
+}
+
+.recent-workspace-list {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.recent-workspace-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 68px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(236, 242, 249, 0.92), rgba(229, 236, 245, 0.74));
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.recent-workspace-card:hover,
+.recent-workspace-card:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 34%, rgba(148, 163, 184, 0.22));
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.recent-workspace-card strong {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.recent-workspace-path {
+  display: block;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-workspace-path.is-artifact {
+  color: var(--text-muted);
+}
+
+.placeholder-editor-body {
+  align-content: start;
+  padding: 10px;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.08), rgba(30, 41, 59, 0.04)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1));
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.placeholder-code-line {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.28), rgba(148, 163, 184, 0.12));
+}
+
+.placeholder-code-line.is-wide {
+  width: 82%;
+}
+
+.placeholder-code-line.is-short {
+  width: 38%;
+}
+
+.placeholder-terminal-row code {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.workbench-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+}
+
+.workbench-toolbar-copy,
+.workbench-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.toolbar-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  max-width: 236px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-pill.is-mode {
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+
+.toolbar-pill.is-path {
+  max-width: 288px;
+}
+
+.toolbar-toggle {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
+
+  &.active {
+    background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+    border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+    color: var(--text-primary);
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
   }
 }
 
 .onboarding-copy {
   display: flex;
   flex-direction: column;
-  gap: $spacing-sm;
+  gap: 6px;
 
   p {
     color: var(--text-secondary);
-    line-height: 1.7;
+    line-height: 1.55;
   }
 }
 
 .ide-shell {
   display: grid;
-  grid-template-columns: 64px minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
-  gap: $spacing-md;
+  grid-template-columns: 56px var(--ide-left-width) var(--ide-left-splitter) minmax(0, 1fr) var(--ide-right-splitter) var(--ide-right-width);
+  gap: 6px;
   flex: 1;
   min-height: 0;
 }
 
+.ide-left-column,
 .ide-center,
 .ide-sidebar {
   display: grid;
   min-height: 0;
-  gap: $spacing-md;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ide-left-column {
+  grid-column: 2;
+  grid-row: 1;
+  grid-template-rows: minmax(0, 1fr) var(--ide-left-bottom-splitter) var(--ide-left-bottom-height);
 }
 
 .ide-center {
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-column: 4;
+  grid-row: 1;
+  grid-template-rows: minmax(0, 1fr) var(--ide-bottom-splitter) var(--ide-bottom-height);
 }
 
 .ide-sidebar {
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-column: 6;
+  grid-row: 1;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+:deep(.ide-activity-bar) {
+  grid-column: 1;
+  min-height: 0;
+}
+
+.ide-explorer-panel {
+  min-height: 0;
+}
+
+.ide-mcp-panel-slot {
+  min-height: 0;
+}
+
+.ide-left-column.is-mcp-collapsed {
+  .ide-mcp-panel-slot,
+  .ide-splitter.is-inline-left {
+    visibility: hidden;
+    overflow: hidden;
+  }
+}
+
+.ide-assistant-panel-slot,
+.ide-plan-panel-slot,
+.ide-devlog-panel-slot {
+  min-height: 0;
+}
+
+.ide-terminal-slot {
+  min-height: 0;
+}
+
+.ide-shell.is-left-collapsed {
+  .ide-left-column {
+    visibility: hidden;
+    overflow: hidden;
+  }
+
+  .ide-splitter.is-left {
+    display: none;
+  }
+}
+
+.ide-shell.is-right-collapsed {
+  .ide-sidebar {
+    visibility: hidden;
+    overflow: hidden;
+  }
+
+  .ide-splitter.is-right {
+    display: none;
+  }
+}
+
+.ide-shell.is-bottom-collapsed {
+  .ide-terminal-slot {
+    visibility: hidden;
+    overflow: hidden;
+  }
+
+  .ide-splitter--horizontal {
+    display: none;
+  }
+}
+
+.ide-splitter {
+  border: none;
+  padding: 0;
+  background: transparent;
+  position: relative;
+  cursor: col-resize;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    opacity: 0;
+    transition: opacity 0.18s ease, background 0.18s ease;
+  }
+
+  &:hover::before,
+  &:focus-visible::before {
+    opacity: 1;
+    background: color-mix(in srgb, var(--primary) 55%, rgba(255, 255, 255, 0.12));
+  }
+}
+
+.ide-splitter--horizontal {
+  cursor: row-resize;
+}
+
+.ide-splitter.is-hidden {
+  display: none;
+}
+
+.ide-splitter.is-left {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.ide-splitter.is-right {
+  grid-column: 5;
+  grid-row: 1;
+}
+
+.ide-splitter.is-inline-left {
+  grid-row: 2;
+}
+
+.inspector-toolbar {
+  display: grid;
+  gap: 6px;
+  padding: 7px 9px;
+}
+
+.inspector-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.inspector-tabs {
+  justify-content: flex-start;
+}
+
+.inspector-tab {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.inspector-tab.active {
+  background: color-mix(in srgb, var(--primary) 22%, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--border));
+}
+
+:deep(.ide-activity-bar) {
+  width: 52px;
+  min-width: 52px;
+  padding: 6px;
+}
+
+:deep(.ide-activity-bar .activity-btn) {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+:deep(.ide-activity-bar .activity-badge) {
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
+}
+
+:deep(.ide-explorer-panel),
+:deep(.ide-mcp-panel),
+:deep(.ide-editor),
+:deep(.ide-terminal),
+:deep(.ide-plan-panel),
+:deep(.ide-dev-log),
+:deep(.ide-assistant-panel) {
+  border-radius: 12px;
+}
+
+:deep(.ide-explorer),
+:deep(.ide-plan-panel),
+:deep(.ide-dev-log),
+:deep(.ide-mcp-panel),
+:deep(.ide-assistant-panel),
+:deep(.ide-terminal) {
+  padding: 8px;
+}
+
+:deep(.ide-explorer .explorer-head),
+:deep(.ide-terminal .terminal-head),
+:deep(.ide-plan-panel .panel-head),
+:deep(.ide-dev-log .log-head),
+:deep(.ide-assistant-panel .panel-head) {
+  margin-bottom: 6px;
+}
+
+:deep(.ide-explorer .explorer-action) {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+:deep(.ide-explorer .explorer-meta),
+:deep(.ide-explorer .selection-bar),
+:deep(.ide-terminal .terminal-summary),
+:deep(.ide-assistant-panel .runtime-strip) {
+  border-radius: 12px;
+}
+
+:deep(.ide-explorer .tree-row) {
+  min-height: 26px;
+  border-radius: 8px;
+}
+
+:deep(.ide-editor .editor-tabs) {
+  gap: 4px;
+  padding-bottom: 6px;
+}
+
+:deep(.ide-editor .editor-tab) {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+}
+
+:deep(.ide-editor .editor-toolbar),
+:deep(.ide-editor .editor-footer) {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
+:deep(.ide-editor .editor-textarea) {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+:deep(.ide-terminal .terminal-tab) {
+  min-height: 32px;
+  border-radius: 10px;
+  padding: 5px 9px;
+}
+
+:deep(.ide-terminal .command-input input) {
+  min-height: 30px;
+  padding: 6px 9px;
+}
+
+:deep(.ide-terminal .command-actions .btn),
+:deep(.ide-plan-panel .btn),
+:deep(.ide-assistant-panel .btn) {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+:deep(.ide-assistant-panel .panel-head) {
+  align-items: flex-start;
+}
+
+:deep(.ide-assistant-panel .session-select) {
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 @media (max-width: 1440px) {
   .ide-shell {
-    grid-template-columns: 64px minmax(220px, 260px) minmax(0, 1fr);
-  }
-
-  .ide-sidebar {
-    grid-column: 2 / span 2;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: none;
+    grid-template-columns: 56px var(--ide-left-width) var(--ide-left-splitter) minmax(0, 1fr) var(--ide-right-splitter) var(--ide-right-width);
   }
 }
 
 @media (max-width: 1100px) {
   .ide-header,
-  .ide-onboarding {
+  .ide-onboarding,
+  .workbench-toolbar {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -1942,13 +2973,80 @@ async function handleReplanPlan(planId: string) {
     justify-content: flex-start;
   }
 
+  .workbench-toolbar-actions {
+    justify-content: flex-start;
+  }
+
+  .ide-empty-shell {
+    grid-template-columns: 52px minmax(208px, 236px) minmax(0, 1fr);
+  }
+
+  .ide-empty-right {
+    grid-column: 2 / span 2;
+  }
+
+  .placeholder-card-grid {
+    grid-template-columns: 1fr;
+  }
+
   .ide-shell {
-    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-columns: 56px var(--ide-left-width) var(--ide-left-splitter) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 10px minmax(260px, 320px);
   }
 
   .ide-sidebar {
     grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .ide-splitter.is-right {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .workbench-toolbar {
+    align-items: stretch;
+  }
+
+  .ide-empty-shell {
     grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .ide-empty-left,
+  .ide-empty-center,
+  .ide-empty-right {
+    grid-column: 1;
+  }
+
+  .ide-shell {
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-rows: minmax(240px, auto) minmax(160px, auto) minmax(0, 1fr) minmax(260px, auto);
+  }
+
+  :deep(.ide-activity-bar) {
+    grid-row: 1 / span 4;
+  }
+
+  .ide-left-column {
+    grid-column: 2;
+    grid-row: 1;
+    grid-template-rows: minmax(0, 1fr) var(--ide-left-bottom-splitter) var(--ide-left-bottom-height);
+  }
+
+  .ide-center {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+  }
+
+  .ide-sidebar {
+    grid-column: 2;
+    grid-row: 4;
+  }
+
+  .ide-splitter {
+    display: none;
   }
 }
 </style>

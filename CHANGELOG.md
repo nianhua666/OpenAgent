@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Agent 前后端联调继续收口：`AgentView.vue` 的模型列表刷新已改为基于当前角色 / 当前会话的有效配置拉取，不再错误复用全局 AI 配置；当角色切换导致 `baseUrl`、`apiKey`、协议或模型边界变化时，工作台会自动重拉模型目录，减少“角色已切换但列表还是旧接口结果”的错位。
+- Agent 工作台补上运行时联调卡片：当前会直接显示接口地址、鉴权状态、当前模型与模型列表读取状态，并提供“打开 AI 设置 / 刷新模型列表 / 打开 Sub2API”快捷入口，便于在主工作台内直接判断是接口未配、Key 缺失还是模型目录读取失败。
+- IDE 空工作台补上最近工作区入口：未绑定工作区时右侧 Inspector 上方会展示最近工作区卡片，清楚区分项目目录与产物目录，支持一键回到最近现场，减少“空工作台需要重新找项目”的摩擦。
+- 真实 Electron 视图回归再次通过：`npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 已重新导出 `/ai` 与 `/ide` 截图，并确认这轮新增的运行时联调卡片和最近工作区入口没有破坏工作台布局。
+- Playwright / MCP 浏览器阻塞再次复现：本轮继续用 MCP 浏览器拉起本地预览时，Chrome 仍在启动阶段直接 `exit code 13`；阻塞依旧来自本机 Chrome 环境，而不是 OpenAgent 页面代码。
+
+- 工作台视觉层级继续精修：`App.vue` 为 immersive 场景补上更中性的桌面背景层，`IDEView.vue` 与 `AgentView.vue` 统一增强 panel 对比度、边界和阴影，`Sidebar.vue` 也把工作台态主侧边栏收回更克制的工具栏色相，减少整页被主题粉白色冲淡的问题。
+- 高频导航状态更清晰：`IDEActivityBar.vue` 与 Agent 页内 rail 新增 active indicator，`AgentSessionList.vue` 强化当前会话选中态，`AgentView.vue` 压掉了页内侧栏头部多余的空玻璃卡片，让“当前所在面板 / 当前选中会话”更容易一眼识别。
+- 真实 Electron UI 回归链路已补齐：`electron/main.ts` 新增 `--main-route`、`--capture-main-window`、`--capture-delay-ms` 与 `--capture-quit` 启动参数，配合 `scripts/check-electron-ui.cjs` 和 `npm.cmd run check:electron-ui`，现在可以直接导出 `/ai`、`/ide` 的 Electron 实际渲染截图，绕过本机 Chrome 自动化阻塞继续做人眼回归。
+- 前端空态首屏继续收口：`/ide` 在未绑定工作区时新增 Explorer / MCP / Editor / Runtime / Inspector 工作台骨架，`/ai` 在“已有会话但尚未发送消息”时新增 session-ready 卡片与起手 prompt，避免真实 Electron 截图被大片空白占满，便于后续继续打磨布局和交互。
+- Chrome 自动化阻塞已新增可执行诊断：`scripts/check-chrome-automation.cjs` 与 `npm.cmd run check:chrome-automation` 会复现 plain / remote-debugging / temp-profile 三种 Chrome 启动场景；当前本机三种场景仍全部返回 `exit code 13`，已进一步确认 Playwright / MCP 浏览器自动化缺口来自本机 Chrome 环境而不是页面代码。
+- 前端工作台精修第六轮：`/ai` 工作台新增 `AgentResourcesPanel`，把托管 MCP / Skill 状态、角色授权边界、异常服务摘要与快速跳转 AI 设置的入口直接接进页内侧栏，让角色配置 / 长期记忆 / 资源边界真正形成一套连续工作流。
+- 前端巡检补充：这轮按 `playwright-interactive` 路径再次拉起本地静态预览并尝试用 MCP 浏览器打开 `/ai`，Chrome 仍在启动阶段返回 `exit code 13`；因此当前 UI 验证依旧以 `npm.cmd run build`、`npm.cmd run smoke:routes`、静态预览可达性与代码级巡检为主。
+- 前端工作台精修第五轮：`/ide` 左栏继续收口为可调高的 Explorer / MCP 双区，新增 MCP 独立显隐按钮、左栏内联分割条双击复位与布局持久化，进一步对齐“左侧资源、左下 MCP”的工作台结构。
+- 前端工作台精修第五轮：`/ai` 工作台新增页内侧栏显隐 / 重置栏宽按钮、分割条双击复位，以及 `scope / sessionId / panel` 路由同步；刷新、切页或分享当前工作上下文时更容易回到原来的角色面板和会话位置。
+- IDE 资源面板巡检补充：`IDEMcpPanel.vue` 新增手动刷新入口与异常计数摘要，避免 MCP 配置变化后用户必须跳出当前工作台才能重新确认左下角资源状态。
+- 前端工作台精修第四轮：继续统一收紧全局设计令牌与软件壳层密度，缩小主侧边栏、按钮、输入框、状态条、圆角和留白；`/ide` 与 `/ai` 的工作台面板统一切向更冷静的桌面 IDE 视觉，内部高频组件如会话列表、角色面板、消息区、终端输入区和底部状态条也同步降密度。
+- 前端巡检补充：这轮已尝试通过 Playwright MCP 直接做页面对比，但本机 Chrome 仍然稳定返回 `exit code 13`；因此当前 UI 验证仍以 `vite preview`、`npm.cmd run build`、`npm.cmd run smoke:routes` 和代码级巡检为主，后续仍需补真实 Electron / 浏览器的人眼回归。
+- 前端工作台精修第三轮：`/ide` 顶部改为窄头部 + workbench 信息条，工作区路径、产物目录、语言/框架与当前文件统一折叠到高密度状态胶囊里，并同步下调默认左右栏宽度与终端高度，让编辑区更接近真实 IDE 比例。
+- 前端工作台精修第三轮：`/ai` 进一步压缩顶部 hero、页内侧栏与输入区密度，新增上下文胶囊信息并收紧默认侧栏宽度，减少说明区挤占消息区的问题。
+- Electron 终端加载链修复：`electron/main.ts` 改为通过 `createRequire` 在运行时加载 `node-pty`，`vite.config.mts` 也同步外置 `node-pty` 子路径；清理旧构建产物后，`dist-electron/main.js` 已不再残留 `import("node-pty")` 或 `Could not dynamically require` 文本。
+- 这轮已执行 `npm.cmd run build:clean`、`npm.cmd run build` 与 `npm.cmd run smoke:routes`；当前仍缺少真实 Electron 视图的人眼回归，以及本机 Chrome `exit code 13` 导致的浏览器自动化缺口。
+- 前端工作台精修第二轮：`/ide` 新增顶部 workbench 工具条与活动栏面板开关，资源 / 终端 / Inspector 现在都可直接显隐切换，并将折叠状态持久化到本地布局缓存。
+- 前端工作台精修第二轮：`/ai` 新增页内工作台条与本地侧栏折叠，角色 / 会话 / 记忆 / 任务可以在顶部与侧栏双入口切换，进一步降低对外层软件侧栏的依赖。
+- 全局设计令牌继续下调：统一缩小字号、圆角、按钮与输入框密度，并同步收紧 `AgentToolbar`、`AgentInputBar`、`AgentSessionList`、`AgentProfileManager`、`AgentTaskBoard` 的卡片与表单体积。
+- 这轮已再次通过 `npm.cmd run build` 与 `npm.cmd run smoke:routes`；当前前端剩余重点主要是实际 Electron 视图的人眼回归，以及更细的面板视觉抛光。
+- 前端工作台重构第一轮：`/ide` 已切成更接近 VS Code 的工作台骨架，左侧拆分为资源管理器与 MCP 面板，中间为编辑器与终端，右侧改为带 `Agent / 计划 / 日志` 页签的 Inspector，并补上左右列宽与终端高度拖拽状态。
+- Agent 工作台重构第一轮：`/ai` 已改成左侧本地功能侧栏 + 中央对话区结构，页内侧栏可切换会话、角色、长期记忆与任务，新增 `AgentMemoryPanel.vue` 让长期记忆可见、可编辑、可删除。
+- Electron 打包链路补强：`electron-builder.config.cjs` 新增 `node_modules/node-pty/**/*` 的 `asarUnpack`，配合此前对 `node-pty` 的外置，继续收口 IDE 终端在打包态下的 `conpty.node` 加载风险。
+- 这轮已完成前端专项巡检：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 通过；当前仍缺真实 Electron 视图人工回归，以及本机 Chrome `exit code 13` 导致的 Playwright 浏览器自动化缺口。
+
 ## 3.0.0 - 2026-03-14
 
 - 发布 3.0.0 验证包：本轮已完成 Sub2API 核心链路复核、可执行自检脚本沉淀与桌面打包交付，供本地安装验证；已产出 `release/v3.0.0/OpenAgent Setup 3.0.0.exe` 与 `release/v3.0.0/OpenAgent Portable 3.0.0.exe`。
