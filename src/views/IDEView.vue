@@ -104,8 +104,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import IDEActivityBar from '@/components/ide/IDEActivityBar.vue'
 import IDEDevLog from '@/components/ide/IDEDevLog.vue'
 import IDEEditor from '@/components/ide/IDEEditor.vue'
@@ -114,7 +114,7 @@ import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
-import type { ProjectPlanDriftSummary } from '@/types'
+import type { IDEEditorSession, ProjectPlanDriftSummary } from '@/types'
 import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
 import { flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
 import { showToast } from '@/utils/toast'
@@ -170,6 +170,7 @@ const syncingPlanBaseline = ref(false)
 const selectedPlanDrift = ref<ProjectPlanDriftSummary | null>(null)
 let selectedPlanDriftRequestId = 0
 let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
+let syncingEditorSession = false
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspacePlans = computed(() => {
@@ -189,6 +190,103 @@ const clipboardCount = computed(() => explorerClipboardEntries.value.length)
 const dirtyFileCount = computed(() => editorTabs.value.filter(tab => tab.content !== tab.savedContent).length)
 const activeTab = computed(() => editorTabs.value.find(tab => tab.path === activeFilePath.value) ?? null)
 
+async function withEditorSessionSyncPaused(task: () => void | Promise<void>) {
+  syncingEditorSession = true
+  try {
+    await task()
+  } finally {
+    await nextTick()
+    syncingEditorSession = false
+  }
+}
+
+function buildEditorSessionSnapshot(): IDEEditorSession | null {
+  if (!workspace.value) {
+    return null
+  }
+
+  const tabs = editorTabs.value
+    .filter(tab => tab.path.trim() && !tab.loading && (!tab.error || tab.content !== tab.savedContent))
+    .map(tab => ({
+      path: tab.path,
+      content: tab.content,
+      savedContent: tab.savedContent,
+      language: tab.language,
+    }))
+
+  if (tabs.length === 0) {
+    return null
+  }
+
+  const activePath = tabs.some(tab => tab.path === activeFilePath.value)
+    ? activeFilePath.value
+    : tabs[0]?.path || ''
+
+  return {
+    workspaceId: workspace.value.id,
+    tabs,
+    activePath,
+    updatedAt: Date.now(),
+  }
+}
+
+function persistEditorSession(options?: { immediate?: boolean }) {
+  aiStore.setIDEEditorSession(buildEditorSessionSnapshot(), options)
+}
+
+async function restoreEditorSessionForWorkspace(workspaceId: string) {
+  const session = aiStore.ideEditorSession
+  const currentWorkspace = workspace.value
+  if (!session || session.workspaceId !== workspaceId || !currentWorkspace || session.tabs.length === 0) {
+    return null
+  }
+
+  const workspaceFileSet = new Set(
+    (currentWorkspace.structure?.files ?? [])
+      .filter(entry => entry.type === 'file')
+      .map(entry => normalizeWorkspaceRelativePath(entry.path)),
+  )
+  const shouldValidateTabs = workspaceFileSet.size > 0
+  const restorableTabs = session.tabs
+    .filter(tab => {
+      const normalizedPath = normalizeWorkspaceRelativePath(tab.path)
+      if (!shouldValidateTabs) {
+        return true
+      }
+
+      return workspaceFileSet.has(normalizedPath) || tab.content !== tab.savedContent
+    })
+    .map(tab => {
+      const normalizedPath = normalizeWorkspaceRelativePath(tab.path)
+      const fileMissing = shouldValidateTabs && !workspaceFileSet.has(normalizedPath)
+      return {
+        path: normalizedPath,
+        content: tab.content,
+        savedContent: tab.savedContent,
+        language: tab.language,
+        loading: false,
+        error: fileMissing ? '文件已不在当前工作区中，当前保留的是上次未保存草稿。' : '',
+      } satisfies EditorTabState
+    })
+
+  if (restorableTabs.length === 0) {
+    return null
+  }
+
+  await withEditorSessionSyncPaused(() => {
+    editorTabs.value = restorableTabs
+    activeFilePath.value = restorableTabs.some(tab => tab.path === session.activePath)
+      ? session.activePath
+      : restorableTabs[0]?.path || ''
+  })
+
+  return {
+    totalTabs: restorableTabs.length,
+    dirtyTabs: restorableTabs.filter(tab => tab.content !== tab.savedContent).length,
+    skippedTabs: Math.max(0, session.tabs.length - restorableTabs.length),
+  }
+}
+
 watch(
   () => workspace.value?.id,
   async (nextWorkspaceId, previousWorkspaceId) => {
@@ -196,14 +294,44 @@ watch(
       return
     }
 
-    editorTabs.value = []
-    activeFilePath.value = ''
-    explorerClipboardEntries.value = []
+    await withEditorSessionSyncPaused(() => {
+      editorTabs.value = []
+      activeFilePath.value = ''
+      explorerClipboardEntries.value = []
+    })
     selectedPlanId.value = workspacePlans.value[0]?.id || ''
     await loadWorkspaceScripts()
+    const restoredSession = nextWorkspaceId
+      ? await restoreEditorSessionForWorkspace(nextWorkspaceId)
+      : null
+    if (!restoredSession) {
+      aiStore.setIDEEditorSession(null, { immediate: true })
+    }
     await refreshSelectedPlanDrift({ silent: true })
+    if (restoredSession) {
+      const summaryParts = [`已恢复 ${restoredSession.totalTabs} 个编辑标签`]
+      if (restoredSession.dirtyTabs > 0) {
+        summaryParts.push(`其中 ${restoredSession.dirtyTabs} 个包含未保存草稿`)
+      }
+      if (restoredSession.skippedTabs > 0) {
+        summaryParts.push(`跳过 ${restoredSession.skippedTabs} 个已失效的只读标签`)
+      }
+      showToast('success', summaryParts.join('，'))
+    }
   },
   { immediate: true },
+)
+
+watch(
+  [() => workspace.value?.id || '', editorTabs, activeFilePath],
+  () => {
+    if (syncingEditorSession) {
+      return
+    }
+
+    persistEditorSession()
+  },
+  { deep: true },
 )
 
 watch(workspacePlans, plans => {
@@ -228,11 +356,30 @@ watch(dirtyFileCount, (nextCount, previousCount) => {
 
 onMounted(async () => {
   aiStore.setAgentMode('ide')
+  window.addEventListener('beforeunload', handleBeforeUnload)
   await loadWorkspaceScripts()
   await refreshSelectedPlanDrift({ silent: true })
 })
 
+onBeforeRouteLeave(() => {
+  persistEditorSession({ immediate: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  persistEditorSession({ immediate: true })
+  if (selectedPlanDriftTimer) {
+    clearTimeout(selectedPlanDriftTimer)
+    selectedPlanDriftTimer = null
+  }
+})
+
+function handleBeforeUnload() {
+  persistEditorSession({ immediate: true })
+}
+
 function openAgentView() {
+  persistEditorSession({ immediate: true })
   void router.push('/ai')
 }
 

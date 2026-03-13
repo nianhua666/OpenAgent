@@ -592,6 +592,20 @@ export interface IDETerminalEvent {
   error?: string
 }
 
+export interface IDEEditorTabSession {
+  path: string
+  content: string
+  savedContent: string
+  language?: string
+}
+
+export interface IDEEditorSession {
+  workspaceId: string
+  tabs: IDEEditorTabSession[]
+  activePath: string
+  updatedAt: number
+}
+
 // ==================== 项目规划 ====================
 
 export type PlanStatus = 'drafting' | 'approved' | 'in-progress' | 'completed' | 'paused'

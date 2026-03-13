@@ -22,6 +22,8 @@ import type {
   SubAgentStatus,
   SubAgentSpawnRequest,
   IDEWorkspace,
+  IDEEditorSession,
+  IDEEditorTabSession,
   ProjectPlan,
   ProjectPhase,
   ProjectTask,
@@ -535,6 +537,52 @@ function normalizeIDEWorkspace(data: IDEWorkspace | null | undefined): IDEWorksp
   }
 }
 
+function normalizeIDEEditorTabSession(
+  tab: IDEEditorTabSession | null | undefined,
+): IDEEditorTabSession | null {
+  if (!tab || typeof tab !== 'object') {
+    return null
+  }
+
+  const path = typeof tab.path === 'string' ? tab.path.trim() : ''
+  if (!path) {
+    return null
+  }
+
+  return {
+    path,
+    content: typeof tab.content === 'string' ? tab.content : '',
+    savedContent: typeof tab.savedContent === 'string' ? tab.savedContent : '',
+    language: typeof tab.language === 'string' && tab.language.trim() ? tab.language.trim() : undefined
+  }
+}
+
+function normalizeIDEEditorSession(data: IDEEditorSession | null | undefined): IDEEditorSession | null {
+  if (!data || typeof data !== 'object') {
+    return null
+  }
+
+  const workspaceId = typeof data.workspaceId === 'string' ? data.workspaceId.trim() : ''
+  if (!workspaceId) {
+    return null
+  }
+
+  const tabs = Array.isArray(data.tabs)
+    ? data.tabs
+      .map(tab => normalizeIDEEditorTabSession(tab))
+      .filter((tab): tab is IDEEditorTabSession => Boolean(tab))
+    : []
+
+  const activePath = typeof data.activePath === 'string' ? data.activePath.trim() : ''
+
+  return {
+    workspaceId,
+    tabs,
+    activePath: tabs.some(tab => tab.path === activePath) ? activePath : tabs[0]?.path ?? '',
+    updatedAt: Number(data.updatedAt || Date.now()) || Date.now()
+  }
+}
+
 function normalizeContextSnapshots(data: ContextSnapshot[] | null | undefined) {
   if (!Array.isArray(data)) {
     return []
@@ -665,6 +713,7 @@ export const useAIStore = defineStore('ai', () => {
   const agentMode = ref<AgentMode>('agent')
   const subAgents = ref<SubAgent[]>([])
   const ideWorkspace = ref<IDEWorkspace | null>(null)
+  const ideEditorSession = ref<IDEEditorSession | null>(null)
   const projectPlans = ref<ProjectPlan[]>([])
   const contextSnapshots = ref<ContextSnapshot[]>([])
 
@@ -768,6 +817,10 @@ export const useAIStore = defineStore('ai', () => {
     ideWorkspace.value = normalizeIDEWorkspace(snapshot)
   }
 
+  function applyIDEEditorSessionSnapshot(snapshot: IDEEditorSession | null | undefined) {
+    ideEditorSession.value = normalizeIDEEditorSession(snapshot)
+  }
+
   function applyProjectPlansSnapshot(snapshot: ProjectPlan[] | null | undefined) {
     projectPlans.value = normalizeProjectPlans(snapshot)
   }
@@ -815,6 +868,11 @@ export const useAIStore = defineStore('ai', () => {
 
       if (key === 'ai_ide_workspace') {
         applyIDEWorkspaceSnapshot(data as IDEWorkspace | null)
+        return
+      }
+
+      if (key === 'ai_ide_editor_session') {
+        applyIDEEditorSessionSnapshot(data as IDEEditorSession | null)
         return
       }
 
@@ -885,6 +943,7 @@ export const useAIStore = defineStore('ai', () => {
     applyTasksSnapshot(await loadData<AIAgentTask[]>('ai_tasks', []))
     applySubAgentsSnapshot(await loadData<SubAgent[]>('ai_sub_agents', []))
     applyIDEWorkspaceSnapshot(await loadData<IDEWorkspace | null>('ai_ide_workspace', null))
+    applyIDEEditorSessionSnapshot(await loadData<IDEEditorSession | null>('ai_ide_editor_session', null))
     applyProjectPlansSnapshot(await loadData<ProjectPlan[]>('ai_project_plans', []))
     applyContextSnapshotsSnapshot(await loadData<ContextSnapshot[]>('ai_context_snapshots', []))
 
@@ -1645,6 +1704,16 @@ export const useAIStore = defineStore('ai', () => {
     scheduleSave('ai_ide_workspace', workspace)
   }
 
+  function setIDEEditorSession(session: IDEEditorSession | null, options?: { immediate?: boolean }) {
+    ideEditorSession.value = normalizeIDEEditorSession(session)
+    if (options?.immediate) {
+      void saveData('ai_ide_editor_session', ideEditorSession.value)
+      return
+    }
+
+    scheduleSave('ai_ide_editor_session', ideEditorSession.value)
+  }
+
   function updateIDEWorkspaceStructure(structure: IDEWorkspace['structure']) {
     if (ideWorkspace.value) {
       ideWorkspace.value.structure = structure
@@ -1863,6 +1932,7 @@ export const useAIStore = defineStore('ai', () => {
     agentMode,
     subAgents,
     ideWorkspace,
+    ideEditorSession,
     projectPlans,
     contextSnapshots,
     setAgentMode,
@@ -1872,6 +1942,7 @@ export const useAIStore = defineStore('ai', () => {
     getSubAgentsForSession,
     cleanupSubAgents,
     setIDEWorkspace,
+    setIDEEditorSession,
     updateIDEWorkspaceStructure,
     createProjectPlan,
     getProjectPlan,
