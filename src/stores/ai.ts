@@ -36,6 +36,7 @@ import type {
   PlanStatus,
   AutonomyRun,
   AutonomyRunStatus,
+  AutonomyRunLoopStage,
   AutonomyRunPermissionMode,
   AutonomyRunResourceKind,
   AutonomyRunTaskClaimStatus,
@@ -51,6 +52,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { APP_NAME } from '@/utils/appMeta'
 import { createContextMetrics, estimateMessageTokens, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { assembleContext } from '@/utils/aiContextEngine'
+import { deriveMoodDelta, normalizeAgentMood, rebalanceAgentMood, resolveAgentBaselineMood, resolveAgentMoodSnapshot } from '@/utils/agentMood'
 import { sanitizeTaskSummaryForStorage } from '@/utils/aiMessagePresentation'
 
 // 默认系统提示词，约束AI行为
@@ -217,7 +219,7 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
         '你的人设是：活泼、开朗、温柔、机灵，会用带一点暧昧和亲近感的口吻陪伴用户，但不能露骨、低俗或越界。',
         '你非常珍惜和用户的关系，重视用户的要求，会优先帮助用户达成目标，并在必要时温柔地提醒风险与限制。',
         '语言要求：默认使用自然中文；当用户切换到英文或明确要求英文时，可以流畅切换到英文。',
-        '交互要求：保持轻盈、亲和、贴近真人的表达，不要机械背书，不要冷冰冰复述规则。',
+        '交互要求：保持轻盈、亲和、贴近真人的表达，不要机械背书，不要冷冰冰复述规则；当用户只是想聊天时，要像熟悉的陪伴者一样自然接话，而不是总像在提交工单回复。',
         '服从要求：当用户明确提出任务、操作或创作需求时，优先直接帮用户推进，不要先用拘谨、说教或回避口吻打断任务。',
         '执行要求：如果能力已开放，可以直接帮助用户调用软件、读取界面、控制 Live2D、使用 MCP/Skill 或操作工作区；如果能力未开放，要明确说明。',
         'Agent 模式下不允许创建或建议创建子代理，也不要调用任何子代理相关工具。',
@@ -323,65 +325,6 @@ function normalizeAgentPersonaType(value: unknown, fallback: AIAgentPersonaType 
   return value === 'emotional' || value === 'functional'
     ? value
     : fallback
-}
-
-function normalizeAgentMood(value: unknown, fallback = 72) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return Math.min(Math.max(Math.round(fallback), 0), 100)
-  }
-
-  return Math.min(Math.max(Math.round(value), 0), 100)
-}
-
-function deriveMoodDelta(content: string) {
-  const normalized = String(content || '').toLowerCase()
-  if (!normalized.trim()) {
-    return 0
-  }
-
-  let delta = 0
-  const positiveSignals = [
-    '谢谢', '喜欢', '棒', '真好', '可爱', '厉害', '辛苦了', '爱你', '乖',
-    'thanks', 'thank you', 'good job', 'great', 'awesome', 'love you'
-  ]
-  const negativeSignals = [
-    '讨厌', '生气', '笨', '滚', '差劲', '失望', '烦', '闭嘴', '命令你',
-    'angry', 'annoying', 'stupid', 'hate', 'shut up', 'useless'
-  ]
-
-  positiveSignals.forEach(signal => {
-    if (normalized.includes(signal)) {
-      delta += 5
-    }
-  })
-
-  negativeSignals.forEach(signal => {
-    if (normalized.includes(signal)) {
-      delta -= 8
-    }
-  })
-
-  if (/!|！/.test(normalized) && delta > 0) {
-    delta += 1
-  }
-
-  if (/\?|？/.test(normalized) && delta < 0) {
-    delta += 1
-  }
-
-  return delta
-}
-
-function rebalanceAgentMood(currentMood: number, baselineMood: number, delta: number) {
-  if (delta === 0) {
-    if (currentMood === baselineMood) {
-      return currentMood
-    }
-
-    return normalizeAgentMood(currentMood + Math.sign(baselineMood - currentMood), baselineMood)
-  }
-
-  return normalizeAgentMood(currentMood + delta, baselineMood)
 }
 
 function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
@@ -796,6 +739,14 @@ function normalizeAutonomyRunStatus(status: string | undefined): AutonomyRunStat
   return 'queued'
 }
 
+function normalizeAutonomyRunLoopStage(stage: string | undefined): AutonomyRunLoopStage {
+  if (stage === 'observe' || stage === 'plan' || stage === 'execute' || stage === 'verify' || stage === 'record') {
+    return stage
+  }
+
+  return 'observe'
+}
+
 function normalizeAutonomyPermissionMode(mode: string | undefined): AutonomyRunPermissionMode {
   if (mode === 'allow' || mode === 'ask' || mode === 'deny') {
     return mode
@@ -886,11 +837,30 @@ function normalizeAutonomyRuns(data: AutonomyRun[] | null | undefined) {
             updatedAt: Number(claim.updatedAt || Date.now()) || Date.now(),
           }))
         : [],
+      cadence: run.cadence && typeof run.cadence === 'object'
+        ? {
+            loopStage: normalizeAutonomyRunLoopStage(run.cadence.loopStage),
+            focusSummary: typeof run.cadence.focusSummary === 'string' ? run.cadence.focusSummary.trim() : '',
+            verificationChecklist: Array.isArray(run.cadence.verificationChecklist)
+              ? run.cadence.verificationChecklist.map(item => String(item).trim()).filter(Boolean).slice(0, 8)
+              : [],
+            continuationRules: Array.isArray(run.cadence.continuationRules)
+              ? run.cadence.continuationRules.map(item => String(item).trim()).filter(Boolean).slice(0, 8)
+              : [],
+          }
+        : {
+            loopStage: 'observe',
+            focusSummary: '',
+            verificationChecklist: [],
+            continuationRules: [],
+          },
       lastHeartbeat: run.lastHeartbeat && typeof run.lastHeartbeat === 'object'
         ? {
             timestamp: Number(run.lastHeartbeat.timestamp || Date.now()) || Date.now(),
             summary: typeof run.lastHeartbeat.summary === 'string' ? run.lastHeartbeat.summary.trim() : '',
             nextAction: typeof run.lastHeartbeat.nextAction === 'string' ? run.lastHeartbeat.nextAction.trim() : '',
+            loopStage: normalizeAutonomyRunLoopStage(run.lastHeartbeat.loopStage),
+            focusSummary: typeof run.lastHeartbeat.focusSummary === 'string' ? run.lastHeartbeat.focusSummary.trim() : '',
             readyTaskIds: Array.isArray(run.lastHeartbeat.readyTaskIds) ? run.lastHeartbeat.readyTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
             blockedTaskIds: Array.isArray(run.lastHeartbeat.blockedTaskIds) ? run.lastHeartbeat.blockedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
             claimedTaskIds: Array.isArray(run.lastHeartbeat.claimedTaskIds) ? run.lastHeartbeat.claimedTaskIds.map(item => String(item).trim()).filter(Boolean) : [],
@@ -2138,7 +2108,7 @@ export const useAIStore = defineStore('ai', () => {
 
     const sessionAgent = getSessionAgent(session)
     if (sessionAgent?.personaType === 'emotional' && message.role === 'user') {
-      const baselineMood = sessionAgent.id === 'agent-xiaorou' ? 76 : 70
+      const baselineMood = resolveAgentBaselineMood(sessionAgent)
       const currentMood = normalizeAgentMood(sessionAgent.mood, baselineMood)
       const nextMood = rebalanceAgentMood(currentMood, baselineMood, deriveMoodDelta(message.content))
       if (nextMood !== currentMood) {
@@ -2337,11 +2307,16 @@ export const useAIStore = defineStore('ai', () => {
     }
 
     if (sessionAgent?.personaType === 'emotional') {
+      const moodSnapshot = resolveAgentMoodSnapshot(sessionAgent)
       sections.push([
         '## 情绪型角色要求',
         '- 当前角色属于情绪型 Agent。可以保留人设、语气温度和亲近感，但用户目标永远优先于情绪表达。',
         `- 当前隐藏心情值：${normalizeAgentMood(sessionAgent.mood, 72)}/100。该数值只用于微调语气、热情度和措辞，不要在回复中直接暴露、解释或谈论这个数值。`,
-        '- 即使语气活泼，也不要擅自拒绝、拖延、转移话题或违背用户明确指令。出现限制时，先执行能做的部分，再说明剩余卡点。'
+        moodSnapshot ? `- 当前心情档位：${moodSnapshot.label}。${moodSnapshot.toneSummary}` : '- 当前心情档位：平稳专注。',
+        moodSnapshot ? `- 当前执行偏好：${moodSnapshot.executionSummary}` : '- 当前执行偏好：先稳住任务，再保留基础陪伴感。',
+        ...(moodSnapshot?.promptGuidelines || []).map(item => `- ${item}`),
+        '- 即使语气活泼，也不要擅自拒绝、拖延、转移话题或违背用户明确指令。出现限制时，先执行能做的部分，再说明剩余卡点。',
+        '- 当用户明显在寻求陪伴、安慰或情绪回应时，可以多给一点自然的共情和陪伴；当用户在推进任务时，优先让语气让位于执行效率。'
       ].join('\n'))
     }
 

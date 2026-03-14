@@ -104,6 +104,15 @@
           <span>子代理批次上限 {{ autonomyRun?.subAgentBatchLimit || 1 }}</span>
           <span>{{ autonomyRun?.lastHeartbeat ? `最近心跳 ${formatCheckedTime(autonomyRun.lastHeartbeat.timestamp)}` : '尚未生成心跳' }}</span>
         </div>
+        <div v-if="autonomyRun?.cadence" class="autonomy-cadence">
+          <div class="autonomy-cadence-head">
+            <span class="autonomy-badge">{{ autonomyLoopStageLabel(autonomyRun.cadence.loopStage) }}</span>
+            <strong>{{ autonomyRun.cadence.focusSummary }}</strong>
+          </div>
+          <div v-if="autonomyRun.cadence.verificationChecklist.length > 0" class="execution-chip-row">
+            <span v-for="item in autonomyRun.cadence.verificationChecklist" :key="item" class="execution-chip">{{ item }}</span>
+          </div>
+        </div>
         <div class="execution-chip-row">
           <span class="execution-chip">允许 {{ permissionStats.allow }}</span>
           <span class="execution-chip">谨慎使用 {{ permissionStats.ask }}</span>
@@ -390,6 +399,14 @@ function autonomyClaimStatusLabel(status: string) {
   return map[status] || status
 }
 
+function autonomyLoopStageLabel(stage: NonNullable<AutonomyRun['cadence']>['loopStage']) {
+  if (stage === 'observe') return 'Observe'
+  if (stage === 'plan') return 'Choose Lane'
+  if (stage === 'execute') return 'Execute'
+  if (stage === 'verify') return 'Verify'
+  return 'Record'
+}
+
 function formatBaselineTime(timestamp: number | null) {
   if (!timestamp) {
     return '尚未记录基线'
@@ -651,6 +668,22 @@ async function copyPrompt(text: string, label: string) {
 .autonomy-claim-card p {
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.autonomy-cadence {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: $spacing-sm;
+  border-radius: $border-radius-sm;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.autonomy-cadence-head {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
 }
 
 .autonomy-meta {

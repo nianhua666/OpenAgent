@@ -1,6 +1,8 @@
 import type {
   AutonomyRun,
+  AutonomyRunCadence,
   AutonomyRunHeartbeat,
+  AutonomyRunLoopStage,
   AutonomyRunPermissionRule,
   AutonomyRunStatus,
   AutonomyRunTaskClaim,
@@ -50,9 +52,10 @@ export async function syncAutonomyRunState(
     .filter(claim => claim.status === 'claimed' || claim.status === 'running')
     .map(claim => claim.taskId)
   const nextStatus = options.statusOverride || resolveAutonomyRunStatus(plan, packet, relatedSubAgents, claimedTaskIds, existingRun)
+  const cadence = buildAutonomyCadence(plan, packet, nextStatus, claims)
   const summary = buildAutonomySummary(plan, packet, nextStatus, claims)
   const nextAction = buildNextAction(plan, packet, nextStatus, claims)
-  const heartbeat = buildHeartbeat(packet, summary, nextAction, claims, options.note)
+  const heartbeat = buildHeartbeat(packet, summary, nextAction, claims, cadence, options.note)
   const now = Date.now()
 
   const nextRun: AutonomyRun = {
@@ -74,6 +77,7 @@ export async function syncAutonomyRunState(
       claimedTaskIds,
     },
     claims,
+    cadence,
     lastHeartbeat: heartbeat,
     lastError: options.error
       || (nextStatus === 'failed'
@@ -113,6 +117,26 @@ export function renderAutonomyRunToMarkdown(
   lines.push(`- **子代理批次上限**: ${run?.subAgentBatchLimit || 1}`)
   lines.push(`- **最近心跳**: ${run?.lastHeartbeat ? formatTime(run.lastHeartbeat.timestamp) : '尚未记录'}`)
   lines.push('')
+
+  if (run?.cadence) {
+    lines.push('## 长任务循环节律')
+    lines.push('')
+    lines.push(`- **当前循环阶段**: ${formatLoopStage(run.cadence.loopStage)}`)
+    lines.push(`- **当前聚焦**: ${run.cadence.focusSummary || '先确认当前 ready queue 与最近心跳。'}`)
+    if (run.cadence.verificationChecklist.length > 0) {
+      lines.push('- **本轮验证清单**:')
+      run.cadence.verificationChecklist.forEach(item => {
+        lines.push(`  - ${item}`)
+      })
+    }
+    if (run.cadence.continuationRules.length > 0) {
+      lines.push('- **持续推进纪律**:')
+      run.cadence.continuationRules.forEach(item => {
+        lines.push(`  - ${item}`)
+      })
+    }
+    lines.push('')
+  }
 
   lines.push('## 当前摘要')
   lines.push('')
@@ -183,6 +207,12 @@ export function renderAutonomyRunToMarkdown(
     lines.push(`- **时间**: ${formatTime(run.lastHeartbeat.timestamp)}`)
     lines.push(`- **摘要**: ${run.lastHeartbeat.summary}`)
     lines.push(`- **下一动作**: ${run.lastHeartbeat.nextAction}`)
+    if (run.lastHeartbeat.loopStage) {
+      lines.push(`- **循环阶段**: ${formatLoopStage(run.lastHeartbeat.loopStage)}`)
+    }
+    if (run.lastHeartbeat.focusSummary) {
+      lines.push(`- **当前聚焦**: ${run.lastHeartbeat.focusSummary}`)
+    }
     lines.push(`- **Ready IDs**: ${run.lastHeartbeat.readyTaskIds.join(', ') || '无'}`)
     lines.push(`- **Blocked IDs**: ${run.lastHeartbeat.blockedTaskIds.join(', ') || '无'}`)
     lines.push(`- **Claimed IDs**: ${run.lastHeartbeat.claimedTaskIds.join(', ') || '无'}`)
@@ -473,6 +503,102 @@ function resolveAutonomyRunStatus(
   return 'queued'
 }
 
+function buildAutonomyCadence(
+  plan: ProjectPlan,
+  packet: ProjectPlanExecutionPacket,
+  status: AutonomyRunStatus,
+  claims: AutonomyRunTaskClaim[],
+): AutonomyRunCadence {
+  const runningClaim = claims.find(claim => claim.status === 'running' || claim.status === 'claimed')
+  const readyClaim = claims.find(claim => claim.status === 'ready')
+  const focusClaim = runningClaim || readyClaim || claims[0]
+
+  let loopStage: AutonomyRunLoopStage = 'observe'
+  if (plan.status === 'drafting' || plan.status === 'approved') {
+    loopStage = 'plan'
+  } else if (status === 'blocked' || status === 'failed') {
+    loopStage = 'observe'
+  } else if (runningClaim) {
+    loopStage = 'execute'
+  } else if (readyClaim) {
+    loopStage = 'plan'
+  } else if (status === 'completed') {
+    loopStage = 'record'
+  }
+
+  return {
+    loopStage,
+    focusSummary: buildCadenceFocusSummary(plan, status, focusClaim),
+    verificationChecklist: buildVerificationChecklist(packet, focusClaim),
+    continuationRules: [
+      '每轮只保留一个主任务 lane，只有文件和状态互不冲突时才并行副任务。',
+      '每次改动后立刻做最小必要验证，不把 build / test / 回读全部拖到最后一轮。',
+      '如果连续两轮没有实质进展，先总结阻塞与缺口，再同步基线或触发重规划。',
+      '每轮结束都要刷新 TASKS.md、CONTEXT.md、RUN.md 和 dev-log.md，保证后续可无缝续跑。',
+    ],
+  }
+}
+
+function buildCadenceFocusSummary(
+  plan: ProjectPlan,
+  status: AutonomyRunStatus,
+  focusClaim: AutonomyRunTaskClaim | undefined,
+) {
+  if (plan.status === 'drafting') {
+    return '当前重点是确认计划范围、风险和依赖，暂不直接改代码。'
+  }
+
+  if (status === 'blocked') {
+    return '当前重点是识别阻塞来自依赖、失败反馈还是工作区漂移，并决定先同步基线还是重规划。'
+  }
+
+  if (status === 'failed') {
+    return '当前重点是读取最近失败输出、收紧任务粒度，并给出下一轮恢复策略。'
+  }
+
+  if (!focusClaim) {
+    return '当前先复核 ready queue、最近心跳与工作区 diff，再选择下一轮的主任务 lane。'
+  }
+
+  const lane = focusClaim.files.length > 0
+    ? `文件范围：${focusClaim.files.slice(0, 3).join('、')}`
+    : `角色：${focusClaim.agentRole}`
+  return `本轮主任务 lane 聚焦「${focusClaim.taskTitle}」，${lane}。先完成这一轮的改动与验证，再决定是否切换任务。`
+}
+
+function buildVerificationChecklist(
+  packet: ProjectPlanExecutionPacket,
+  focusClaim: AutonomyRunTaskClaim | undefined,
+) {
+  const checklist = [
+    '修改完成后先回读 diff、关键文件或工具输出，确认没有偏离当前任务。'
+  ]
+  const taskType = packet.readyTasks.find(task => task.taskId === focusClaim?.taskId)?.taskType
+
+  if (taskType === 'create' || taskType === 'modify' || taskType === 'refactor') {
+    checklist.push('优先执行最小必要的 build / typecheck / lint / 局部测试，而不是盲目全量跑长流程。')
+  }
+
+  if (taskType === 'test') {
+    checklist.push('测试任务要明确覆盖目标、失败原因和通过证据，并避免只写未执行的测试草稿。')
+  }
+
+  if (taskType === 'docs') {
+    checklist.push('文档任务完成后要交叉检查 README / TASKS / PLAN / 开发日志是否一致。')
+  }
+
+  if (taskType === 'config') {
+    checklist.push('配置任务完成后要确认影响范围、回退方式和是否需要重新构建或重启。')
+  }
+
+  if (focusClaim?.files.some(file => /src\/views|src\/components|\.vue$/i.test(file))) {
+    checklist.push('涉及前端界面时，优先补截图、烟测或关键状态回读，避免只改代码不看实际视图。')
+  }
+
+  checklist.push('完成本轮后立刻同步任务状态、心跳摘要和下一动作，不要把记录拖到后面。')
+  return checklist.slice(0, 5)
+}
+
 function buildAutonomySummary(
   plan: ProjectPlan,
   packet: ProjectPlanExecutionPacket,
@@ -547,6 +673,7 @@ function buildHeartbeat(
   summary: string,
   nextAction: string,
   claims: AutonomyRunTaskClaim[],
+  cadence: AutonomyRunCadence,
   note?: string,
 ): AutonomyRunHeartbeat {
   const heartbeatSummary = note ? `${summary} ${note}`.trim() : summary
@@ -554,6 +681,8 @@ function buildHeartbeat(
     timestamp: Date.now(),
     summary: heartbeatSummary,
     nextAction,
+    loopStage: cadence.loopStage,
+    focusSummary: cadence.focusSummary,
     readyTaskIds: packet.readyTasks.map(task => task.taskId),
     blockedTaskIds: packet.blockedTasks.map(task => task.taskId),
     claimedTaskIds: claims
@@ -587,6 +716,18 @@ function formatClaimStatus(status: AutonomyRunTaskClaim['status']) {
   }
 
   return map[status] || status
+}
+
+function formatLoopStage(stage: AutonomyRunLoopStage) {
+  const map: Record<AutonomyRunLoopStage, string> = {
+    observe: 'Observe / 观察',
+    plan: 'Choose Lane / 选主线',
+    execute: 'Execute / 推进',
+    verify: 'Verify / 验证',
+    record: 'Record / 记录',
+  }
+
+  return map[stage] || stage
 }
 
 function formatPermissionMode(mode: AutonomyRunPermissionRule['mode']) {

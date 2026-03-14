@@ -794,6 +794,7 @@ export type AutonomyRunStatus = 'queued' | 'running' | 'paused' | 'blocked' | 'c
 export type AutonomyRunPermissionMode = 'allow' | 'ask' | 'deny'
 export type AutonomyRunResourceKind = 'builtin' | 'skill' | 'mcp'
 export type AutonomyRunTaskClaimStatus = 'ready' | 'deferred' | 'claimed' | 'running' | 'completed' | 'failed' | 'blocked'
+export type AutonomyRunLoopStage = 'observe' | 'plan' | 'execute' | 'verify' | 'record'
 
 export interface AutonomyRunPermissionRule {
   id: string
@@ -824,9 +825,18 @@ export interface AutonomyRunHeartbeat {
   timestamp: number
   summary: string
   nextAction: string
+  loopStage?: AutonomyRunLoopStage
+  focusSummary?: string
   readyTaskIds: string[]
   blockedTaskIds: string[]
   claimedTaskIds: string[]
+}
+
+export interface AutonomyRunCadence {
+  loopStage: AutonomyRunLoopStage
+  focusSummary: string
+  verificationChecklist: string[]
+  continuationRules: string[]
 }
 
 export interface AutonomyRun {
@@ -848,6 +858,7 @@ export interface AutonomyRun {
     claimedTaskIds: string[]
   }
   claims: AutonomyRunTaskClaim[]
+  cadence: AutonomyRunCadence
   lastHeartbeat?: AutonomyRunHeartbeat
   lastError?: string
   createdAt: number

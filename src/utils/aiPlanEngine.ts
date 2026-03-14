@@ -480,8 +480,11 @@ export function renderExecutionTasksToMarkdown(
   lines.push('')
   lines.push('- 用户确认计划后，再将状态切换到“已批准 / 进行中”，避免未确认即开始改代码。')
   lines.push('- 先判断任务是否真正独立；独立任务并行分发给子代理，共享文件或共享状态的任务保持串行。')
+  lines.push('- 长任务默认按 Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue 循环推进；每轮只保留一个主任务 lane。')
+  lines.push('- 每轮修改后立刻做最小必要验证，再决定继续扩写、切换任务还是触发重规划。')
   lines.push('- 每个任务开始前标记 in-progress，完成后标记 completed；失败时附带失败输出并触发动态重规划。')
   lines.push('- 每完成一轮任务后刷新 `.openagent/PLAN.md`、`.openagent/TASKS.md`、`.openagent/CONTEXT.md`、`.openagent/RUN.md`、`.openagent/SUBAGENTS.md`、`.openagent/SUPERVISOR.md` 和 `dev-log.md`。')
+  lines.push('- 如果连续两轮没有实质进展，先总结阻塞、缺失上下文和回退路径，再同步基线或重规划。')
   lines.push('- 除非用户打断或出现真实阻塞，否则持续推进直到计划完成。')
   lines.push('')
 
@@ -1011,10 +1014,12 @@ function buildSupervisorPrompt(
     '执行原则：',
     '1. 先确认用户是否已经认可当前详细计划；未确认时停留在 drafting / approved，不直接开始连续改代码。',
     '2. 计划确认后，把计划状态切换到 in-progress，并优先推进 ready task；同一轮中仅把真正独立的任务并行派发给子代理。',
+    '2.1 长任务循环固定遵循 Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue；不要每轮都重新展开全项目，而要保持主任务 lane 连续推进。',
     '3. 你负责给每个子代理补充上下文、文件范围、验收标准和验证命令；子代理默认提示词只是底座，不能裸用。',
     '4. 每个任务开始前标记 in-progress，完成后标记 completed；失败时必须附带 failureOutput 并立即触发 ide_replan_plan。',
-    '5. 每完成一轮任务后刷新 PLAN.md、TASKS.md、CONTEXT.md、RUN.md、SUBAGENTS.md、SUPERVISOR.md 与 dev-log.md，保持工作区内文档与真实执行进度一致。',
-    '6. 若 ready task 全部耗尽但计划未完成，优先检查阻塞依赖、真实代码 diff、失败反馈和是否需要动态重规划。',
+    '5. 每轮改动后都要先做最小必要验证，并把验证结论写入总结，不要让“稍后统一验证”积压成连续多轮不可控风险。',
+    '6. 每完成一轮任务后刷新 PLAN.md、TASKS.md、CONTEXT.md、RUN.md、SUBAGENTS.md、SUPERVISOR.md 与 dev-log.md，保持工作区内文档与真实执行进度一致。',
+    '7. 若连续两轮没有实质进展，或者 ready task 全部耗尽但计划未完成，优先检查阻塞依赖、真实代码 diff、失败反馈和是否需要动态重规划。',
     '',
     '当前 ready task：',
     readyTaskLines,

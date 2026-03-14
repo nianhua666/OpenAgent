@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.0.6 - 2026-03-15
+
+- 情绪型 Agent 心情机制正式落地：新增 `src/utils/agentMood.ts`，把角色隐藏心情值收口为 `guarded / reserved / steady / warm / bright` 五档情绪带，并为每一档定义语气摘要、执行倾向、Prompt 指引与 TTS 情绪映射；`stores/ai.ts` 现会按用户对话语气、关怀/受伤线索与默认基线动态调整情绪型角色的隐藏心情，但不会因为命令式措辞破坏对用户需求的执行优先级。
+- Agent Prompt 继续向“更像人、但不失控”收口：`src/utils/aiPrompts.ts` 现明确区分功能型与情绪型角色的说话方式，要求情绪型角色在陪伴聊天时更自然、更像熟悉的同伴接话，而在任务场景下仍优先执行；隐藏心情只影响语气与主动性，不允许向用户暴露或凌驾于任务目标之上。
+- IDE 长任务持续开发协议升级：`src/utils/aiPrompts.ts`、`src/utils/aiPlanEngine.ts` 与 `src/utils/aiAutonomyScheduler.ts` 现统一采用 `Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue` 的长任务循环节律，并把当前循环阶段、验证清单、焦点摘要与继续规则同步写入自治运行态和 `RUN.md`，让大任务连续推进、断点恢复与接手协作更接近 Opencode 风格的可持续执行节奏。
+- Agent / IDE / 悬浮窗的语音播放现已接入情绪型角色的心情带：`AgentView.vue`、`AIChatDialog.vue` 与 `IDEAssistantPanel.vue` 会根据当前角色隐藏心情自动微调 TTS 情绪风格与强度，避免心情值只停留在 Prompt 文字层。
+- 经典 `/ai` 入口现也会沿用角色心情带播放语音，避免主工作台、经典页与悬浮对话窗的情绪型播报表现不一致。
+- 角色编辑页补上心情带预览：`AgentProfileManager.vue` 会在调节情绪型角色默认心情时即时展示当前档位、语气摘要与执行倾向，让角色调参不再只面对抽象滑杆。
+
 ## 3.0.5 - 2026-03-15
 
 - Agent 工作台继续收口信息密度：`AgentView.vue` 压掉了标题区与工作台条之间的重复状态，把角色类型收回到头部摘要，工作台条只保留会话域、会话标题、当前模型、消息数与上下文负载，减少顶部两层胶囊同时表达同一件事的视觉噪声。

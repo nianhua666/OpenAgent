@@ -101,6 +101,8 @@
 | 9.11 | 修复 Gemini 原生多模态模型的产图回包：在原生图片模型下显式请求 IMAGE 模态，并约束 Agent 优先返回真实图片而不是口头描述 | 已完成 | `src/utils/ai.ts`, `src/utils/aiPrompts.ts`, `src/utils/aiConversation.ts` |
 | 9.12 | 收口安装目录与运行数据目录保护：确认升级安装默认沿用旧安装目录，并让自动数据目录在重装后继续回到原路径 | 已完成 | `electron-builder.config.cjs`, `build/installer.nsh`, `electron/main.ts`, `src/views/Settings.vue`, `src/types/index.ts`, `README.md` |
 | 9.13 | 继续压缩 Agent 顶部重复信息与底部输入区密度，统一工作台信息层级与底部 composer 交互 | 已完成 | `src/views/AgentView.vue`, `src/components/agent/AgentInputBar.vue`, `CHANGELOG.md`, `README.md` |
+| 9.14 | 落地情绪型 Agent 心情带与 IDE 长任务循环节律：让 Prompt、自治执行状态、TTS 与运行文档统一遵循可持续长任务协议 | 已完成 | `src/utils/agentMood.ts`, `src/stores/ai.ts`, `src/utils/aiPrompts.ts`, `src/utils/aiAutonomyScheduler.ts`, `src/utils/aiPlanEngine.ts`, `src/components/AIChatDialog.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/components/ide/IDEPlanPanel.vue`, `src/types/index.ts` |
+| 9.15 | 收口情绪链路最后一批入口：经典 `/ai` 语音播报改为沿用角色心情带，角色编辑页补上心情带预览与执行倾向提示 | 已完成 | `src/views/AIAssistant.vue`, `src/components/agent/AgentProfileManager.vue`, `README.md`, `CHANGELOG.md` |
 
 ---
 
@@ -113,6 +115,9 @@
 - Gemini 原生产图模型这轮确认了一类真实链路缺口：前端消息渲染与 `inlineData -> attachment` 转换早已存在，但 Gemini `generateContent` 请求体过去没有在图片生成场景显式要求 `IMAGE` 模态，导致 `gemini-*-image` 这类原生模型经常只返回文字描述。当前版本已在 `src/utils/ai.ts` 按“原生图片模型 + 本轮明确产图 / 编辑意图”自动附加 `responseModalities: ['TEXT', 'IMAGE']`，并在 Prompt 中补充“优先返回真实图片，不要只口头描述”的约束；剩余工作主要是继续用真实 Gemini / Sub2API 网关做人工联调，观察不同网关对原生图片 parts 的兼容情况。
 - 安装目录与运行数据目录这轮也做了针对性收口：安装版升级时，electron-builder 的 NSIS assisted installer 本身就会优先读取上一版本注册表里的 `InstallLocation` 并默认沿用原安装目录；当前版本又显式把 `build/installer.nsh` 绑定进 `electron-builder.config.cjs`，避免后续构建链调整时失去这条逻辑。更重要的是，`electron/main.ts` 现在会为“自动策略”持久化最近一次自动运行数据目录，重装或升级后即使安装位置变化，也会优先回到原来的数据根目录，而不是重新落到新的空目录；设置页也补上了安装目录、自动策略记忆目录与升级策略提示，方便发包前后直接人工确认。
 - Agent 工作台这轮继续做了结构化减法：头部摘要不再把角色类型、作用域和运行态在两层状态条里重复展示，工作台条只保留会话域、会话标题、模型、消息数与上下文负载；底部输入区则改成统一 composer，把发送、附件、截图、模型选择与自动步数收进一块稳定的底部工作条，减少空会话时的大面积留白，也让输入区更稳定地贴靠在窗口底边。
+- 情绪型 Agent 这一轮终于不再只是“有个 mood 数值却几乎不用”：新增的 `agentMood.ts` 会把隐藏心情值归一到 `guarded / reserved / steady / warm / bright` 五档情绪带，并为每一档定义语气摘要、执行倾向、Prompt 指引与 TTS 建议。当前版本会根据用户的关怀、夸奖、负面反馈与受伤语气动态调整情绪型角色的隐藏心情，但不会因为命令式表达削弱 Agent 对用户明确指令的执行优先级。剩余工作主要是继续做真实陪伴场景人工回归，观察不同模型在“更有人情味”与“不过度表演”之间的平衡。
+- IDE 长任务自治执行这轮也从“有调度状态”继续收口到了“有稳定循环节律”：运行时 Prompt、`RUN.md`、监督提示词和自治状态机现在统一采用 `Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue` 的循环协议，并把当前循环阶段、焦点摘要、验证清单与继续规则落盘，明显更接近 Opencode 一类长任务代理的持续推进方式。剩余工作主要是继续观察真实长任务下的多轮阻塞处理、后台 worker 连续运行与更细的权限/资源治理，而不是循环协议仍然缺位。
+- 情绪链路这一轮又补齐了两个容易遗漏的入口：经典 `/ai` 页面现在也会按当前角色心情带播放 TTS，不会再和 Agent / IDE / 悬浮窗出现不同的情绪播报手感；角色编辑页也新增了“当前心情带 + 语气摘要 + 执行倾向”即时预览，调节情绪型角色时不再只面对抽象滑杆。剩余工作主要是继续观察不同模型在真实陪伴对话中的语气稳定性，以及是否还需要更细的心情恢复/冷却机制。
 - IDE 终端与上下文压缩这轮继续做了“长时间运行防卡死”收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使退出事件丢失也能按快照收口；对于重复循环输出、长时间无输出、交互式提示和超时都会给出系统心跳或自动停机说明，命令若正常结束但无标准输出也会显式回传“已结束、无输出”，避免模型把“安静结束”误判成“仍在卡住”。上下文压缩则改为输出结构化 handoff 摘要，快照会记录消息锚点、最近工具、来源和已覆盖消息数，减少因只按创建时间增量切片而漏掉新消息的问题。当前剩余风险主要集中在真实 Electron 终端下 `vim` / `top` / watch 类命令的长时间人工回归，以及更深层的前后台自治调度协同。
 - IDE 模式现在已经支持多工作区并行管理：每个工作区在创建时都会先选择项目根目录，再选择独立的基础产物目录；工作区会持久化自己的数据目录、产物目录、最近打开时间、编辑会话与计划链路，切换工作区时也会独立恢复对应的编辑现场。当前剩余工作主要集中在继续补强“跨工作区复制 / 迁移提示、工作区级终端与计划资源占用观测、长时间后台连续运行”这类深水区体验，而不是基础多工作区骨架缺失。
 - Agent 模式现在已补齐“按角色覆盖运行参数”的主链路：每个角色都可以独立设定默认模型、温度与默认产物目录，主窗口 `/ai`、兼容入口 `/ai/classic` 与悬浮对话窗都会按当前角色的有效模型运行；角色切换模型后也会联动重新计算推荐自动步数。当前剩余工作主要是继续补“角色级温度 / 模型参数的更细粒度可视化、角色长期记忆管理面板、真正的一体化图片生成产物流”，而不是运行参数仍停留在全局配置。
@@ -158,6 +163,10 @@
 | 2026-03-14 | fix | Phase 9 工具回合 502 收口：定位到 `aiConversation.ts` 会把完整工具结果与“工具回合自检”整段写回会话，导致下一轮请求上下文被 JSON / 日志污染；现已改为压缩写入、原始结果转入 metadata，并为 `Responses` 的 502/503/504 upstream 错误增加一次轻量重试。 |
 | 2026-03-14 | fix | Phase 9 工作台交互修正：`AgentView.vue` 改为 `auto / auto / 1fr` 根布局，避免消息区把输入框挤出视口；`AgentView.vue`、`IDEView.vue` 与 `AIOverlay.vue` 新增头部原生拖拽区并显式标记 `no-drag` 控件，修复拖动窗口时误选中文字的问题；`AIChatDialog.vue` 与 `AIOverlay.vue` 同步裁掉悬浮窗里的 AI 设置 / Sub2API 配置露出，保留纯对话小窗。 |
 | 2026-03-14 | test | Phase 9 工作台交互回归：再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai-overlay --route=/ide`，确认 Agent 输入区、悬浮窗纯对话视图与沉浸式拖拽区改动未破坏桌面渲染链。 |
+| 2026-03-15 | code | Phase 9 情绪机制与长任务协议收口：新增 `agentMood.ts`，把情绪型 Agent 的隐藏心情值映射为五档心情带，并在 `stores/ai.ts` / `aiPrompts.ts` 中补齐“更自然的人情味表达 + 任务优先级不失控”的 Prompt 规则；`aiAutonomyScheduler.ts` / `aiPlanEngine.ts` / `IDEPlanPanel.vue` 则把 IDE 长任务推进统一到 `Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue` 的循环节律。 |
+| 2026-03-15 | fix | Phase 9 情绪链路补全：`AgentView.vue`、`AIChatDialog.vue` 与 `IDEAssistantPanel.vue` 的 TTS 播放现已接入心情带驱动，不再只读取角色静态 TTS 配置；情绪型 Agent 的心情变化会影响语气和播报风格，但不会覆盖执行用户明确需求的主目标。 |
+| 2026-03-15 | build | Phase 9 情绪机制与自治循环节律验证：执行 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，确认新增类型、自治状态字段、Prompt 收口和 TTS 心情映射未破坏主构建与关键路由。 |
+| 2026-03-15 | polish | Phase 9 情绪链路一致性收口：`AIAssistant.vue` 现已接入 `resolveMoodAwareTtsOverrides`，经典页会沿用角色心情带播报；`AgentProfileManager.vue` 则补上心情带即时预览，方便调校情绪型角色的人情味与执行倾向。 |
 | 2026-03-14 | ui | Phase 9 会话区收口：`AgentMessageList.vue` 改为把系统消息 / 工具结果渲染为紧凑活动卡片，工具调用参数和原始结果默认折叠展示；`IDEAssistantPanel.vue` 复用同一组件，并顺手修复了运行态“会话”标签乱码。 |
 | 2026-03-14 | test | Phase 9 工具回合收口验证：`npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide` 均通过，确认新消息压缩层和活动卡片展示没有破坏 `/ai`、`/ide` 主界面。 |
 | 2026-03-14 | code | Phase 9 前端精修第二轮：`IDEActivityBar.vue` 新增资源 / 终端 / Inspector 面板显隐开关，`IDEView.vue` 新增顶部 workbench 工具条、折叠态持久化与更紧凑的骨架变量，继续向可收纳工作台收口。 |

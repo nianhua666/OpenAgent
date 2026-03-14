@@ -81,6 +81,7 @@ import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { cancelConversationRun, createAttachmentsFromFiles, createImageAttachmentFromDataUrl, startConversationTurn } from '@/utils/aiConversation'
+import { resolveMoodAwareTtsOverrides } from '@/utils/agentMood'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 
@@ -368,10 +369,7 @@ async function sendMessage() {
 async function playAssistantMessage(message: AIChatMessage) {
   try {
     playingMessageId.value = message.id
-    await playTextToSpeech(settingsStore.settings, message.content, {
-      emotionStyle: currentAgent.value?.tts.emotionStyle,
-      emotionIntensity: currentAgent.value?.tts.emotionIntensity,
-    })
+    await playTextToSpeech(settingsStore.settings, message.content, resolveMoodAwareTtsOverrides(currentAgent.value))
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '语音播放失败')
   } finally {

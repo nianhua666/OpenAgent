@@ -100,6 +100,16 @@
               <small class="field-hint">当前 {{ normalizeMood(draft.mood) }} / 100。只用于内部调节语气和热情度，不在会话页直接展示。</small>
             </label>
 
+            <div v-if="draft.personaType === 'emotional' && draftMoodSnapshot" class="mood-preview field">
+              <div class="mood-preview-head">
+                <span>当前心情带</span>
+                <strong>{{ draftMoodSnapshot.label }}</strong>
+                <span class="runtime-pill">{{ normalizeMood(draft.mood) }}/100</span>
+              </div>
+              <p>{{ draftMoodSnapshot.toneSummary }}</p>
+              <small class="field-hint">{{ draftMoodSnapshot.executionSummary }}</small>
+            </div>
+
             <div v-else class="field field--placeholder">
               <span>执行倾向</span>
               <div class="field-placeholder">功能型角色会优先严格执行需求，并尽量避免情绪表达干扰任务推进。</div>
@@ -184,6 +194,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import type { AIAgentCapabilitySettings, AIAgentPersonaType, AIAgentProfile, AIConversationScope, AIProviderModel } from '@/types'
+import { resolveAgentMoodSnapshot } from '@/utils/agentMood'
 import { genId } from '@/utils/helpers'
 
 type EditableAgentProfile = {
@@ -249,6 +260,12 @@ const draft = reactive<EditableAgentProfile>(createDraft())
 const initialSignature = ref('')
 const canSubmit = computed(() => draft.name.trim().length > 0 && draft.systemPrompt.trim().length > 0)
 const isDirty = computed(() => initialSignature.value !== currentDraftSignature())
+const draftMoodSnapshot = computed(() => resolveAgentMoodSnapshot({
+  id: draft.id || 'draft-agent',
+  personaType: draft.personaType,
+  mood: draft.mood,
+  tts: draft.tts,
+}))
 
 watch(
   () => props.agents,
@@ -470,7 +487,8 @@ function getCapabilityBadges(agent: AIAgentProfile) {
 .form-head,
 .form-actions,
 .agent-card-head,
-.agent-card-actions {
+.agent-card-actions,
+.mood-preview-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -631,6 +649,27 @@ h4 {
 
 .field--placeholder {
   align-content: start;
+}
+
+.mood-preview {
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 214, 156, 0.5);
+}
+
+.mood-preview-head {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.mood-preview p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .field-placeholder {
