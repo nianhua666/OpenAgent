@@ -52,42 +52,42 @@ defineEmits<{
 <style scoped>
 .agent-toolbar {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 8px;
+  padding: 10px;
 }
 
 .toolbar-main {
   align-items: start;
   display: flex;
-  gap: 16px;
+  gap: 10px;
   justify-content: space-between;
 }
 
 .eyebrow {
   margin: 0 0 4px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 15px;
 }
 
 .toolbar-actions,
 .badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chip,
 .badge,
 .settings-link {
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .chip {
@@ -95,7 +95,8 @@ h3 {
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 9px 14px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .chip.active {
@@ -113,33 +114,33 @@ h3 {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .model-card {
   align-items: baseline;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px;
+  border-radius: 10px;
   display: inline-flex;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 6px 10px;
 }
 
 .meta-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .badge {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
-  padding: 7px 10px;
+  padding: 4px 8px;
 }
 
 .error-text {
   color: #ff8d8d;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .settings-link {
@@ -147,7 +148,8 @@ h3 {
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 8px 12px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 @media (max-width: 960px) {

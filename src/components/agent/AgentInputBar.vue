@@ -161,8 +161,8 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 <style scoped>
 .agent-input-bar {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 8px;
+  padding: 10px;
 }
 
 .hidden-file-input {
@@ -175,27 +175,27 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .step-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .attachment-pill {
   align-items: center;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px;
+  border-radius: 10px;
   display: flex;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 7px 9px;
 }
 
 .attachment-thumb,
 .attachment-file {
-  border-radius: 12px;
-  flex: 0 0 52px;
-  height: 52px;
+  border-radius: 8px;
+  flex: 0 0 38px;
+  height: 38px;
   object-fit: cover;
-  width: 52px;
+  width: 38px;
 }
 
 .attachment-file {
@@ -203,7 +203,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   justify-content: center;
 }
 
@@ -222,13 +222,13 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .attachment-copy span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .input-row {
   align-items: end;
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
@@ -240,8 +240,9 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 12px;
-  padding: 10px 14px;
+  font-size: 11px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .attach-btn,
@@ -274,19 +275,20 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .control-select {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
+  border-radius: 14px;
   color: var(--text-primary);
 }
 
 .message-input {
-  min-height: 56px;
-  padding: 14px 16px;
+  min-height: 42px;
+  padding: 10px 12px;
   resize: none;
   width: 100%;
 }
 
 .control-select {
-  padding: 10px 12px;
+  min-height: 30px;
+  padding: 0 9px;
 }
 
 .controls-row {
@@ -301,7 +303,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .control-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 @media (max-width: 960px) {

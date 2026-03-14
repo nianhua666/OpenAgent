@@ -28,7 +28,25 @@
         <p>{{ session.summary }}</p>
       </div>
 
-      <div class="message-stream">
+      <div v-if="session.messages.length === 0 && !streaming" class="session-empty">
+        <div class="session-empty-copy">
+          <p class="empty-eyebrow">Session Ready</p>
+          <h3>{{ session.scope === 'live2d' ? 'Live2D 对话已就绪' : '主窗口对话已就绪' }}</h3>
+          <p class="empty-copy">当前会话还没有消息。你可以直接给出需求、补充约束、让 Agent 先拆解任务，或者让它先梳理当前角色的记忆与能力边界。</p>
+        </div>
+        <div class="session-empty-meta">
+          <span class="empty-fact">{{ session.title }}</span>
+          <span class="empty-fact">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
+          <span class="empty-fact">0 条消息</span>
+        </div>
+        <div class="starter-list">
+          <button v-for="prompt in starterPrompts" :key="prompt" class="starter-btn" @click="$emit('apply-prompt', prompt)">
+            {{ prompt }}
+          </button>
+        </div>
+      </div>
+
+      <div v-else class="message-stream">
         <article v-for="message in session.messages" :key="message.id" class="message-card" :class="`is-${message.role}`">
           <div class="message-role">{{ roleLabel(message.role) }}</div>
           <div class="message-body">
@@ -158,10 +176,10 @@ function handleRichTextClick(event: MouseEvent) {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 0;
   overflow: auto;
-  padding: 18px;
+  padding: 12px;
 }
 
 .empty-state,
@@ -171,19 +189,59 @@ function handleRichTextClick(event: MouseEvent) {
 .attachment-grid,
 .tool-list {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .empty-state {
   align-content: center;
   justify-items: start;
-  min-height: 320px;
+  min-height: 240px;
+}
+
+.session-empty {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 14px;
+  min-height: 220px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(96, 165, 250, 0.16), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(240, 246, 252, 0.88));
+}
+
+.session-empty-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.session-empty-copy h3 {
+  font-size: 18px;
+}
+
+.session-empty-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.empty-fact {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
+  font-size: 11px;
 }
 
 .empty-eyebrow,
 .message-eyebrow {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   margin: 0;
   text-transform: uppercase;
@@ -197,25 +255,25 @@ p {
 .empty-copy,
 .session-summary p,
 .tool-result {
-  color: var(--text-secondary);
-  line-height: 1.7;
+  color: #475569;
+  line-height: 1.55;
 }
 
 .starter-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .starter-btn,
 .voice-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 999px;
-  color: var(--text-secondary);
+  color: #334155;
   cursor: pointer;
-  font-size: 12px;
-  padding: 10px 14px;
+  font-size: 11px;
+  padding: 7px 11px;
 }
 
 .message-head {
@@ -226,34 +284,34 @@ p {
 .message-meta {
   align-items: center;
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .scope-badge {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(226, 232, 240, 0.8);
   border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 6px 10px;
+  color: #334155;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .scope-badge.is-live2d {
-  background: rgba(65, 196, 255, 0.14);
-  color: #85d7ff;
+  background: rgba(186, 230, 253, 0.86);
+  color: #0c4a6e;
 }
 
 .scope-badge.is-main {
-  background: rgba(255, 166, 43, 0.14);
-  color: #ffd08a;
+  background: rgba(254, 240, 138, 0.78);
+  color: #854d0e;
 }
 
 .session-summary,
 .message-card,
 .tool-item {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 18px;
-  padding: 14px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  padding: 12px;
 }
 
 .message-card {
@@ -272,25 +330,26 @@ p {
 
 .message-role {
   align-items: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(226, 232, 240, 0.8);
   border-radius: 999px;
-  color: var(--text-secondary);
+  color: #334155;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   justify-content: center;
-  min-width: 52px;
-  padding: 8px 10px;
+  min-width: 46px;
+  padding: 6px 8px;
 }
 
 .message-body {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .message-content :deep(code),
 .tool-args {
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  background: rgba(226, 232, 240, 0.78);
+  border-radius: 8px;
+  color: #0f172a;
   padding: 2px 6px;
 }
 
@@ -310,13 +369,14 @@ p {
 
 .message-time {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .message-reasoning {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 14px;
-  padding: 10px 12px;
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  padding: 8px 10px;
 }
 
 .attachment-grid {
@@ -324,40 +384,40 @@ p {
 }
 
 .attachment-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
 }
 
 .attachment-image {
   aspect-ratio: 4 / 3;
-  border-radius: 12px;
+  border-radius: 10px;
   object-fit: cover;
   width: 100%;
 }
 
 .file-chip {
   align-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  color: var(--text-secondary);
+  background: rgba(226, 232, 240, 0.84);
+  border-radius: 10px;
+  color: #334155;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   justify-content: center;
-  min-height: 84px;
+  min-height: 72px;
 }
 
 .tool-name {
-  color: #ffd08a;
-  font-size: 12px;
+  color: #9a3412;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .tool-list {
-  gap: 10px;
+  gap: 8px;
 }
 
 .streaming-indicator {

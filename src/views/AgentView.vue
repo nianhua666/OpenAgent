@@ -1020,19 +1020,21 @@ async function playAssistantMessage(message: { id: string; content: string }) {
   min-height: 100%;
   padding: 4px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(100, 116, 139, 0.22);
   background:
-    radial-gradient(circle at top left, rgba(96, 165, 250, 0.1), transparent 20%),
-    radial-gradient(circle at top right, rgba(250, 204, 21, 0.08), transparent 18%),
-    linear-gradient(180deg, rgba(247, 250, 253, 0.98), rgba(235, 241, 248, 0.95));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 18%),
+    radial-gradient(circle at top right, rgba(15, 23, 42, 0.06), transparent 22%),
+    linear-gradient(180deg, rgba(239, 244, 250, 0.98), rgba(219, 228, 240, 0.97));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
 .agent-view :deep(.glass-panel) {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 247, 251, 0.95));
-  border-color: rgba(148, 163, 184, 0.22);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.97));
+  border-color: rgba(100, 116, 139, 0.22);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1);
   backdrop-filter: blur(16px);
 }
 
@@ -1044,11 +1046,12 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 .agent-hero {
   align-items: center;
   background:
-    radial-gradient(circle at top right, rgba(91, 140, 255, 0.16), transparent 30%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(244, 247, 251, 0.86));
+    radial-gradient(circle at top right, rgba(91, 140, 255, 0.18), transparent 26%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(237, 243, 249, 0.92));
   display: flex;
   gap: 8px;
   justify-content: space-between;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
 }
 
 .hero-eyebrow {
@@ -1089,8 +1092,9 @@ h1 {
   min-height: 24px;
   padding: 0 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
+  background: rgba(226, 232, 240, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
   font-size: 11px;
 }
 
@@ -1147,19 +1151,20 @@ h1 {
 }
 
 .mode-pill {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #475569;
 }
 
 .mode-pill.active {
-  background: linear-gradient(135deg, rgba(255, 183, 3, 0.34), rgba(255, 209, 102, 0.2));
-  color: var(--text-primary);
-  border-color: rgba(245, 158, 11, 0.18);
+  background: linear-gradient(135deg, rgba(91, 140, 255, 0.2), rgba(191, 219, 254, 0.48));
+  color: #1e3a8a;
+  border-color: rgba(91, 140, 255, 0.22);
 }
 
 .hero-link {
   background: transparent;
-  color: var(--text-secondary);
+  color: #475569;
   cursor: pointer;
 }
 
@@ -1170,7 +1175,8 @@ h1 {
   gap: 6px;
   padding: 5px 8px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 251, 0.88));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 243, 248, 0.9));
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
 }
 
 .workbench-bar-copy,
@@ -1188,8 +1194,9 @@ h1 {
   max-width: 220px;
   padding: 0 7px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-secondary);
+  background: rgba(226, 232, 240, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1204,17 +1211,17 @@ h1 {
 .workbench-toggle {
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.72);
+  color: #475569;
   font-size: 10px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .workbench-toggle.active {
-  background: color-mix(in srgb, var(--agent-accent) 22%, rgba(255, 255, 255, 0.05));
+  background: color-mix(in srgb, var(--agent-accent) 16%, rgba(255, 255, 255, 0.92));
   border-color: color-mix(in srgb, var(--agent-accent) 34%, rgba(148, 163, 184, 0.2));
   color: var(--text-primary);
 }
@@ -1250,7 +1257,7 @@ h1 {
   gap: 5px;
   padding: 5px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(243, 247, 251, 0.92));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 243, 248, 0.94));
 }
 
 .sidebar-tab {
@@ -1259,8 +1266,8 @@ h1 {
   padding: 0 7px;
   border: none;
   border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.7);
+  color: #475569;
   font-size: 10px;
   font-weight: 700;
   cursor: pointer;
@@ -1356,8 +1363,8 @@ h1 {
   gap: 4px;
   padding: 9px 10px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .agent-warning-card.is-ready {
@@ -1437,6 +1444,20 @@ h1 {
   box-shadow: none;
 }
 
+:deep(.agent-toolbar),
+:deep(.agent-session-list),
+:deep(.agent-profile-panel),
+:deep(.agent-memory-panel),
+:deep(.agent-resources-panel),
+:deep(.agent-task-board),
+:deep(.agent-message-list),
+:deep(.agent-input-bar),
+:deep(.agent-context-bar) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.95));
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+}
+
 :deep(.agent-session-list),
 :deep(.agent-profile-panel),
 :deep(.agent-resources-panel),
@@ -1458,6 +1479,33 @@ h1 {
 :deep(.agent-task-board .phase-item),
 :deep(.agent-task-board .plan-next-task) {
   border-radius: 12px;
+}
+
+:deep(.agent-session-list .session-card) {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.92));
+  border-color: rgba(100, 116, 139, 0.16);
+}
+
+:deep(.agent-session-list .session-card.active) {
+  background: linear-gradient(180deg, rgba(224, 234, 255, 0.96), rgba(239, 246, 255, 0.92));
+  border-color: rgba(91, 140, 255, 0.26);
+  box-shadow: 0 10px 18px rgba(59, 130, 246, 0.12);
+}
+
+:deep(.agent-message-list .session-summary) {
+  background: linear-gradient(180deg, rgba(236, 242, 249, 0.9), rgba(228, 236, 245, 0.76));
+  border: 1px solid rgba(100, 116, 139, 0.16);
+}
+
+:deep(.agent-message-list .message-card.is-assistant),
+:deep(.agent-message-list .message-card.is-streaming) {
+  background: linear-gradient(180deg, rgba(244, 248, 255, 0.96), rgba(236, 243, 252, 0.86));
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+:deep(.agent-message-list .message-card.is-user) {
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.94), rgba(254, 243, 199, 0.82));
+  border: 1px solid rgba(245, 158, 11, 0.18);
 }
 
 :deep(.agent-toolbar h3),

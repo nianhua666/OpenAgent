@@ -33,6 +33,8 @@
     "electron:build": "npm run build && electron-builder --config electron-builder.config.cjs",
     "electron:build:clean": "npm run build:clean && npm run electron:build",
     "electron:preview": "npm run build && node scripts/run-electron.cjs .",
+    "check:electron-ui": "npm run build && node scripts/check-electron-ui.cjs",
+    "check:chrome-automation": "node scripts/check-chrome-automation.cjs",
     "check:live2d": "npm run build && node scripts/run-electron.cjs . --live2d-diagnose",
     "check:sub2api": "node scripts/check-sub2api.cjs",
     "release:publish": "node scripts/publish-release.cjs",

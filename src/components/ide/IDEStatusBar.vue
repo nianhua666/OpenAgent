@@ -4,11 +4,11 @@
     <span v-if="language" class="status-pill">{{ language }}</span>
     <span v-if="framework" class="status-pill">{{ framework }}</span>
     <span class="status-pill">打开文件 {{ openFiles }}</span>
-    <span class="status-pill">待保存 {{ dirtyFiles }}</span>
+    <span class="status-pill" :class="{ 'is-warning': dirtyFiles > 0 }">待保存 {{ dirtyFiles }}</span>
     <span class="status-pill">计划 {{ planCount }}</span>
     <span class="status-pill">Ln {{ cursorLine }}, Col {{ cursorColumn }}</span>
-    <span v-if="selectionLength > 0" class="status-pill">已选 {{ selectionLength }}</span>
-    <span class="status-file">{{ activeFilePath || '未选择文件' }}</span>
+    <span v-if="selectionLength > 0" class="status-pill is-selection">已选 {{ selectionLength }}</span>
+    <span class="status-file" :title="activeFilePath">{{ activeFilePath || '未选择文件' }}</span>
   </footer>
 </template>
 
@@ -32,35 +32,49 @@ defineProps<{
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: $spacing-md;
-  padding: 8px 14px;
-  border-radius: $border-radius-md;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: var(--text-inverse);
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: $border-radius-sm;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(21, 30, 48, 0.96), rgba(15, 23, 42, 0.98)),
+    radial-gradient(circle at top right, rgba(96, 165, 250, 0.14), transparent 36%);
+  color: #e2e8f0;
   font-size: $font-xs;
   font-weight: 600;
   overflow: hidden;
-
 }
 
 .status-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 19px;
+  padding: 0 7px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
 .status-pill-strong {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(59, 130, 246, 0.2);
+  color: #f8fbff;
+}
+
+.status-pill.is-warning {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+}
+
+.status-pill.is-selection {
+  background: rgba(37, 99, 235, 0.18);
+  color: #bfdbfe;
 }
 
 .status-file {
   margin-left: auto;
   min-width: 0;
+  color: rgba(226, 232, 240, 0.82);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -49,20 +49,20 @@ function formatNumber(value: number) {
 .agent-context-bar {
   align-items: center;
   display: grid;
-  gap: 14px;
+  gap: 10px;
   grid-template-columns: minmax(220px, 1.3fr) minmax(160px, 1fr) auto;
-  padding: 14px 18px;
+  padding: 10px 12px;
 }
 
 .context-copy {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .context-label,
 .context-sub {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .usage-track {
@@ -82,7 +82,7 @@ function formatNumber(value: number) {
 .context-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
 }
 
@@ -90,8 +90,8 @@ function formatNumber(value: number) {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 999px;
   color: var(--text-secondary);
-  font-size: 12px;
-  padding: 7px 10px;
+  font-size: 11px;
+  padding: 5px 8px;
 }
 
 .stat-pill.running {

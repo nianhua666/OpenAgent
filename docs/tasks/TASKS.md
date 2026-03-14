@@ -245,6 +245,14 @@
 
 ## Latest Check
 
+- 2026-03-14 工作台视觉对比度继续收口：`App.vue`、`IDEView.vue` 与 `AgentView.vue` 统一收紧 immersive 背景、卡片边界、阴影和页内工具条层级，最新 `ai.png` / `ide.png` 已确认 `/ai`、`/ide` 的工作台外壳与面板主体不再像前几轮那样发白发虚。
+- 2026-03-14 消息区与终端可读性继续提升：`AgentMessageList.vue` 抬高了 session-ready、消息卡片、标签、代码片段和附件卡片的对比度；`IDETerminal.vue` 同步增强了摘要胶囊、运行状态、标签卡和脚本芯片，减少真实联调时“状态存在但读不清”的问题。
+- 2026-03-14 IDE Agent 面板清理：`IDEAssistantPanel.vue` 去掉了临时重复的 sessions 状态胶囊，避免右侧 Inspector 再出现“状态标签堆叠但含义重复”的视觉噪音。
+
+- 2026-03-14 IDE 工作台密度继续收口：`IDEView.vue`、`IDEEditor.vue`、`IDEExplorer.vue`、`IDETerminal.vue`、`IDEStatusBar.vue` 与 `IDEActivityBar.vue` 统一缩小头部、标签、资源树与状态条体积，最新 Electron 截图已确认 `/ide` 的主编辑区占比和工作台层级比上一轮更接近真实桌面 IDE。
+- 2026-03-14 IDE Agent 联调修正：`IDEAssistantPanel.vue` 已改为按当前会话 / 当前角色的有效配置判断模型刷新可用性，并在配置变化时自动重拉模型目录；右侧面板新增运行态胶囊，能直接区分 `Needs Config / Syncing / Model Sync Failed / Ready`。
+- 2026-03-14 终端状态可见性提升：`IDETerminal.vue` 新增活动会话状态胶囊、最近命令摘要与 running 会话计数，结合既有自动停机与快照轮询链路，能更快判断命令是仍在执行、已静默结束还是需要人工介入。
+
 - 2026-03-14 Agent 工作台细化：`AgentView.vue` 现已把运行态锚点前置到页头与 workbench 状态条，用户不进入消息区也能一眼看到当前角色是“待补齐运行配置 / 模型目录读取中 / 读取失败 / 已就绪”。
 - 2026-03-14 IDE 空工作台细化：`IDEView.vue` 的最近工作区卡片新增最近打开时间；若本地还没有最近工作区，则右上自动切换为 `Quick Start` 面板，明确说明工作区恢复、编辑现场与计划同步会如何生效。
 - 2026-03-14 真实 Electron 回归复核：本轮再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui`，确认新增运行态胶囊和 `Quick Start` 面板没有破坏 `/ai`、`/ide` 首屏布局。

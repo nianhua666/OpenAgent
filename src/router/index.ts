@@ -91,7 +91,7 @@ const routes = [
     path: '/ai',
     name: 'AIAssistant',
     component: () => import('@/views/AgentView.vue'),
-    meta: { title: 'Agent', immersive: true }
+    meta: { title: 'Agent', immersive: true, hideTopBar: true }
   },
   {
     path: '/ai/classic',

@@ -3,6 +3,7 @@ import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from '
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createRequire } from 'module'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { registerAzureTTSHandlers } from './azureSpeech'
 import { ensureLive2DDirs, listLive2DLibraryItems, migrateLive2DStorageData, registerLive2DHandlers, registerLive2DProtocol, setLive2DDebugLogger, setLive2DStorageDirResolver } from './live2d'
@@ -61,6 +62,8 @@ type NodePtySpawn = (
 
 let nodePtySpawnPromise: Promise<NodePtySpawn | null> | null = null
 let nodePtyLoadError = ''
+const nativeRequire = createRequire(import.meta.url)
+const NODE_PTY_MODULE_ID = ['node', 'pty'].join('-')
 
 type RuntimeDataStorageMode = 'auto' | 'custom'
 type WindowDragPoint = { x: number; y: number }
@@ -84,6 +87,12 @@ interface RuntimeDataStorageInfo {
   usingRecommendedStorage: boolean
   onSystemDrive: boolean
   systemDriveRoot: string
+}
+
+interface MainWindowCaptureConfig {
+  outputPath: string
+  delayMs: number
+  quitAfterCapture: boolean
 }
 
 const DEFAULT_USER_DATA_DIR = app.getPath('userData')
@@ -424,6 +433,49 @@ const LIVE2D_DIAGNOSTIC_ARG = '--live2d-diagnose'
 const TTS_DIAGNOSTIC_ARG = '--tts-diagnose'
 const IS_LIVE2D_DIAGNOSTIC_MODE = process.argv.includes(LIVE2D_DIAGNOSTIC_ARG)
 const IS_TTS_DIAGNOSTIC_MODE = process.argv.includes(TTS_DIAGNOSTIC_ARG)
+const MAIN_ROUTE_ARG_PREFIX = '--main-route='
+const MAIN_WINDOW_CAPTURE_ARG_PREFIX = '--capture-main-window='
+const MAIN_WINDOW_CAPTURE_DELAY_ARG_PREFIX = '--capture-delay-ms='
+const MAIN_WINDOW_CAPTURE_QUIT_ARG = '--capture-quit'
+
+function readRuntimeArgValue(prefix: string) {
+  const matchedArg = process.argv.find(argument => argument.startsWith(prefix))
+  if (!matchedArg) {
+    return ''
+  }
+
+  return matchedArg.slice(prefix.length).trim()
+}
+
+function normalizeStartupMainRoute(targetPath: string) {
+  const normalized = targetPath.trim()
+  if (!normalized) {
+    return ''
+  }
+
+  return normalized.startsWith('/') ? normalized : `/${normalized.replace(/^#?\/?/, '')}`
+}
+
+function normalizeMainWindowCaptureConfig(): MainWindowCaptureConfig | null {
+  const outputPath = normalizeDirectoryPath(readRuntimeArgValue(MAIN_WINDOW_CAPTURE_ARG_PREFIX))
+  if (!outputPath) {
+    return null
+  }
+
+  const rawDelay = Number.parseInt(readRuntimeArgValue(MAIN_WINDOW_CAPTURE_DELAY_ARG_PREFIX), 10)
+  const delayMs = Number.isFinite(rawDelay)
+    ? clamp(rawDelay, 300, 20_000)
+    : 2_200
+
+  return {
+    outputPath,
+    delayMs,
+    quitAfterCapture: process.argv.includes(MAIN_WINDOW_CAPTURE_QUIT_ARG)
+  }
+}
+
+const STARTUP_MAIN_ROUTE = normalizeStartupMainRoute(readRuntimeArgValue(MAIN_ROUTE_ARG_PREFIX))
+const MAIN_WINDOW_CAPTURE_CONFIG = normalizeMainWindowCaptureConfig()
 const LIVE2D_IDLE_MOUTH_STATE: Live2DMouthState = {
   level: 0,
   speaking: false,
@@ -535,6 +587,7 @@ let live2dMoveTimer: ReturnType<typeof setTimeout> | null = null
 let live2dCursorTimer: ReturnType<typeof setInterval> | null = null
 let aiOverlayBoundsPersistTimer: ReturnType<typeof setTimeout> | null = null
 let lastLive2DCursorKey = ''
+let mainWindowCaptureScheduled = false
 let currentSettings: AppSettings = { ...DEFAULT_SETTINGS }
 const activeWindowDrags = new Map<number, { startCursor: WindowDragPoint; startPosition: [number, number] }>()
 const ideTerminalTrackedOwners = new Set<number>()
@@ -599,12 +652,37 @@ function getSafeKey(key: string) {
 
 async function getNodePtySpawn() {
   if (!nodePtySpawnPromise) {
-    nodePtySpawnPromise = import('node-pty')
-      .then(module => module.spawn as NodePtySpawn)
-      .catch(error => {
-        nodePtyLoadError = error instanceof Error ? error.message : String(error)
-        return null
-      })
+    nodePtySpawnPromise = Promise.resolve().then(() => {
+      const loadErrors: string[] = []
+      const candidateEntries = [
+        NODE_PTY_MODULE_ID,
+        join(process.cwd(), 'node_modules', 'node-pty', 'lib', 'index.js'),
+        join(app.getAppPath(), 'node_modules', 'node-pty', 'lib', 'index.js'),
+        join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty', 'lib', 'index.js')
+      ]
+
+      for (const candidate of candidateEntries) {
+        try {
+          if (candidate !== NODE_PTY_MODULE_ID && !existsSync(candidate)) {
+            continue
+          }
+
+          const loaded = nativeRequire(candidate) as { spawn?: NodePtySpawn } | NodePtySpawn
+          const spawnFn = typeof loaded === 'function' ? loaded : loaded?.spawn
+          if (typeof spawnFn === 'function') {
+            nodePtyLoadError = ''
+            return spawnFn
+          }
+
+          loadErrors.push(`${candidate}: missing spawn export`)
+        } catch (error) {
+          loadErrors.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
+      nodePtyLoadError = loadErrors.join(' | ')
+      return null
+    })
   }
 
   return await nodePtySpawnPromise
@@ -1404,6 +1482,39 @@ function getRendererEntryUrl(hashPath = '') {
   return url.toString()
 }
 
+function scheduleMainWindowCapture(win: BrowserWindow) {
+  if (mainWindowCaptureScheduled || !MAIN_WINDOW_CAPTURE_CONFIG) {
+    return
+  }
+
+  mainWindowCaptureScheduled = true
+  const { outputPath, delayMs, quitAfterCapture } = MAIN_WINDOW_CAPTURE_CONFIG
+  const timer = setTimeout(async () => {
+    try {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        throw new Error('Main window closed before capture completed.')
+      }
+
+      ensureDirectoryExists(dirname(outputPath))
+      const image = await win.capturePage()
+      writeFileSync(outputPath, image.toPNG())
+      console.log(`[ui-capture] main window saved to ${outputPath}`)
+    } catch (error) {
+      console.error(error instanceof Error ? `[ui-capture] ${error.message}` : `[ui-capture] ${String(error)}`)
+      process.exitCode = 1
+    } finally {
+      if (quitAfterCapture && !isQuittingApp) {
+        isQuittingApp = true
+        app.quit()
+      }
+    }
+  }, delayMs)
+
+  win.on('closed', () => {
+    clearTimeout(timer)
+  })
+}
+
 async function loadRendererRoute(win: BrowserWindow, hashPath = '') {
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = new URL(process.env.VITE_DEV_SERVER_URL)
@@ -1591,6 +1702,7 @@ function showTrayHintOnce() {
 }
 
 function createMainWindow() {
+  mainWindowCaptureScheduled = false
   const win = new BrowserWindow({
     width: MAIN_WINDOW_WIDTH,
     height: MAIN_WINDOW_HEIGHT,
@@ -1613,6 +1725,7 @@ function createMainWindow() {
 
   win.once('ready-to-show', () => {
     win.show()
+    scheduleMainWindowCapture(win)
   })
   win.on('maximize', () => win.webContents.send('window:maximized', true))
   win.on('unmaximize', () => win.webContents.send('window:maximized', false))
@@ -1630,7 +1743,7 @@ function createMainWindow() {
     refreshTrayMenu()
   })
 
-  void loadRendererRoute(win)
+  void loadRendererRoute(win, STARTUP_MAIN_ROUTE)
   return win
 }
 

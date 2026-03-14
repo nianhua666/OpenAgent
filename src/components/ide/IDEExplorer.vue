@@ -1117,8 +1117,9 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: $spacing-md;
+  padding: 10px;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .explorer-eyebrow {
@@ -1153,8 +1154,8 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 }
 
 .explorer-action {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
@@ -1176,8 +1177,8 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   align-items: center;
   justify-content: space-between;
   gap: $spacing-sm;
-  padding: $spacing-sm $spacing-md;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
 }
 
 .explorer-meta {
@@ -1206,7 +1207,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 }
 
 .selection-bar {
-  background: rgba(255, 255, 255, 0.52);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .selection-copy {
@@ -1252,9 +1253,9 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  padding: $spacing-sm $spacing-md;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  background: rgba(255, 255, 255, 0.48);
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(255, 255, 255, 0.4);
 }
 
 .create-panel-copy {
@@ -1385,7 +1386,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   align-items: center;
   gap: $spacing-sm;
   width: 100%;
-  min-height: 36px;
+  min-height: 30px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -1448,7 +1449,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: $font-sm;
+  font-size: $font-xs;
 }
 
 .tree-badge,

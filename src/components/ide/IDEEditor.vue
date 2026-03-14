@@ -636,10 +636,11 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 2px;
-  min-height: 42px;
-  padding: $spacing-sm;
+  min-height: 38px;
+  padding: 6px 8px;
   overflow-x: auto;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .editor-tab {
@@ -648,16 +649,17 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   gap: 6px;
   min-width: 0;
   max-width: 220px;
-  padding: 8px 10px;
+  padding: 7px 9px;
   border: none;
-  border-radius: $border-radius-sm;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  transition: background $transition-fast, color $transition-fast;
 
   &.is-active {
-    background: var(--primary-bg);
-    color: var(--primary);
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--text-primary);
   }
 }
 
@@ -701,14 +703,15 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
-  padding: $spacing-sm $spacing-md;
+  padding: 8px 10px;
   color: var(--text-muted);
   font-size: $font-xs;
 }
 
 .editor-toolbar {
   justify-content: space-between;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .editor-actions {
@@ -727,9 +730,9 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  padding: $spacing-sm $spacing-md;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  background: rgba(255, 255, 255, 0.52);
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.42);
 }
 
 .editor-search-row {
@@ -802,7 +805,9 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   display: flex;
   flex: 1;
   min-height: 0;
-  background: rgba(255, 255, 255, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(15, 23, 42, 0.02);
 }
 
 .editor-gutter {
@@ -811,8 +816,8 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   flex-shrink: 0;
   align-items: flex-end;
   gap: 0;
-  min-width: 58px;
-  padding: $spacing-md 10px $spacing-md $spacing-md;
+  min-width: 54px;
+  padding: 12px 10px 12px 12px;
   overflow: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
   background: rgba(14, 25, 42, 0.04);
@@ -839,7 +844,7 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   flex: 1;
   width: 100%;
   min-height: 0;
-  padding: $spacing-md;
+  padding: 12px;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -874,7 +879,8 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
 
 .editor-footer {
   flex-wrap: wrap;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .editor-search-footer {

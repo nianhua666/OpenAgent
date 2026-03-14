@@ -93,9 +93,9 @@ function resolveAgentName(session: AIChatSession) {
 .agent-session-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   min-height: 0;
-  padding: 18px;
+  padding: 10px;
 }
 
 .panel-head,
@@ -105,20 +105,20 @@ function resolveAgentName(session: AIChatSession) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .eyebrow {
   margin: 0 0 4px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 15px;
 }
 
 .session-scroll {
@@ -126,22 +126,22 @@ h3 {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   overflow: auto;
 }
 
 .session-card {
-  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-color) 64%, rgba(148, 163, 184, 0.24));
   background:
-    radial-gradient(circle at top right, rgba(255, 166, 43, 0.12), transparent 38%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
-  border-radius: 18px;
+    radial-gradient(circle at top right, rgba(255, 166, 43, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(242, 246, 250, 0.76));
+  border-radius: 12px;
   color: var(--text-primary);
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 6px;
+  padding: 10px;
   text-align: left;
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -149,20 +149,26 @@ h3 {
 .session-card:hover:not(:disabled),
 .session-card.active {
   border-color: color-mix(in srgb, var(--primary) 70%, white 10%);
-  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.14);
   transform: translateY(-1px);
 }
 
+.session-card.active {
+  background:
+    radial-gradient(circle at top right, rgba(96, 165, 250, 0.18), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(239, 245, 252, 0.88));
+}
+
 .session-title {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .session-badge,
 .pin-tag {
   border-radius: 999px;
-  font-size: 11px;
-  padding: 4px 8px;
+  font-size: 10px;
+  padding: 3px 7px;
 }
 
 .session-badge {
@@ -191,13 +197,13 @@ h3 {
 .panel-empty {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .session-agent {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .muted {
@@ -209,8 +215,9 @@ h3 {
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 12px;
-  padding: 9px 12px;
+  font-size: 11px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .action-btn.primary {
@@ -234,7 +241,7 @@ h3 {
 
 @media (max-width: 960px) {
   .agent-session-list {
-    padding: 14px;
+    padding: 10px;
   }
 }
 </style>

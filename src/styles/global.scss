@@ -13,8 +13,8 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', -apple-system, sans-serif;
-  font-size: 14px;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', -apple-system, sans-serif;
+  font-size: 11px;
   color: var(--text-primary);
   background: var(--bg-base);
   -webkit-font-smoothing: antialiased;
@@ -24,7 +24,7 @@ html, body {
 
 html[data-window-mode='main'],
 html[data-window-mode='main'] body {
-  border-radius: 26px;
+  border-radius: 14px;
 }
 
 html[data-window-mode='overlay'],
@@ -54,7 +54,7 @@ a {
   height: 100%;
   background: var(--bg-gradient);
   background-attachment: fixed;
-  border-radius: 26px;
+  border-radius: 14px;
   overflow: hidden;
 }
 
@@ -65,8 +65,8 @@ html[data-window-mode='overlay'] #app {
 
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -100,7 +100,7 @@ html[data-window-mode='overlay'] #app {
   &:hover {
     background: var(--bg-card-hover);
     box-shadow: $shadow-glass-hover;
-    transform: translateY(-2px);
+    transform: translateY(-1px);
   }
 }
 
@@ -120,8 +120,8 @@ html[data-window-mode='overlay'] #app {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 20px;
+  gap: 4px;
+  padding: 4px 10px;
   border: none;
   border-radius: $border-radius-sm;
   font-size: $font-base;
@@ -133,8 +133,8 @@ html[data-window-mode='overlay'] #app {
   will-change: transform, opacity;
 
   svg {
-    width: 16px;
-    height: 16px;
+    width: 12px;
+    height: 12px;
   }
 
   &:active {
@@ -191,12 +191,12 @@ html[data-window-mode='overlay'] #app {
   }
 
   &.btn-sm {
-    padding: 4px 12px;
-    font-size: $font-sm;
+    padding: 2px 8px;
+    font-size: $font-xs;
   }
 
   &.btn-lg {
-    padding: 12px 28px;
+    padding: 7px 16px;
     font-size: $font-md;
   }
 
@@ -210,7 +210,7 @@ html[data-window-mode='overlay'] #app {
 /* 输入框 */
 .input {
   width: 100%;
-  padding: 10px 14px;
+  padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: $border-radius-sm;
   background: var(--bg-input);
@@ -232,7 +232,7 @@ html[data-window-mode='overlay'] #app {
 
 textarea.input {
   resize: vertical;
-  min-height: 80px;
+  min-height: 58px;
   font-family: inherit;
 }
 
@@ -306,7 +306,7 @@ select.input {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
   padding: $spacing-lg;
   width: 90%;
-  max-width: 560px;
+  max-width: 520px;
   max-height: 85vh;
   overflow-y: auto;
   animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -318,7 +318,7 @@ select.input {
   border-collapse: collapse;
 
   th, td {
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: left;
     border-bottom: 1px solid var(--border);
   }
@@ -432,7 +432,7 @@ select.input {
 }
 
 .toast {
-  padding: 12px 20px;
+  padding: 10px 16px;
   border-radius: $border-radius-sm;
   background: var(--bg-modal);
   backdrop-filter: blur(16px);

@@ -1,35 +1,35 @@
 // 基础设计令牌 - 所有主题共享的尺寸、间距、圆角等
-$sidebar-width: 240px;
-$sidebar-collapsed-width: 64px;
-$topbar-height: 48px;
-$border-radius-sm: 10px;
-$border-radius-md: 16px;
-$border-radius-lg: 24px;
-$border-radius-xl: 32px;
+$sidebar-width: 208px;
+$sidebar-collapsed-width: 56px;
+$topbar-height: 40px;
+$border-radius-sm: 6px;
+$border-radius-md: 8px;
+$border-radius-lg: 12px;
+$border-radius-xl: 16px;
 
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-md: 16px;
-$spacing-lg: 24px;
-$spacing-xl: 32px;
-$spacing-2xl: 48px;
+$spacing-xs: 3px;
+$spacing-sm: 6px;
+$spacing-md: 8px;
+$spacing-lg: 12px;
+$spacing-xl: 16px;
+$spacing-2xl: 20px;
 
-$font-xs: 11px;
-$font-sm: 12px;
-$font-base: 14px;
-$font-md: 16px;
-$font-lg: 20px;
-$font-xl: 26px;
-$font-2xl: 34px;
+$font-xs: 10px;
+$font-sm: 11px;
+$font-base: 11px;
+$font-md: 12px;
+$font-lg: 14px;
+$font-xl: 18px;
+$font-2xl: 22px;
 
 $transition-fast: 0.15s ease;
 $transition-base: 0.25s ease;
 $transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
-$shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.08);
-$shadow-glass-hover: 0 12px 40px rgba(0, 0, 0, 0.12);
-$shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
-$shadow-card-hover: 0 8px 28px rgba(0, 0, 0, 0.1);
+$shadow-glass: 0 6px 22px rgba(0, 0, 0, 0.08);
+$shadow-glass-hover: 0 10px 28px rgba(0, 0, 0, 0.12);
+$shadow-card: 0 3px 12px rgba(0, 0, 0, 0.06);
+$shadow-card-hover: 0 6px 18px rgba(0, 0, 0, 0.1);
 $shadow-inset: inset 0 2px 8px rgba(0, 0, 0, 0.04);
 
 $z-sidebar: 100;

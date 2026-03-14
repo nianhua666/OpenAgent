@@ -362,8 +362,8 @@ function getCapabilityBadges(agent: AIAgentProfile) {
 <style scoped>
 .agent-profile-panel {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .panel-head,
@@ -375,13 +375,13 @@ function getCapabilityBadges(agent: AIAgentProfile) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .eyebrow {
   margin: 0 0 4px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -393,11 +393,11 @@ p {
 }
 
 h3 {
-  font-size: 20px;
+  font-size: 15px;
 }
 
 h4 {
-  font-size: 16px;
+  font-size: 13px;
 }
 
 .panel-copy,
@@ -406,8 +406,8 @@ h4 {
 .toggle-card p,
 .field-hint {
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .scope-bar {
@@ -427,29 +427,29 @@ h4 {
 }
 
 .scope-pill {
-  padding: 6px 10px;
+  padding: 5px 9px;
   background: rgba(255, 185, 88, 0.16);
   color: #ffd59a;
 }
 
 .agent-list {
   display: grid;
-  gap: 10px;
-  max-height: 340px;
+  gap: 8px;
+  max-height: 300px;
   overflow: auto;
 }
 
 .agent-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
+  border-radius: 12px;
   background:
     radial-gradient(circle at top right, rgba(255, 166, 43, 0.12), transparent 34%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
   color: var(--text-primary);
   cursor: pointer;
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: 6px;
+  padding: 10px;
   text-align: left;
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -457,7 +457,7 @@ h4 {
 .agent-card:hover:not(:disabled),
 .agent-card.active {
   border-color: color-mix(in srgb, var(--primary) 72%, white 12%);
-  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.12);
   transform: translateY(-1px);
 }
 
@@ -466,7 +466,7 @@ h4 {
 }
 
 .agent-badge {
-  padding: 4px 8px;
+  padding: 3px 7px;
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
 }
@@ -475,31 +475,31 @@ h4 {
 .runtime-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .capability-pill,
 .runtime-pill {
-  padding: 4px 8px;
+  padding: 3px 7px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
 }
 
 .agent-form {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  padding-top: 16px;
+  padding-top: 12px;
 }
 
 .field {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .field span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -508,16 +508,16 @@ h4 {
 .field select {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-primary);
   font: inherit;
-  padding: 11px 12px;
+  padding: 8px 10px;
   outline: none;
 }
 
 .field textarea {
-  min-height: 180px;
+  min-height: 132px;
   resize: vertical;
 }
 
@@ -528,14 +528,14 @@ h4 {
 }
 
 .field-hint {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .toggle-grid,
 .tts-grid,
 .runtime-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .toggle-grid {
@@ -551,9 +551,9 @@ h4 {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 16px;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -571,8 +571,9 @@ h4 {
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 12px;
-  padding: 9px 12px;
+  font-size: 11px;
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .panel-btn.primary {

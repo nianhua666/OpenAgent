@@ -17,6 +17,24 @@
       <span v-if="dirtyCount > 0" class="activity-badge">{{ dirtyCount }}</span>
     </button>
 
+    <div class="activity-divider"></div>
+
+    <button class="activity-btn" :class="{ 'is-active': showLeftPane }" :disabled="!workspaceReady" title="资源面板" @click="$emit('toggle-left-pane')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>
+      </svg>
+    </button>
+    <button class="activity-btn" :class="{ 'is-active': showBottomPane }" :disabled="!workspaceReady" title="终端面板" @click="$emit('toggle-bottom-pane')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/>
+      </svg>
+    </button>
+    <button class="activity-btn" :class="{ 'is-active': showRightPane }" :disabled="!workspaceReady" title="Inspector 面板" @click="$emit('toggle-right-pane')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>
+      </svg>
+    </button>
+
     <div class="activity-spacer"></div>
 
     <button class="activity-btn" title="返回 Agent" @click="$emit('open-agent')">
@@ -31,12 +49,18 @@
 defineProps<{
   workspaceReady: boolean
   dirtyCount: number
+  showLeftPane: boolean
+  showBottomPane: boolean
+  showRightPane: boolean
 }>()
 
 defineEmits<{
   (event: 'open-workspace'): void
   (event: 'refresh-workspace'): void
   (event: 'save-all'): void
+  (event: 'toggle-left-pane'): void
+  (event: 'toggle-bottom-pane'): void
+  (event: 'toggle-right-pane'): void
   (event: 'open-agent'): void
 }>()
 </script>
@@ -49,7 +73,7 @@ defineEmits<{
   gap: $spacing-sm;
   width: 64px;
   min-width: 64px;
-  padding: $spacing-sm;
+  padding: 8px 6px;
 }
 
 .activity-btn {
@@ -57,9 +81,9 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
-  border: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid transparent;
   border-radius: $border-radius-md;
   background: transparent;
   color: var(--text-secondary);
@@ -73,13 +97,32 @@ defineEmits<{
   }
 
   &:disabled {
-    opacity: 0.45;
+    opacity: 0.72;
+    color: var(--text-muted);
     cursor: not-allowed;
   }
 
   &.is-primary {
     background: linear-gradient(135deg, var(--primary), var(--primary-dark));
     color: var(--text-inverse);
+  }
+
+  &.is-active:not(.is-primary) {
+    background: color-mix(in srgb, var(--primary) 22%, rgba(255, 255, 255, 0.05));
+    border-color: color-mix(in srgb, var(--primary) 26%, rgba(148, 163, 184, 0.18));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+    color: var(--primary);
+  }
+
+  &.is-active:not(.is-primary)::after {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: 9px;
+    width: 3px;
+    height: 18px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, var(--primary), var(--primary-dark));
   }
 }
 
@@ -96,6 +139,13 @@ defineEmits<{
   font-size: 10px;
   font-weight: 700;
   line-height: 18px;
+}
+
+.activity-divider {
+  width: 22px;
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .activity-spacer {

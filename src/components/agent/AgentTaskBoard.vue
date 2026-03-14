@@ -81,8 +81,8 @@ function taskStatusLabel(status: AIAgentTask['status']) {
 <style scoped>
 .agent-task-board {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .board-head,
@@ -90,14 +90,14 @@ function taskStatusLabel(status: AIAgentTask['status']) {
 .phase-item-head {
   align-items: center;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
 }
 
 .eyebrow,
 .meta-label {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   margin: 0 0 4px;
   text-transform: uppercase;
@@ -110,19 +110,19 @@ p {
 }
 
 h3 {
-  font-size: 20px;
+  font-size: 15px;
 }
 
 h4 {
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .board-badge {
   background: rgba(255, 166, 43, 0.14);
   border-radius: 999px;
   color: #ffd08a;
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .task-summary,
@@ -131,7 +131,7 @@ h4 {
 .phase-item p,
 .empty-state p {
   color: var(--text-secondary);
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .task-block,
@@ -139,7 +139,7 @@ h4 {
 .task-steps,
 .phase-list {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .task-step,
@@ -147,10 +147,10 @@ h4 {
 .plan-next-task {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px;
+  border-radius: 10px;
   display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: 5px;
+  padding: 8px 10px;
 }
 
 .task-step.is-completed {

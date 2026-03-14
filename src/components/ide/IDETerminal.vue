@@ -21,6 +21,13 @@
       <span class="summary-chip">会话：{{ terminalTabs.length }}</span>
     </div>
 
+    <div v-if="selectedTab" class="terminal-runtime-strip">
+      <span class="runtime-chip" :class="`is-${selectedTab.status}`">{{ formatSessionState(selectedTab) }}</span>
+      <span v-if="activeCommandPreview" class="runtime-chip is-command" :title="selectedTab.lastCommand">{{ activeCommandPreview }}</span>
+      <span class="runtime-chip">shell {{ selectedTab.shell }}</span>
+      <span class="runtime-chip">running {{ runningTabCount }}</span>
+    </div>
+
     <div v-if="terminalTabs.length > 0" class="terminal-tab-strip">
       <button
         v-for="tab in terminalTabs"
@@ -233,6 +240,15 @@ const canTypeIntoActiveTab = computed(() => {
 const canSendCommand = computed(() => Boolean(canTypeIntoActiveTab.value && commandInput.value.trim()))
 const canStopActiveTab = computed(() => Boolean(selectedTab.value && selectedTab.value.status === 'running'))
 const canClearTabs = computed(() => terminalTabs.value.some(tab => tab.status !== 'running' && tab.status !== 'starting'))
+const runningTabCount = computed(() => terminalTabs.value.filter(tab => tab.status === 'running' || tab.status === 'starting').length)
+const activeCommandPreview = computed(() => {
+  const command = selectedTab.value?.lastCommand?.trim()
+  if (!command) {
+    return ''
+  }
+
+  return command.length > 56 ? `${command.slice(0, 53)}...` : command
+})
 const statusLabel = computed(() => {
   if (!supportsNativeTerminal.value) return '当前环境不可用'
   if (creatingTerminal.value) return '正在启动终端'
@@ -1029,11 +1045,12 @@ function formatSessionState(tab: TerminalTabView) {
   flex-direction: column;
   gap: $spacing-sm;
   min-height: 320px;
-  padding: $spacing-md;
+  padding: 10px;
 }
 
 .terminal-head,
 .terminal-summary,
+.terminal-runtime-strip,
 .terminal-controls {
   display: flex;
   align-items: center;
@@ -1062,6 +1079,9 @@ function formatSessionState(tab: TerminalTabView) {
   border-radius: 999px;
   font-size: $font-xs;
   font-weight: 700;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(226, 232, 240, 0.78);
+  color: #334155;
 
   &.is-ready {
     background: rgba(35, 153, 90, 0.14);
@@ -1081,20 +1101,72 @@ function formatSessionState(tab: TerminalTabView) {
 }
 
 .terminal-summary,
+.terminal-runtime-strip,
 .terminal-hint,
 .summary-chip,
+.runtime-chip,
 .tab-copy small,
 .script-chip span {
-  color: var(--text-muted);
+  color: #64748b;
   font-size: $font-xs;
+}
+
+.terminal-runtime-strip {
+  gap: 6px;
+}
+
+.runtime-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runtime-chip.is-running {
+  background: rgba(37, 99, 235, 0.14);
+  color: #2563eb;
+}
+
+.runtime-chip.is-completed {
+  background: rgba(34, 197, 94, 0.14);
+  color: #15803d;
+}
+
+.runtime-chip.is-cancelled {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b9770e;
+}
+
+.runtime-chip.is-failed {
+  background: rgba(239, 68, 68, 0.14);
+  color: #dc2626;
+}
+
+.runtime-chip.is-command {
+  max-width: min(360px, 100%);
+  font-family: 'Cascadia Code', 'Consolas', monospace;
 }
 
 .terminal-hint {
   line-height: 1.6;
+  color: #64748b;
 }
 
 .summary-chip {
   max-width: 100%;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1119,17 +1191,17 @@ function formatSessionState(tab: TerminalTabView) {
   justify-content: space-between;
   gap: $spacing-xs;
   min-width: 220px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: $border-radius-sm;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.86);
   color: var(--text-primary);
   text-align: left;
   transition: transform $transition-fast, border-color $transition-fast, background $transition-fast;
 
   &.active {
     border-color: var(--border-active);
-    background: rgba(58, 96, 255, 0.08);
+    background: rgba(219, 234, 254, 0.78);
     transform: translateY(-1px);
   }
 }
@@ -1161,7 +1233,7 @@ function formatSessionState(tab: TerminalTabView) {
   padding: 4px 8px;
   border: 0;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(226, 232, 240, 0.82);
   color: var(--text-secondary);
   font-size: $font-xs;
   cursor: pointer;
@@ -1179,9 +1251,9 @@ function formatSessionState(tab: TerminalTabView) {
 .command-input {
   display: flex;
   flex: 1;
-  min-width: 260px;
+  min-width: 220px;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 
   span {
     color: var(--text-muted);
@@ -1191,13 +1263,13 @@ function formatSessionState(tab: TerminalTabView) {
 
   input {
     width: 100%;
-    min-height: 40px;
-    padding: 10px 12px;
+    min-height: 32px;
+    padding: 7px 10px;
     border: 1px solid var(--border);
     border-radius: $border-radius-sm;
     background: rgba(255, 255, 255, 0.72);
     color: var(--text-primary);
-    font-size: $font-sm;
+    font-size: $font-xs;
 
     &:focus {
       border-color: var(--border-active);
@@ -1209,8 +1281,8 @@ function formatSessionState(tab: TerminalTabView) {
 
 .terminal-script-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: $spacing-sm;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px;
 }
 
 .script-chip {
@@ -1218,10 +1290,10 @@ function formatSessionState(tab: TerminalTabView) {
   align-items: flex-start;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
+  padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: $border-radius-sm;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.88);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -1230,7 +1302,7 @@ function formatSessionState(tab: TerminalTabView) {
   &:hover:enabled {
     transform: translateY(-1px);
     border-color: var(--border-active);
-    background: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.96);
   }
 
   &:disabled {
@@ -1243,17 +1315,17 @@ function formatSessionState(tab: TerminalTabView) {
   display: flex;
   flex-direction: column;
   min-height: 240px;
-  max-height: 360px;
+  max-height: 420px;
   overflow: hidden;
-  padding: $spacing-md;
+  padding: $spacing-sm;
   border-radius: $border-radius-sm;
   background:
     linear-gradient(180deg, rgba(10, 15, 26, 0.96), rgba(14, 20, 35, 0.98)),
     radial-gradient(circle at top right, rgba(72, 149, 239, 0.18), transparent 38%);
   color: #f8fafc;
   font-family: 'Cascadia Code', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .terminal-console--empty,
@@ -1290,12 +1362,12 @@ function formatSessionState(tab: TerminalTabView) {
 
   p {
     color: rgba(226, 232, 240, 0.72);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   span {
     color: rgba(191, 219, 254, 0.92);
-    font-size: 12px;
+    font-size: 11px;
     white-space: nowrap;
   }
 }

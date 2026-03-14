@@ -53,7 +53,7 @@
       />
 
       <div class="ide-empty-left">
-        <section class="placeholder-panel glass-panel">
+        <section class="placeholder-panel glass-panel is-inspector">
           <div class="placeholder-panel-head">
             <div>
               <p class="header-eyebrow">Explorer</p>
@@ -2283,19 +2283,21 @@ async function handleReplanPlan(planId: string) {
   min-height: 0;
   padding: 4px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(100, 116, 139, 0.24);
   background:
-    radial-gradient(circle at top left, rgba(96, 165, 250, 0.12), transparent 22%),
-    radial-gradient(circle at top right, rgba(244, 114, 182, 0.08), transparent 18%),
-    linear-gradient(180deg, rgba(247, 250, 253, 0.98), rgba(235, 241, 248, 0.94));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.14), transparent 18%),
+    radial-gradient(circle at top right, rgba(15, 23, 42, 0.06), transparent 22%),
+    linear-gradient(180deg, rgba(239, 244, 250, 0.98), rgba(219, 228, 240, 0.97));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
 .ide-view :deep(.glass-panel) {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 247, 251, 0.95));
-  border-color: rgba(148, 163, 184, 0.22);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.97));
+  border-color: rgba(100, 116, 139, 0.22);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1);
   backdrop-filter: blur(16px);
 }
 
@@ -2304,7 +2306,12 @@ async function handleReplanPlan(planId: string) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 5px 8px;
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 244, 250, 0.9)),
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 26%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
 }
 
 .header-copy {
@@ -2332,7 +2339,7 @@ async function handleReplanPlan(planId: string) {
 }
 
 .header-copy h1 {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.05;
 }
 
@@ -2344,7 +2351,7 @@ async function handleReplanPlan(planId: string) {
 
 .header-path {
   color: var(--text-muted);
-  font-size: $font-sm;
+  font-size: 12px;
   max-width: 680px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2361,6 +2368,7 @@ async function handleReplanPlan(planId: string) {
 
 .workspace-select {
   min-width: 144px;
+  min-height: 28px;
   padding: 4px 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2370,8 +2378,8 @@ async function handleReplanPlan(planId: string) {
 }
 
 .mode-pill {
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
@@ -2405,8 +2413,8 @@ async function handleReplanPlan(planId: string) {
 
 .ide-empty-shell {
   display: grid;
-  grid-template-columns: 52px minmax(220px, 248px) minmax(0, 1fr) minmax(268px, 320px);
-  gap: 6px;
+  grid-template-columns: 52px minmax(208px, 236px) minmax(0, 1fr) minmax(280px, 332px);
+  gap: 8px;
   flex: 1;
   min-height: 520px;
 }
@@ -2429,7 +2437,8 @@ async function handleReplanPlan(planId: string) {
 }
 
 .ide-empty-right {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: start;
 }
 
 .placeholder-panel {
@@ -2437,12 +2446,19 @@ async function handleReplanPlan(planId: string) {
   gap: 10px;
   min-height: 0;
   padding: 10px;
+  border: 1px solid rgba(100, 116, 139, 0.18);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 250, 0.9));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 243, 248, 0.92)),
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.07), transparent 32%);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
 }
 
 .placeholder-panel.is-editor {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.placeholder-panel.is-inspector {
+  align-content: start;
 }
 
 .placeholder-panel-head {
@@ -2484,19 +2500,21 @@ async function handleReplanPlan(planId: string) {
 
 .placeholder-action {
   border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
-  background: color-mix(in srgb, var(--primary) 16%, rgba(255, 255, 255, 0.05));
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.7));
   color: var(--text-primary);
   cursor: pointer;
 }
 
 .placeholder-tag,
 .placeholder-mini-tab {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(226, 232, 240, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   color: var(--text-secondary);
 }
 
 .placeholder-mini-tab.is-active {
-  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.84));
+  border-color: color-mix(in srgb, var(--primary) 28%, rgba(148, 163, 184, 0.18));
   color: var(--text-primary);
 }
 
@@ -2519,8 +2537,8 @@ async function handleReplanPlan(planId: string) {
 .placeholder-tree {
   padding: 10px;
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(226, 232, 240, 0.26), rgba(226, 232, 240, 0.12));
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.52), rgba(226, 232, 240, 0.24));
+  border: 1px solid rgba(100, 116, 139, 0.16);
 }
 
 .placeholder-line {
@@ -2548,17 +2566,26 @@ async function handleReplanPlan(planId: string) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.placeholder-panel.is-inspector .placeholder-card-grid {
+  grid-template-columns: 1fr;
+}
+
 .placeholder-card {
   display: grid;
   gap: 6px;
   padding: 10px;
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(235, 241, 249, 0.88), rgba(226, 234, 244, 0.64));
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(180deg, rgba(236, 242, 249, 0.96), rgba(226, 234, 244, 0.8));
+  border: 1px solid rgba(100, 116, 139, 0.18);
 }
 
 .placeholder-card strong {
   font-size: 13px;
+}
+
+.placeholder-panel.is-inspector .placeholder-card {
+  gap: 4px;
+  min-height: 72px;
 }
 
 .recent-workspace-list {
@@ -2573,9 +2600,9 @@ async function handleReplanPlan(planId: string) {
   min-width: 0;
   min-height: 68px;
   padding: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(100, 116, 139, 0.18);
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(236, 242, 249, 0.92), rgba(229, 236, 245, 0.74));
+  background: linear-gradient(180deg, rgba(242, 247, 252, 0.98), rgba(229, 236, 245, 0.84));
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
@@ -2622,16 +2649,16 @@ async function handleReplanPlan(planId: string) {
   padding: 10px;
   border-radius: 12px;
   background:
-    linear-gradient(180deg, rgba(30, 41, 59, 0.08), rgba(30, 41, 59, 0.04)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1));
-  border: 1px solid rgba(148, 163, 184, 0.14);
+    linear-gradient(180deg, rgba(30, 41, 59, 0.1), rgba(30, 41, 59, 0.05)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.14));
+  border: 1px solid rgba(100, 116, 139, 0.16);
 }
 
 .placeholder-code-line {
   display: block;
   height: 10px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(96, 165, 250, 0.28), rgba(148, 163, 184, 0.12));
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.34), rgba(148, 163, 184, 0.18));
 }
 
 .placeholder-code-line.is-wide {
@@ -2645,8 +2672,8 @@ async function handleReplanPlan(planId: string) {
 .placeholder-terminal-row code {
   padding: 6px 9px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.08);
-  color: var(--text-primary);
+  background: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
   font-size: 11px;
 }
 
@@ -2655,7 +2682,10 @@ async function handleReplanPlan(planId: string) {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 5px 7px;
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(238, 243, 248, 0.88));
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
 }
 
 .workbench-toolbar-copy,
@@ -2671,11 +2701,12 @@ async function handleReplanPlan(planId: string) {
   display: inline-flex;
   align-items: center;
   min-height: 20px;
-  max-width: 236px;
+  max-width: 212px;
   padding: 0 7px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-secondary);
+  background: rgba(226, 232, 240, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2683,34 +2714,34 @@ async function handleReplanPlan(planId: string) {
 }
 
 .toolbar-pill.is-mode {
-  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.82));
   color: var(--text-primary);
 }
 
 .toolbar-pill.is-path {
-  max-width: 288px;
+  max-width: 248px;
 }
 
 .toolbar-toggle {
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.62);
+  color: #475569;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
   transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
 
   &.active {
-    background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.05));
+    background: color-mix(in srgb, var(--primary) 16%, rgba(255, 255, 255, 0.92));
     border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
     color: var(--text-primary);
   }
 
   &:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(226, 232, 240, 0.9);
     color: var(--text-primary);
   }
 }
@@ -2729,7 +2760,7 @@ async function handleReplanPlan(planId: string) {
 .ide-shell {
   display: grid;
   grid-template-columns: 56px var(--ide-left-width) var(--ide-left-splitter) minmax(0, 1fr) var(--ide-right-splitter) var(--ide-right-width);
-  gap: 6px;
+  gap: 5px;
   flex: 1;
   min-height: 0;
 }
@@ -2874,7 +2905,10 @@ async function handleReplanPlan(planId: string) {
 .inspector-toolbar {
   display: grid;
   gap: 6px;
-  padding: 7px 9px;
+  padding: 6px 8px;
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 244, 249, 0.88));
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
 }
 
 .inspector-copy {
@@ -2889,19 +2923,31 @@ async function handleReplanPlan(planId: string) {
 .inspector-tab {
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.6);
+  color: #475569;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .inspector-tab.active {
-  background: color-mix(in srgb, var(--primary) 22%, rgba(255, 255, 255, 0.05));
+  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.9));
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--primary) 48%, var(--border));
+}
+
+:deep(.ide-explorer),
+:deep(.ide-mcp-panel),
+:deep(.ide-editor),
+:deep(.ide-terminal),
+:deep(.ide-plan-panel),
+:deep(.ide-dev-log),
+:deep(.ide-assistant-panel) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.95));
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
 }
 
 :deep(.ide-activity-bar) {
@@ -2938,7 +2984,7 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-mcp-panel),
 :deep(.ide-assistant-panel),
 :deep(.ide-terminal) {
-  padding: 8px;
+  padding: 7px;
 }
 
 :deep(.ide-explorer .explorer-head),

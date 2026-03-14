@@ -1,11 +1,11 @@
 <template>
-  <aside class="sidebar" :class="{ collapsed }">
+  <aside class="sidebar" :class="{ collapsed: effectiveCollapsed, 'is-workbench-collapsed': collapsedOverride }">
     <div class="sidebar-header">
       <div class="logo">
         <div class="logo-icon">
           <img src="/brand-mark.svg" :alt="`${APP_NAME} 图标`" class="logo-image" />
         </div>
-        <div class="logo-copy" v-show="!collapsed">
+        <div class="logo-copy" v-show="!effectiveCollapsed">
           <span class="logo-text">{{ APP_NAME }}</span>
           <span class="logo-subtext">账号与 Agent 工作台</span>
         </div>
@@ -17,7 +17,7 @@
 
     <nav class="sidebar-nav">
       <div class="nav-section">
-        <div class="nav-label" v-show="!collapsed">核心功能</div>
+        <div class="nav-label" v-show="!effectiveCollapsed">核心功能</div>
         <router-link
           v-for="item in mainNav"
           :key="item.path"
@@ -27,12 +27,12 @@
           :title="item.name"
         >
           <svg width="20" height="20"><use :href="`#icon-${item.icon}`"/></svg>
-          <span v-show="!collapsed">{{ item.name }}</span>
+          <span v-show="!effectiveCollapsed">{{ item.name }}</span>
         </router-link>
       </div>
 
       <div class="nav-section" v-if="accountTypes.length">
-        <div class="nav-label" v-show="!collapsed">类型快捷入口</div>
+        <div class="nav-label" v-show="!effectiveCollapsed">类型快捷入口</div>
         <router-link
           v-for="type in accountTypes"
           :key="type.id"
@@ -42,13 +42,13 @@
           :title="type.name"
         >
           <span class="type-dot" :style="{ background: type.color }"></span>
-          <span v-show="!collapsed">{{ type.name }}</span>
-          <span class="nav-badge" v-show="!collapsed">{{ getTypeCount(type.id) }}</span>
+          <span v-show="!effectiveCollapsed">{{ type.name }}</span>
+          <span class="nav-badge" v-show="!effectiveCollapsed">{{ getTypeCount(type.id) }}</span>
         </router-link>
       </div>
 
       <div class="nav-section">
-        <div class="nav-label" v-show="!collapsed">Agent 工作区</div>
+        <div class="nav-label" v-show="!effectiveCollapsed">Agent 工作区</div>
         <router-link
           v-for="item in workspaceNav"
           :key="item.path"
@@ -58,12 +58,12 @@
           :title="item.name"
         >
           <svg width="20" height="20"><use :href="`#icon-${item.icon}`"/></svg>
-          <span v-show="!collapsed">{{ item.name }}</span>
+          <span v-show="!effectiveCollapsed">{{ item.name }}</span>
         </router-link>
       </div>
 
       <div class="nav-section">
-        <div class="nav-label" v-show="!collapsed">系统</div>
+        <div class="nav-label" v-show="!effectiveCollapsed">系统</div>
         <router-link
           v-for="item in sysNav"
           :key="item.path"
@@ -73,7 +73,7 @@
           :title="item.name"
         >
           <svg width="20" height="20"><use :href="`#icon-${item.icon}`"/></svg>
-          <span v-show="!collapsed">{{ item.name }}</span>
+          <span v-show="!effectiveCollapsed">{{ item.name }}</span>
         </router-link>
       </div>
     </nav>
@@ -88,12 +88,19 @@ import { useAccountTypeStore } from '@/stores/accountType'
 import { useAccountStore } from '@/stores/account'
 import { APP_NAME } from '@/utils/appMeta'
 
+const props = withDefaults(defineProps<{
+  collapsedOverride?: boolean
+}>(), {
+  collapsedOverride: false
+})
+
 const route = useRoute()
 const settingsStore = useSettingsStore()
 const typeStore = useAccountTypeStore()
 const accountStore = useAccountStore()
 
 const collapsed = computed(() => settingsStore.sidebarCollapsed)
+const effectiveCollapsed = computed(() => props.collapsedOverride || collapsed.value)
 const accountTypes = computed(() => typeStore.typeList)
 
 const mainNav = [
@@ -113,6 +120,10 @@ const sysNav = [
 ]
 
 function toggleSidebar() {
+  if (props.collapsedOverride) {
+    return
+  }
+
   settingsStore.update({ sidebarCollapsed: !collapsed.value })
 }
 
@@ -146,6 +157,13 @@ function getTypeCount(typeId: string) {
   &.collapsed {
     width: $sidebar-collapsed-width;
   }
+
+  &.is-workbench-collapsed {
+    width: 52px;
+    border-right-color: color-mix(in srgb, var(--glass-border) 72%, transparent);
+    background:
+      linear-gradient(180deg, rgba(246, 249, 252, 0.96), rgba(237, 243, 250, 0.92));
+  }
 }
 
 .sidebar-header {
@@ -169,8 +187,8 @@ function getTypeCount(typeId: string) {
   gap: $spacing-sm;
 
   .logo-image {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     display: block;
     filter: drop-shadow(0 6px 16px rgba(232, 120, 154, 0.28));
   }
@@ -199,8 +217,8 @@ function getTypeCount(typeId: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: $border-radius-sm;
   background: transparent;
@@ -223,7 +241,7 @@ function getTypeCount(typeId: string) {
 }
 
 .nav-section {
-  margin-bottom: $spacing-md;
+  margin-bottom: $spacing-sm;
 }
 
 .nav-label {
@@ -239,7 +257,8 @@ function getTypeCount(typeId: string) {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
-  padding: 9px $spacing-sm;
+  min-height: 36px;
+  padding: 7px $spacing-sm;
   margin: 2px 0;
   border-radius: $border-radius-sm;
   color: var(--text-secondary);
@@ -253,6 +272,13 @@ function getTypeCount(typeId: string) {
   .collapsed & {
     justify-content: center;
     padding: 9px;
+  }
+
+  .is-workbench-collapsed & {
+    justify-content: center;
+    min-height: 34px;
+    padding: 7px 0;
+    border-radius: 10px;
   }
 
   &:hover {
@@ -269,6 +295,29 @@ function getTypeCount(typeId: string) {
       background: rgba(255,255,255,0.25);
       color: var(--text-inverse);
     }
+  }
+}
+
+.sidebar.is-workbench-collapsed {
+  .sidebar-header {
+    justify-content: center;
+    padding: $spacing-sm 0;
+  }
+
+  .logo {
+    justify-content: center;
+  }
+
+  .btn-toggle {
+    display: none;
+  }
+
+  .sidebar-nav {
+    padding: 0 4px;
+  }
+
+  .nav-section {
+    margin-bottom: 8px;
   }
 }
 

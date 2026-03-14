@@ -7,7 +7,7 @@
       </router-view>
     </template>
     <div v-else class="app-shell" :class="{ 'app-shell--immersive': isImmersiveRoute }">
-      <Sidebar />
+      <Sidebar :collapsed-override="collapseWorkspaceSidebar" />
       <div class="app-main" :class="{ 'app-main--topbarless': hideTopBar }">
         <TopBar v-if="!hideTopBar" :show-search="showSearch" @search="onSearch" />
         <div class="page-content" :class="{ 'page-content--immersive': isImmersiveRoute, 'page-content--topbarless': hideTopBar }">
@@ -54,6 +54,7 @@ const searchQuery = ref('')
 const isOverlayRoute = computed(() => route.meta?.overlay === true)
 const isImmersiveRoute = computed(() => route.meta?.immersive === true)
 const hideTopBar = computed(() => !isOverlayRoute.value && route.meta?.hideTopBar === true)
+const collapseWorkspaceSidebar = computed(() => !isOverlayRoute.value && isImmersiveRoute.value)
 
 watch(isOverlayRoute, (overlayMode) => {
   document.documentElement.setAttribute('data-window-mode', overlayMode ? 'overlay' : 'main')
@@ -259,7 +260,12 @@ onBeforeUnmount(() => {
 }
 
 .page-content--immersive {
-  padding: $spacing-md;
+  padding: $spacing-sm;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(59, 130, 246, 0.14), transparent 22%),
+    radial-gradient(circle at 86% 0%, rgba(14, 165, 233, 0.1), transparent 18%),
+    linear-gradient(180deg, rgba(238, 243, 249, 0.98), rgba(221, 230, 241, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .page-content--topbarless {

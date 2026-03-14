@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 工作台视觉对比度继续收口：`App.vue`、`IDEView.vue` 与 `AgentView.vue` 统一收紧 immersive 背景、卡片边界、阴影和页内工具条层级，最新 Electron 截图已经能更稳定地区分工作台外壳、面板主体和页内导航锚点。
+- 消息区与终端可读性继续提升：`AgentMessageList.vue` 抬高了 session-ready、消息卡片、标签、代码片段和附件卡片的对比度；`IDETerminal.vue` 同步增强了摘要胶囊、运行状态、标签卡和脚本芯片；`IDEAssistantPanel.vue` 也去掉了临时重复的 sessions 状态胶囊。
+- 真实 Electron 视图再次复测通过：本轮重新执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui`，确认这次对比度与正文可读性调整没有破坏 `/ai` 与 `/ide` 的工作台布局和主路由可达性。
+
+- IDE 工作台继续收口信息密度：`IDEView.vue`、`IDEEditor.vue`、`IDEExplorer.vue`、`IDETerminal.vue`、`IDEStatusBar.vue` 与 `IDEActivityBar.vue` 统一下调头部、标签、状态条、资源树和终端控件体积，把视觉层级收回到更接近桌面 IDE 的密度；`IDETerminal.vue` 还新增了活动会话状态胶囊、最近命令摘要与运行中会话计数，减少长时间执行时“终端是否还活着”的判断成本。
+- IDE Agent 联调逻辑补正：`IDEAssistantPanel.vue` 现在按当前会话 / 当前角色的有效配置判断接口是否可用、是否允许刷新模型列表，并在配置变化时自动重拉模型目录，不再错误复用全局 AI 配置；同时补上运行态状态胶囊，让“待补配置 / 正在同步 / 模型同步失败 / 已就绪”在 IDE 右侧面板里直接可见。
+- 真实 Electron 视图复测通过：本轮再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui`，确认 `/ide` 的密度调整和 `IDE Agent` 联调修正没有破坏主工作台布局与桌面渲染链。
+
 - Agent 工作台继续收口运行态锚点：`AgentView.vue` 现在会在页头和 workbench 状态条直接显示“待补齐运行配置 / 模型目录读取中 / 读取失败 / 已就绪”状态胶囊，减少用户必须滚到消息区上方才知道当前角色是否真正可跑的成本。
 - IDE 空工作台继续提升恢复感：`IDEView.vue` 的最近工作区卡片新增最近打开时间展示；当本地还没有任何最近工作区时，右上会自动切换成 `Quick Start` 面板，直接说明工作区恢复、编辑现场与计划同步会如何生效。
 - 真实 Electron 截图复核通过：本轮再次执行 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui`，确认新增的运行态胶囊与空工作台 `Quick Start` 面板没有破坏 `/ai`、`/ide` 的首屏布局。

@@ -144,7 +144,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', 'msedge-tts']
+              external: ['electron', 'msedge-tts', 'node-pty', /^node-pty\//]
             }
           }
         }

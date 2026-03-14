@@ -3,6 +3,9 @@ const packageJson = require('./package.json')
 const version = packageJson.version
 
 module.exports = {
+  asarUnpack: [
+    'node_modules/node-pty/**/*'
+  ],
   appId: 'com.openagent.app',
   productName: 'OpenAgent',
   copyright: 'Copyright © 2026 年华',
