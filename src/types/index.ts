@@ -182,10 +182,13 @@ export interface RuntimeDataStorageInfo {
   defaultUserDataPath: string
   recommendedUserDataPath: string
   customUserDataPath: string
+  lastAutoUserDataPath: string
   dataPath: string
   logsPath: string
   tempPath: string
   live2dDefaultStoragePath: string
+  installPath: string
+  packageMode: 'development' | 'portable' | 'installed'
   usingCustomStorage: boolean
   usingRecommendedStorage: boolean
   onSystemDrive: boolean

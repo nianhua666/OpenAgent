@@ -291,10 +291,20 @@
         </div>
 
         <div class="path-grid" v-if="runtimeDataStorageInfo">
+          <div class="path-card">
+            <span class="path-label">安装目录</span>
+            <strong>{{ runtimeDataStorageInfo.installPath }}</strong>
+            <small>{{ runtimeInstallPathHint }}</small>
+          </div>
           <div class="path-card" :class="{ 'is-alert': runtimeDataStorageInfo.onSystemDrive }">
             <span class="path-label">当前运行根目录</span>
             <strong>{{ runtimeDataStorageInfo.activeUserDataPath }}</strong>
             <small>{{ runtimeDataStorageInfo.mode === 'custom' ? '当前由你手动指定' : '当前由自动策略管理' }} · {{ runtimeDataStorageInfo.onSystemDrive ? '仍位于系统盘，建议迁移' : '已不在系统盘' }}</small>
+          </div>
+          <div class="path-card">
+            <span class="path-label">自动策略记忆目录</span>
+            <strong>{{ runtimeDataStorageInfo.lastAutoUserDataPath || '尚未建立' }}</strong>
+            <small>{{ runtimeRememberedPathHint }}</small>
           </div>
           <div class="path-card">
             <span class="path-label">推荐目录</span>
@@ -324,7 +334,7 @@
         </div>
 
         <div v-if="runtimeDataStatus" class="desktop-tip">{{ runtimeDataStatus }}</div>
-        <div class="desktop-tip" v-if="hasElectronAPI">说明：为了在下次启动前记住你的选择，系统盘仍会保留一个极小的路径偏好文件；真正的大体积运行数据会尽量迁移到你指定或推荐的位置。</div>
+        <div class="desktop-tip" v-if="hasElectronAPI">说明：安装版升级时会优先读取上一版本记录的安装目录并默认沿用；运行数据目录则会优先回到你最近一次自动策略目录，或继续沿用你手动指定的自定义目录。系统盘只保留极小的路径偏好文件，不承载主要业务数据。</div>
         <div class="desktop-tip" v-else>浏览器预览模式下无法切换运行数据目录；该能力仅在 Electron 桌面版生效。</div>
       </div>
 
@@ -574,10 +584,14 @@ const showRuntimeDataStorageCard = computed(() => !normalizedSearchQuery.value |
   normalizedSearchQuery.value,
   '运行数据目录',
   '数据迁移',
+  '安装目录',
+  '自动策略记忆目录',
   '日志目录',
   '临时截图目录',
   '推荐目录',
   '自定义目录',
+  runtimeDataStorageInfo.value?.installPath,
+  runtimeDataStorageInfo.value?.lastAutoUserDataPath,
   runtimeDataStorageInfo.value?.activeUserDataPath,
   runtimeDataStorageInfo.value?.recommendedUserDataPath,
   runtimeDataStorageInfo.value?.dataPath,
@@ -588,6 +602,38 @@ const showRuntimeDataStorageCard = computed(() => !normalizedSearchQuery.value |
 const showCurrencySetting = computed(() => !normalizedSearchQuery.value || matchesSearchQuery(normalizedSearchQuery.value, '货币符号', settings.value.currencySymbol, '人民币', '美元', '欧元', '英镑', '韩元'))
 const showPageSizeSetting = computed(() => !normalizedSearchQuery.value || matchesSearchQuery(normalizedSearchQuery.value, '每页显示数', settings.value.defaultPageSize, '分页'))
 const showDataSection = computed(() => showRuntimeDataStorageCard.value || showCurrencySetting.value || showPageSizeSetting.value)
+const runtimeInstallPathHint = computed(() => {
+  const info = runtimeDataStorageInfo.value
+  if (!info) {
+    return ''
+  }
+
+  if (info.packageMode === 'portable') {
+    return '当前为便携版。不会走安装目录注册表；升级时请覆盖同一目录，确保就近资源和相邻数据目录保持不变。'
+  }
+
+  if (info.packageMode === 'development') {
+    return '当前为开发模式，这里显示的是当前开发运行路径，不代表正式安装目录。'
+  }
+
+  return '安装版升级时，安装器会优先读取上一版本记录的 InstallLocation，并默认沿用这个目录；只有你在安装界面手动切换时才会改变。'
+})
+const runtimeRememberedPathHint = computed(() => {
+  const info = runtimeDataStorageInfo.value
+  if (!info) {
+    return ''
+  }
+
+  if (!info.lastAutoUserDataPath) {
+    return '自动策略会按安装位置、文档目录和非系统盘综合推荐新的运行数据目录。'
+  }
+
+  if (info.mode === 'custom') {
+    return '当前虽然使用自定义目录，但系统仍会记住最近一次自动策略目录；恢复自动策略时会优先回到这里。'
+  }
+
+  return '自动模式重装或升级后，会优先沿用这个目录，避免因为安装位置变化把历史数据切到新目录。'
+})
 
 const showShortcutSection = computed(() => filteredShortcuts.value.length > 0 || !normalizedSearchQuery.value || matchesSearchQuery(normalizedSearchQuery.value, '效率快捷键', '搜索', '账号管理'))
 const showAboutSection = computed(() => !normalizedSearchQuery.value || matchesSearchQuery(normalizedSearchQuery.value, '关于', '开发者', '年华', '389338923@qq.com', 'Electron', 'Vue', 'TypeScript', APP_NAME, '账号工作台'))
@@ -1568,7 +1614,7 @@ onMounted(() => {
 
 .path-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px;
 }
 

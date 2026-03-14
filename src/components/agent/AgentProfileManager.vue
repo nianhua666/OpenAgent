@@ -19,159 +19,165 @@
       </span>
     </div>
 
-    <div class="agent-list">
-      <button
-        v-for="agent in agents"
-        :key="agent.id"
-        class="agent-card"
-        :class="{ active: selectedAgentId === agent.id, current: currentAgentId === agent.id }"
-        :disabled="streaming"
-        @click="$emit('select-agent', agent.id)"
-      >
-        <div class="agent-card-head">
-          <strong>{{ agent.name }}</strong>
-          <span class="agent-badge">{{ resolveBadgeLabel(agent) }}</span>
-        </div>
-        <p>{{ agent.description || '未填写角色说明' }}</p>
-        <div class="capability-row">
-          <span v-for="badge in getCapabilityBadges(agent)" :key="badge" class="capability-pill">{{ badge }}</span>
-        </div>
-        <div class="runtime-summary">
-          <span class="runtime-pill">模型 {{ agent.preferredModel || '跟随全局' }}</span>
-          <span class="runtime-pill">温度 {{ formatTemperature(agent.temperature) }}</span>
-          <span class="runtime-pill">目录 {{ agent.preferredArtifactRoot ? '自定义' : '默认' }}</span>
-        </div>
-        <div class="agent-card-actions">
-          <button class="panel-btn secondary" :disabled="streaming" @click.stop="startEdit(agent)">编辑</button>
+    <div class="profile-scroll-area">
+      <div class="agent-list-shell">
+        <div class="agent-list">
           <button
-            v-if="!agent.isBuiltin"
-            class="panel-btn danger"
+            v-for="agent in agents"
+            :key="agent.id"
+            class="agent-card"
+            :class="{ active: selectedAgentId === agent.id, current: currentAgentId === agent.id }"
             :disabled="streaming"
-            @click.stop="$emit('delete-agent', agent.id)"
+            @click="$emit('select-agent', agent.id)"
           >
-            删除
+            <div class="agent-card-head">
+              <strong>{{ agent.name }}</strong>
+              <span class="agent-badge">{{ resolveBadgeLabel(agent) }}</span>
+            </div>
+            <p>{{ agent.description || '未填写角色说明' }}</p>
+            <div class="capability-row">
+              <span v-for="badge in getCapabilityBadges(agent)" :key="badge" class="capability-pill">{{ badge }}</span>
+            </div>
+            <div class="runtime-summary">
+              <span class="runtime-pill">模型 {{ agent.preferredModel || '跟随全局' }}</span>
+              <span class="runtime-pill">温度 {{ formatTemperature(agent.temperature) }}</span>
+              <span class="runtime-pill">目录 {{ agent.preferredArtifactRoot ? '自定义' : '默认' }}</span>
+            </div>
+            <div class="agent-card-actions">
+              <button class="panel-btn secondary" :disabled="streaming" @click.stop="startEdit(agent)">编辑</button>
+              <button
+                v-if="!agent.isBuiltin"
+                class="panel-btn danger"
+                :disabled="streaming"
+                @click.stop="$emit('delete-agent', agent.id)"
+              >
+                删除
+              </button>
+            </div>
           </button>
         </div>
-      </button>
-    </div>
-
-    <form class="agent-form" @submit.prevent="submitDraft">
-      <div class="form-head">
-        <div>
-          <p class="eyebrow">Editor</p>
-          <h4>{{ draft.id ? '编辑角色' : '新建角色' }}</h4>
-        </div>
-        <div class="form-actions">
-          <button v-if="isDirty" type="button" class="panel-btn secondary" @click="resetDraft">恢复</button>
-          <button type="submit" class="panel-btn primary" :disabled="!canSubmit">保存</button>
-        </div>
       </div>
 
-      <label class="field">
-        <span>角色名称</span>
-        <input v-model.trim="draft.name" maxlength="24" type="text" placeholder="例如：小柔 / 代码审校官" />
-      </label>
-
-      <label class="field">
-        <span>角色说明</span>
-        <input v-model.trim="draft.description" maxlength="120" type="text" placeholder="用一句话说明这个角色适合做什么" />
-      </label>
-
-      <div class="runtime-grid">
-        <label class="field">
-          <span>角色类型</span>
-          <select v-model="draft.personaType">
-            <option v-for="item in personaOptions" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </option>
-          </select>
-          <small class="field-hint">
-            {{ personaOptions.find(item => item.value === draft.personaType)?.description }}
-          </small>
-        </label>
-
-        <label v-if="draft.personaType === 'emotional'" class="field">
-          <span>默认心情</span>
-          <input v-model.number="draft.mood" type="range" min="0" max="100" step="1" />
-          <small class="field-hint">当前 {{ normalizeMood(draft.mood) }} / 100。只用于内部调节语气和热情度，不在会话页直接展示。</small>
-        </label>
-
-        <div v-else class="field field--placeholder">
-          <span>执行倾向</span>
-          <div class="field-placeholder">功能型角色会优先严格执行需求，并尽量避免情绪表达干扰任务推进。</div>
-        </div>
-      </div>
-
-      <label class="field">
-        <span>系统提示词</span>
-        <textarea v-model.trim="draft.systemPrompt" rows="8" placeholder="写清角色人设、语气、执行方式、能力边界和禁用事项" />
-      </label>
-
-      <div class="runtime-grid">
-        <label class="field">
-          <span>默认模型</span>
-          <select v-model="draft.preferredModel">
-            <option value="">跟随全局模型</option>
-            <option v-for="model in availableModels" :key="model.id" :value="model.name">
-              {{ model.label }}
-            </option>
-          </select>
-          <small class="field-hint">角色可覆盖全局模型；多模态任务仍可通过委派模型工具临时调用更合适的模型。</small>
-        </label>
-
-        <label class="field">
-          <span>温度</span>
-          <input v-model.number="draft.temperature" type="number" min="0" max="1.5" step="0.05" />
-          <small class="field-hint">Agent 模式支持按角色独立控制输出风格；IDE 模式会固定为最佳开发状态。</small>
-        </label>
-
-        <label class="field">
-          <span>默认产物目录</span>
-          <input
-            v-model.trim="draft.preferredArtifactRoot"
-            type="text"
-            placeholder="留空则使用 Agent 默认目录或 D:/OpenAgent"
-          />
-          <small class="field-hint">生成 Markdown、脚本、报告和图片时，优先写入这里；用户显式指定目录时以用户要求为准。</small>
-        </label>
-      </div>
-
-      <div class="toggle-grid">
-        <label v-for="toggle in capabilityToggles" :key="toggle.key" class="toggle-card">
-          <div>
-            <strong>{{ toggle.label }}</strong>
-            <p>{{ toggle.description }}</p>
+      <div class="agent-form-shell">
+        <form class="agent-form" @submit.prevent="submitDraft">
+          <div class="form-head">
+            <div>
+              <p class="eyebrow">Editor</p>
+              <h4>{{ draft.id ? '编辑角色' : '新建角色' }}</h4>
+            </div>
+            <div class="form-actions">
+              <button v-if="isDirty" type="button" class="panel-btn secondary" @click="resetDraft">恢复</button>
+              <button type="submit" class="panel-btn primary" :disabled="!canSubmit">保存</button>
+            </div>
           </div>
-          <input
-            :checked="Boolean(draft.capabilities[toggle.key])"
-            type="checkbox"
-            @change="updateCapability(toggle.key, ($event.target as HTMLInputElement).checked)"
-          />
-        </label>
+
+          <label class="field">
+            <span>角色名称</span>
+            <input v-model.trim="draft.name" maxlength="24" type="text" placeholder="例如：小柔 / 代码审校官" />
+          </label>
+
+          <label class="field">
+            <span>角色说明</span>
+            <input v-model.trim="draft.description" maxlength="120" type="text" placeholder="用一句话说明这个角色适合做什么" />
+          </label>
+
+          <div class="runtime-grid">
+            <label class="field">
+              <span>角色类型</span>
+              <select v-model="draft.personaType">
+                <option v-for="item in personaOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
+              </select>
+              <small class="field-hint">
+                {{ personaOptions.find(item => item.value === draft.personaType)?.description }}
+              </small>
+            </label>
+
+            <label v-if="draft.personaType === 'emotional'" class="field">
+              <span>默认心情</span>
+              <input v-model.number="draft.mood" type="range" min="0" max="100" step="1" />
+              <small class="field-hint">当前 {{ normalizeMood(draft.mood) }} / 100。只用于内部调节语气和热情度，不在会话页直接展示。</small>
+            </label>
+
+            <div v-else class="field field--placeholder">
+              <span>执行倾向</span>
+              <div class="field-placeholder">功能型角色会优先严格执行需求，并尽量避免情绪表达干扰任务推进。</div>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>系统提示词</span>
+            <textarea v-model.trim="draft.systemPrompt" rows="8" placeholder="写清角色人设、语气、执行方式、能力边界和禁用事项" />
+          </label>
+
+          <div class="runtime-grid">
+            <label class="field">
+              <span>默认模型</span>
+              <select v-model="draft.preferredModel">
+                <option value="">跟随全局模型</option>
+                <option v-for="model in availableModels" :key="model.id" :value="model.name">
+                  {{ model.label }}
+                </option>
+              </select>
+              <small class="field-hint">角色可覆盖全局模型；多模态任务仍可通过委派模型工具临时调用更合适的模型。</small>
+            </label>
+
+            <label class="field">
+              <span>温度</span>
+              <input v-model.number="draft.temperature" type="number" min="0" max="1.5" step="0.05" />
+              <small class="field-hint">Agent 模式支持按角色独立控制输出风格；IDE 模式会固定为最佳开发状态。</small>
+            </label>
+
+            <label class="field">
+              <span>默认产物目录</span>
+              <input
+                v-model.trim="draft.preferredArtifactRoot"
+                type="text"
+                placeholder="留空则使用 Agent 默认目录或 D:/OpenAgent"
+              />
+              <small class="field-hint">生成 Markdown、脚本、报告和图片时，优先写入这里；用户显式指定目录时以用户要求为准。</small>
+            </label>
+          </div>
+
+          <div class="toggle-grid">
+            <label v-for="toggle in capabilityToggles" :key="toggle.key" class="toggle-card">
+              <div>
+                <strong>{{ toggle.label }}</strong>
+                <p>{{ toggle.description }}</p>
+              </div>
+              <input
+                :checked="Boolean(draft.capabilities[toggle.key])"
+                type="checkbox"
+                @change="updateCapability(toggle.key, ($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+          </div>
+
+          <div class="tts-grid">
+            <label class="field">
+              <span>回复语音</span>
+              <select :value="draft.tts.autoPlayReplies ?? false" @change="draft.tts.autoPlayReplies = ($event.target as HTMLSelectElement).value === 'true'">
+                <option value="false">手动播放</option>
+                <option value="true">自动播放</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>TTS 情绪风格</span>
+              <select v-model="draft.tts.emotionStyle">
+                <option v-for="style in emotionStyles" :key="style" :value="style">{{ style }}</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>TTS 情绪强度</span>
+              <input v-model.number="draft.tts.emotionIntensity" type="number" min="0.2" max="2" step="0.05" />
+            </label>
+          </div>
+        </form>
       </div>
-
-      <div class="tts-grid">
-        <label class="field">
-          <span>回复语音</span>
-          <select :value="draft.tts.autoPlayReplies ?? false" @change="draft.tts.autoPlayReplies = ($event.target as HTMLSelectElement).value === 'true'">
-            <option value="false">手动播放</option>
-            <option value="true">自动播放</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>TTS 情绪风格</span>
-          <select v-model="draft.tts.emotionStyle">
-            <option v-for="style in emotionStyles" :key="style" :value="style">{{ style }}</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>TTS 情绪强度</span>
-          <input v-model.number="draft.tts.emotionIntensity" type="number" min="0.2" max="2" step="0.05" />
-        </label>
-      </div>
-    </form>
+    </div>
   </section>
 </template>
 
@@ -430,8 +436,33 @@ function getCapabilityBadges(agent: AIAgentProfile) {
 <style scoped>
 .agent-profile-panel {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 10px;
   padding: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.profile-scroll-area {
+  display: grid;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  padding-bottom: 10px;
+  align-content: start;
+}
+
+.agent-list-shell,
+.agent-form-shell {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.agent-list-shell {
+  max-height: min(32vh, 280px);
 }
 
 .panel-head,
@@ -503,8 +534,7 @@ h4 {
 .agent-list {
   display: grid;
   gap: 8px;
-  max-height: 300px;
-  overflow: auto;
+  align-content: start;
 }
 
 .agent-card {
@@ -558,11 +588,21 @@ h4 {
   gap: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding-top: 12px;
+  align-content: start;
 }
 
 .field {
   display: grid;
   gap: 5px;
+}
+
+.form-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 4px;
+  background: linear-gradient(180deg, rgba(245, 248, 251, 0.96), rgba(245, 248, 251, 0.72));
+  backdrop-filter: blur(12px);
 }
 
 .field span {

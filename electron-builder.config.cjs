@@ -57,6 +57,7 @@ module.exports = {
   },
   nsis: {
     artifactName: '${productName} Setup ${version}.${ext}',
+    include: 'build/installer.nsh',
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     allowElevation: true,

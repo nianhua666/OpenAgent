@@ -694,6 +694,40 @@ function supportsImageInput(message: AIChatMessage) {
   return Array.isArray(message.attachments) && message.attachments.some(attachment => attachment.type === 'image' && attachment.dataUrl)
 }
 
+function supportsGeminiNativeImageOutput(config: AIConfig) {
+  if (resolveConfigProtocol(config) !== 'gemini') {
+    return false
+  }
+
+  return /gemini[\w.-]*image/i.test(config.model)
+}
+
+function shouldRequestGeminiImageResponse(messages: AIChatMessage[]) {
+  const lastUserMessage = [...messages].reverse().find(message => message.role === 'user')
+  if (!lastUserMessage) {
+    return false
+  }
+
+  const rawContent = lastUserMessage.content.trim()
+  const normalizedContent = rawContent.toLowerCase()
+  const hasImageAttachment = supportsImageInput(lastUserMessage)
+
+  const imageCreationIntent = /(生成|绘制|画|创作|设计|制作|渲染|出一张|来一张|做一张).{0,18}(图|图片|图像|插画|插图|海报|壁纸|头像|封面|配图|照片)/i.test(rawContent)
+    || /(image|picture|illustration|art|poster|wallpaper|avatar|cover|logo|photo)/i.test(normalizedContent)
+      && /\b(generate|draw|create|make|render|design)\b/i.test(normalizedContent)
+
+  if (imageCreationIntent) {
+    return true
+  }
+
+  if (!hasImageAttachment) {
+    return false
+  }
+
+  return /(编辑|修改|重绘|重做|换|替换|扩图|抠图|去背景|加背景|修复|补全|融合|风格化|局部重绘|局部修改)/i.test(rawContent)
+    || /\b(edit|modify|redraw|restyle|inpaint|outpaint|remove background|replace background|upscale)\b/i.test(normalizedContent)
+}
+
 function buildImageAttachmentSummary(message: AIChatMessage) {
   const imageAttachments = (message.attachments ?? []).filter(attachment => attachment.type === 'image' && attachment.dataUrl)
   if (imageAttachments.length === 0) {
@@ -1424,12 +1458,19 @@ function buildGeminiBody(
   includeTools = true
 ) {
   const limits = resolveConfigTokenLimits(config)
+  const generationConfig: Record<string, unknown> = {
+    temperature: config.temperature,
+    maxOutputTokens: limits.maxOutputTokens
+  }
+
+  if (supportsGeminiNativeImageOutput(config) && shouldRequestGeminiImageResponse(messages)) {
+    // Gemini 原生图片模型若不显式声明 IMAGE 模态，常会退化成仅返回文字描述。
+    generationConfig.responseModalities = ['TEXT', 'IMAGE']
+  }
+
   const body: Record<string, unknown> = {
     contents: buildGeminiContents(messages),
-    generationConfig: {
-      temperature: config.temperature,
-      maxOutputTokens: limits.maxOutputTokens
-    }
+    generationConfig
   }
 
   const systemInstruction = buildGeminiSystemInstruction(messages)

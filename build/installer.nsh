@@ -46,7 +46,8 @@ Function SetPreferredInstallDir
 FunctionEnd
 
 !macro customInit
-  ; 仅在首次安装且用户未显式传入 /D 时，优先给出非系统盘默认目录。
+  ; 升级/重装时，electron-builder 的 assisted installer 会优先从注册表里的 InstallLocation 恢复旧目录。
+  ; 这里仅在“确实没有既有安装记录”且用户也没有显式传入 /D 时，为首次安装挑一个更稳妥的非系统盘默认目录。
   ${ifNot} ${isUpdated}
     ${GetParameters} $R0
     ${GetOptions} $R0 "/D=" $R1

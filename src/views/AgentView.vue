@@ -6,11 +6,10 @@
         <h1>{{ currentAgent?.name || '小柔' }}</h1>
         <div class="hero-title-row">
           <span class="hero-chip is-mode">Agent</span>
-          <span class="hero-chip">{{ currentModelLabel }}</span>
           <span class="hero-chip" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
           <span class="hero-chip">{{ currentAgentTypeLabel }}</span>
         </div>
-        <p class="hero-subline">主窗口、悬浮窗和 Live2D 会共享角色体系，但会话、记忆与权限边界彼此隔离。</p>
+        <p class="hero-subline">{{ heroSummary }}</p>
       </div>
       <div class="hero-actions">
         <button class="mode-pill active">Agent</button>
@@ -22,9 +21,13 @@
 
     <section class="agent-workbench-bar glass-panel">
       <div class="workbench-bar-copy">
-        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D 会话域' : '主窗口会话域' }}</span>
-        <span class="workbench-pill">{{ currentSession ? currentSession.title : '未选择会话' }}</span>
-        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '等待第一条消息' }}</span>
+        <span class="workbench-pill is-mode">{{ currentScopeLabel }}</span>
+        <span class="workbench-pill">{{ currentSession ? currentSession.title : '等待会话' }}</span>
+        <span class="workbench-pill">{{ currentModelLabel }}</span>
+        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : `${scopedSessionCount} 个会话` }}</span>
+        <span v-if="currentContextMetrics" class="workbench-pill">
+          上下文 {{ formatCompactTokens(currentContextMetrics.estimatedInputTokens) }} / {{ formatCompactTokens(currentContextMetrics.modelMaxContextTokens) }}
+        </span>
       </div>
       <div class="workbench-bar-actions">
         <button class="workbench-toggle" :class="{ active: !agentWorkbenchLayout.sidebarCollapsed }" @click="toggleAgentSidebar">侧栏</button>
@@ -128,17 +131,15 @@
             <p>{{ agentRuntimeNoticeDescription }}</p>
           </div>
 
-          <div class="agent-warning-grid">
-            <article
+          <div class="agent-warning-inline">
+            <span
               v-for="item in agentRuntimeChecks"
               :key="item.key"
-              class="agent-warning-card"
+              class="agent-warning-pill"
               :class="{ 'is-ready': item.ready, 'is-problem': !item.ready }"
             >
-              <span class="warning-card-label">{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-              <span class="warning-card-note">{{ item.note }}</span>
-            </article>
+              {{ item.label }}: {{ item.value }}
+            </span>
           </div>
 
           <div class="agent-warning-actions">
@@ -234,7 +235,7 @@ const playingMessageId = ref('')
 const capturingScreenshot = ref(false)
 const agentSidebarTab = ref<'sessions' | 'roles' | 'memory' | 'resources' | 'tasks'>('sessions')
 const agentWorkbenchLayout = ref({
-  sidebarWidth: 288,
+  sidebarWidth: 320,
   sidebarCollapsed: false,
 })
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
@@ -271,6 +272,7 @@ const currentTask = computed(() => (currentSession.value ? aiStore.getLatestTask
 const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
 const currentSessionAgentId = computed(() => currentSessionAgent.value?.id || '')
 const currentAgent = computed(() => currentSessionAgent.value || aiStore.getSelectedAgent(selectedScope.value))
+const currentScopeLabel = computed(() => selectedScope.value === 'live2d' ? 'Live2D 会话域' : '主窗口会话域')
 const agentWorkbenchStyle = computed(() => ({
   '--agent-sidebar-width': agentWorkbenchLayout.value.sidebarCollapsed
     ? '72px'
@@ -474,6 +476,15 @@ const currentModelMeta = computed(() => {
 })
 const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
 const currentAgentTypeLabel = computed(() => currentAgent.value?.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent')
+const heroSummary = computed(() => {
+  const agentName = currentAgent.value?.name || '当前角色'
+  const scopeSummary = currentScopeLabel.value
+  if (!currentSession.value) {
+    return `${scopeSummary} 已就绪，${agentName} 会在你开始对话后接管当前工作流。`
+  }
+
+  return `${scopeSummary} 正在承载会话「${currentSession.value.title}」，输入区会固定停靠在底部，消息和配置分别在各自面板内部滚动。`
+})
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
@@ -567,6 +578,7 @@ function initializeSelection() {
   const requestedPanel = getRequestedSidebarTab()
   if (requestedPanel) {
     agentSidebarTab.value = requestedPanel
+    ensureSidebarWidthForTab(requestedPanel)
   }
 
   const requestedSessionId = typeof route.query.sessionId === 'string' ? route.query.sessionId : ''
@@ -654,6 +666,24 @@ function scrollMessageListToBottom() {
       messageListRef.value?.scrollToBottom()
     })
   })
+}
+
+function formatCompactTokens(value?: number) {
+  if (!Number.isFinite(value) || typeof value !== 'number' || value <= 0) {
+    return '-'
+  }
+
+  if (value >= 1_000_000) {
+    const compact = value / 1_000_000
+    return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1)}m`
+  }
+
+  if (value >= 1_000) {
+    const compact = value / 1_000
+    return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1)}k`
+  }
+
+  return String(Math.round(value))
 }
 
 function applyStarterPrompt(prompt: string) {
@@ -918,7 +948,7 @@ function loadAgentWorkbenchLayout() {
     }
 
     const parsed = JSON.parse(raw) as Partial<typeof agentWorkbenchLayout.value>
-    agentWorkbenchLayout.value.sidebarWidth = clampAgentSidebarWidth(parsed.sidebarWidth, 288)
+    agentWorkbenchLayout.value.sidebarWidth = clampAgentSidebarWidth(parsed.sidebarWidth, 320)
     agentWorkbenchLayout.value.sidebarCollapsed = parsed.sidebarCollapsed === true
   } catch {
     // 忽略损坏的本地布局缓存，避免阻塞 Agent 页启动
@@ -934,7 +964,7 @@ function clampAgentSidebarWidth(value: unknown, fallback: number) {
     return fallback
   }
 
-  return Math.min(380, Math.max(232, Math.round(value)))
+  return Math.min(440, Math.max(260, Math.round(value)))
 }
 
 function toggleAgentSidebar() {
@@ -944,7 +974,7 @@ function toggleAgentSidebar() {
 
 function resetAgentSidebarLayout() {
   agentWorkbenchLayout.value.sidebarCollapsed = false
-  agentWorkbenchLayout.value.sidebarWidth = 288
+  agentWorkbenchLayout.value.sidebarWidth = 320
   persistAgentWorkbenchLayout()
 }
 
@@ -952,7 +982,18 @@ function selectAgentSidebarTab(tab: 'sessions' | 'roles' | 'memory' | 'resources
   agentSidebarTab.value = tab
   if (agentWorkbenchLayout.value.sidebarCollapsed) {
     agentWorkbenchLayout.value.sidebarCollapsed = false
-    persistAgentWorkbenchLayout()
+  }
+  ensureSidebarWidthForTab(tab)
+  persistAgentWorkbenchLayout()
+}
+
+function ensureSidebarWidthForTab(tab: 'sessions' | 'roles' | 'memory' | 'resources' | 'tasks') {
+  if (tab !== 'roles') {
+    return
+  }
+
+  if (agentWorkbenchLayout.value.sidebarWidth < 320) {
+    agentWorkbenchLayout.value.sidebarWidth = 320
   }
 }
 
@@ -1044,13 +1085,15 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 <style scoped>
 .agent-view {
   --agent-accent: var(--primary);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  flex: 1 1 auto;
   height: 100%;
-  min-height: 100%;
+  min-height: 0;
   overflow: hidden;
   padding: 4px;
+  box-sizing: border-box;
   border-radius: 18px;
   border: 1px solid rgba(100, 116, 139, 0.22);
   background:
@@ -1072,7 +1115,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 
 .agent-hero,
 .agent-warning {
-  padding: 8px 10px;
+  padding: 7px 9px;
 }
 
 .agent-hero,
@@ -1096,6 +1139,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
   gap: 8px;
   justify-content: space-between;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  min-height: 64px;
 }
 
 .hero-eyebrow {
@@ -1118,7 +1162,7 @@ h1 {
 
 .hero-main {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .hero-title-row,
@@ -1133,8 +1177,8 @@ h1 {
 .sidebar-scope {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border-radius: 999px;
   background: rgba(226, 232, 240, 0.74);
   border: 1px solid rgba(148, 163, 184, 0.16);
@@ -1176,22 +1220,16 @@ h1 {
   color: var(--text-secondary);
   line-height: 1.45;
   max-width: 920px;
-}
-
-.hero-subline {
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
 }
 
 .mode-pill,
 .hero-link {
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 9px;
 }
 
 .mode-pill {
@@ -1216,8 +1254,8 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: 8px;
+  padding: 5px 6px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 243, 248, 0.9));
   box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
@@ -1231,12 +1269,22 @@ h1 {
   flex-wrap: wrap;
 }
 
+.workbench-bar-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workbench-bar-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
 .workbench-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
+  min-height: 18px;
   max-width: 220px;
-  padding: 0 7px;
+  padding: 0 6px;
   border-radius: 999px;
   background: rgba(226, 232, 240, 0.74);
   border: 1px solid rgba(148, 163, 184, 0.16);
@@ -1253,13 +1301,13 @@ h1 {
 }
 
 .workbench-toggle {
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 22px;
+  padding: 0 7px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
   color: #475569;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1273,19 +1321,37 @@ h1 {
 .agent-layout {
   display: grid;
   grid-template-columns: var(--agent-sidebar-width) var(--agent-sidebar-splitter) minmax(0, 1fr);
+  flex: 1 1 auto;
   gap: 6px;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .agent-sidebar,
 .agent-sidebar-panel,
 .agent-center {
-  display: grid;
   gap: 6px;
   min-height: 0;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.agent-sidebar,
+.agent-sidebar-panel {
+  display: grid;
+}
+
+.agent-sidebar-panel,
+.agent-center {
+  overflow: hidden;
+}
+
+.agent-sidebar-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  min-height: 0;
 }
 
 .agent-sidebar {
@@ -1382,13 +1448,30 @@ h1 {
 
 .agent-center {
   grid-column: 3;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
+}
+
+:deep(.agent-message-list) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+:deep(.agent-input-bar) {
+  flex: 0 0 auto;
+  align-self: stretch;
+  margin-top: auto;
+  min-height: fit-content;
+  box-sizing: border-box;
 }
 
 .agent-warning {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid rgba(255, 183, 3, 0.24);
   background:
     linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 220, 0.92));
@@ -1396,52 +1479,38 @@ h1 {
 
 .agent-warning-copy {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
-.agent-warning-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.agent-warning-inline {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.agent-warning-card {
-  display: grid;
-  gap: 4px;
-  padding: 9px 10px;
-  border-radius: 12px;
+.agent-warning-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
   border: 1px solid rgba(100, 116, 139, 0.16);
   background: rgba(255, 255, 255, 0.82);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.agent-warning-card.is-ready {
+.agent-warning-pill.is-ready {
   border-color: rgba(34, 197, 94, 0.18);
   background: linear-gradient(180deg, rgba(240, 253, 244, 0.88), rgba(220, 252, 231, 0.72));
+  color: #166534;
 }
 
-.agent-warning-card.is-problem {
+.agent-warning-pill.is-problem {
   border-color: rgba(245, 158, 11, 0.22);
   background: linear-gradient(180deg, rgba(255, 251, 235, 0.94), rgba(254, 243, 199, 0.8));
-}
-
-.warning-card-label,
-.warning-card-note {
-  font-size: 11px;
-}
-
-.warning-card-label {
-  color: var(--text-muted);
-}
-
-.warning-card-note {
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-
-.agent-warning-card strong {
-  font-size: 12px;
-  line-height: 1.45;
-  word-break: break-word;
+  color: #854d0e;
 }
 
 .agent-warning-actions {
@@ -1471,6 +1540,15 @@ h1 {
 .warning-action:disabled {
   cursor: not-allowed;
   opacity: 0.56;
+}
+
+:deep(.agent-session-list),
+:deep(.agent-profile-panel),
+:deep(.agent-memory-panel),
+:deep(.agent-resources-panel),
+:deep(.agent-task-board) {
+  height: 100%;
+  box-sizing: border-box;
 }
 
 :deep(.agent-session-list),
@@ -1510,6 +1588,25 @@ h1 {
 :deep(.agent-message-list),
 :deep(.agent-input-bar) {
   padding: 8px;
+}
+
+:deep(.agent-profile-panel),
+:deep(.agent-memory-panel),
+:deep(.agent-resources-panel),
+:deep(.agent-task-board) {
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+}
+
+:deep(.agent-profile-panel) {
+  overflow: hidden;
+}
+
+:deep(.agent-profile-panel .profile-scroll-area) {
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 12px;
 }
 
 :deep(.agent-session-list .session-card),
@@ -1587,6 +1684,18 @@ h1 {
   padding: 9px 11px;
 }
 
+:deep(.agent-input-bar .composer-shell) {
+  gap: 7px;
+}
+
+:deep(.agent-input-bar .composer-footer) {
+  align-items: flex-end;
+}
+
+:deep(.agent-input-bar .controls-row) {
+  justify-content: flex-end;
+}
+
 :deep(.agent-input-bar .attachment-pill) {
   border-radius: 10px;
   padding: 7px 9px;
@@ -1605,20 +1714,12 @@ h1 {
 }
 
 @media (max-width: 1280px) {
-  .agent-warning-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .agent-layout {
     grid-template-columns: minmax(232px, 280px) var(--agent-sidebar-splitter) minmax(0, 1fr);
   }
 }
 
 @media (max-width: 960px) {
-  .agent-warning-grid {
-    grid-template-columns: 1fr;
-  }
-
   .agent-hero,
   .agent-workbench-bar {
     flex-direction: column;

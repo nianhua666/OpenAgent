@@ -98,6 +98,9 @@
 | 9.8 | 做一轮前端专项巡检：验证主要页面可测试、可滚动、可收缩、可切换，补齐任务文档与变更日志 | 进行中 | `docs/tasks/TASKS.md`, `CHANGELOG.md`, `/ai`, `/ide`, `/ai-overlay` |
 | 9.9 | 修复工具回合“下一步”触发的上下文污染与 502 风险：压缩工具结果 / 自检消息写入，改造 Agent / IDE 会话为紧凑活动卡片，避免原始 JSON 与系统日志整段刷屏 | 已完成 | `src/utils/aiConversation.ts`, `src/utils/aiMessagePresentation.ts`, `src/stores/ai.ts`, `src/components/agent/AgentMessageList.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/utils/ai.ts` |
 | 9.10 | 为 Agent / IDE 对话输入区补齐手动截图、底部锚定输入栏与悬浮窗纯对话布局，继续压缩 Agent 顶部重复信息 | 已完成 | `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/utils/aiConversation.ts`, `src/components/AIChatDialog.vue`, `src/components/agent/AgentInputBar.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/views/AgentView.vue`, `src/views/AIOverlay.vue` |
+| 9.11 | 修复 Gemini 原生多模态模型的产图回包：在原生图片模型下显式请求 IMAGE 模态，并约束 Agent 优先返回真实图片而不是口头描述 | 已完成 | `src/utils/ai.ts`, `src/utils/aiPrompts.ts`, `src/utils/aiConversation.ts` |
+| 9.12 | 收口安装目录与运行数据目录保护：确认升级安装默认沿用旧安装目录，并让自动数据目录在重装后继续回到原路径 | 已完成 | `electron-builder.config.cjs`, `build/installer.nsh`, `electron/main.ts`, `src/views/Settings.vue`, `src/types/index.ts`, `README.md` |
+| 9.13 | 继续压缩 Agent 顶部重复信息与底部输入区密度，统一工作台信息层级与底部 composer 交互 | 已完成 | `src/views/AgentView.vue`, `src/components/agent/AgentInputBar.vue`, `CHANGELOG.md`, `README.md` |
 
 ---
 
@@ -107,6 +110,9 @@
 - 工具回合“下一步”链路这一轮已确认并修复一类真实问题：工具执行后的原始 JSON 结果、任务摘要回包与“工具回合自检”系统消息过去会原样写回会话，再被下一轮 `Responses` 请求重新注入上下文，导致请求体被无意义的工具日志膨胀，并在部分接口上复现 `502 upstream_error`。当前版本已改为把工具结果压缩成紧凑结构、把原始输出仅保留在消息元数据中供前端按需展开，同时把自检消息改成单行摘要 + 结构化 metadata，并为 `502/503/504 upstream` 增加一次轻量瞬时重试。剩余工作主要是继续观察真实长任务、复杂工具链和经典 `/ai` 兼容页是否还存在零散的原始日志刷屏点。
 - Agent / IDE / AI 悬浮窗这轮又暴露出一类真实工作台问题：`/ai` 主工作台根容器未把中央区约束到剩余高度，消息流增长后会把输入区整体挤出可视区；沉浸式页头与悬浮窗标题栏也缺少明确拖拽区，用户拖动窗口时会误选文字；AI 悬浮窗还把 `Sub2API` / 配置桥接整段暴露在小窗里，打断纯对话体验。当前版本已把 Agent 根布局切到“头部固定 + 主区 1fr”、给 Agent / IDE 页头和悬浮窗标题栏加上原生拖拽区与 `no-drag` 控件边界，并把悬浮窗裁成纯对话视图；剩余工作主要是继续观察 Live2D 与其他沉浸式页面是否还存在局部误选中或拖拽手感不一致的问题。
 - Agent / IDE 对话输入区这轮补齐了统一的手动截图链路：桌面端现在会通过 Windows 手动截图流程等待用户完成框选，再自动把截图结果挂到输入框上方的附件区；Agent 主工作台、IDE Agent 以及 AI 悬浮窗都已接入同一套能力，并把模型选择收回到底部控制区，避免输入组件继续出现“中间一大块空白、控制项和发送按钮分散”的问题。当前剩余工作主要是继续补用户手动截图的真实人工回归，因为系统截图流程无法通过当前自动化脚本完全模拟。
+- Gemini 原生产图模型这轮确认了一类真实链路缺口：前端消息渲染与 `inlineData -> attachment` 转换早已存在，但 Gemini `generateContent` 请求体过去没有在图片生成场景显式要求 `IMAGE` 模态，导致 `gemini-*-image` 这类原生模型经常只返回文字描述。当前版本已在 `src/utils/ai.ts` 按“原生图片模型 + 本轮明确产图 / 编辑意图”自动附加 `responseModalities: ['TEXT', 'IMAGE']`，并在 Prompt 中补充“优先返回真实图片，不要只口头描述”的约束；剩余工作主要是继续用真实 Gemini / Sub2API 网关做人工联调，观察不同网关对原生图片 parts 的兼容情况。
+- 安装目录与运行数据目录这轮也做了针对性收口：安装版升级时，electron-builder 的 NSIS assisted installer 本身就会优先读取上一版本注册表里的 `InstallLocation` 并默认沿用原安装目录；当前版本又显式把 `build/installer.nsh` 绑定进 `electron-builder.config.cjs`，避免后续构建链调整时失去这条逻辑。更重要的是，`electron/main.ts` 现在会为“自动策略”持久化最近一次自动运行数据目录，重装或升级后即使安装位置变化，也会优先回到原来的数据根目录，而不是重新落到新的空目录；设置页也补上了安装目录、自动策略记忆目录与升级策略提示，方便发包前后直接人工确认。
+- Agent 工作台这轮继续做了结构化减法：头部摘要不再把角色类型、作用域和运行态在两层状态条里重复展示，工作台条只保留会话域、会话标题、模型、消息数与上下文负载；底部输入区则改成统一 composer，把发送、附件、截图、模型选择与自动步数收进一块稳定的底部工作条，减少空会话时的大面积留白，也让输入区更稳定地贴靠在窗口底边。
 - IDE 终端与上下文压缩这轮继续做了“长时间运行防卡死”收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使退出事件丢失也能按快照收口；对于重复循环输出、长时间无输出、交互式提示和超时都会给出系统心跳或自动停机说明，命令若正常结束但无标准输出也会显式回传“已结束、无输出”，避免模型把“安静结束”误判成“仍在卡住”。上下文压缩则改为输出结构化 handoff 摘要，快照会记录消息锚点、最近工具、来源和已覆盖消息数，减少因只按创建时间增量切片而漏掉新消息的问题。当前剩余风险主要集中在真实 Electron 终端下 `vim` / `top` / watch 类命令的长时间人工回归，以及更深层的前后台自治调度协同。
 - IDE 模式现在已经支持多工作区并行管理：每个工作区在创建时都会先选择项目根目录，再选择独立的基础产物目录；工作区会持久化自己的数据目录、产物目录、最近打开时间、编辑会话与计划链路，切换工作区时也会独立恢复对应的编辑现场。当前剩余工作主要集中在继续补强“跨工作区复制 / 迁移提示、工作区级终端与计划资源占用观测、长时间后台连续运行”这类深水区体验，而不是基础多工作区骨架缺失。
 - Agent 模式现在已补齐“按角色覆盖运行参数”的主链路：每个角色都可以独立设定默认模型、温度与默认产物目录，主窗口 `/ai`、兼容入口 `/ai/classic` 与悬浮对话窗都会按当前角色的有效模型运行；角色切换模型后也会联动重新计算推荐自动步数。当前剩余工作主要是继续补“角色级温度 / 模型参数的更细粒度可视化、角色长期记忆管理面板、真正的一体化图片生成产物流”，而不是运行参数仍停留在全局配置。
@@ -254,9 +260,28 @@
 | 2026-03-13 | test | Phase 8 长时间运行收口验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认上下文快照扩展、运行快照 IPC、终端轮询收口与 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路兼容 |
 | 2026-03-14 | code | Phase 9 输入区重构：`AIChatDialog.vue`、`AgentInputBar.vue` 与 `IDEAssistantPanel.vue` 已补齐手动截图入口，截图完成后会自动挂载到输入框上方附件区；模型选择统一收回到底部控制区，并把 AI 悬浮窗切成纯对话视图。 |
 | 2026-03-14 | review | Phase 9 布局巡检：`AgentView.vue` 已压缩顶部重复运行信息，`/ai` 主工作台继续保持“标题 / 会话操作 / 运行偏好 / 消息流 / 输入栏”分层，输入栏稳定贴底；`npm.cmd run check:electron-ui -- --route=/ai --route=/ai-overlay --route=/ide` 截图复核通过。 |
+| 2026-03-15 | code | Phase 9 Gemini 产图修复：`src/utils/ai.ts` 现会在 `gemini-*-image` 原生模型下，遇到“生成 / 编辑图片”请求时自动为 `generateContent` 附加 `responseModalities: ['TEXT', 'IMAGE']`；`src/utils/aiPrompts.ts` 也同步约束 Agent 优先返回真实图片结果，而不是只给出文字构图说明。 |
+| 2026-03-15 | build | Phase 9 Gemini 产图修复后已通过 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，确认请求体调整和 Prompt 收口未破坏现有主路由与 Electron 构建链。 |
+| 2026-03-15 | code | Phase 9 安装 / 数据目录保护：`electron/main.ts` 为自动策略新增最近一次自动数据目录记忆，`Settings.vue` 直接展示安装目录与自动策略记忆目录，`electron-builder.config.cjs` 显式绑定 `build/installer.nsh`，确保升级默认沿用旧安装目录，同时减少重装后数据目录跑偏的概率。 |
+| 2026-03-15 | build | Phase 9 安装 / 数据目录保护后已通过 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，确认主进程数据目录调整与设置页展示未破坏构建和主路由。 |
+| 2026-03-15 | code | Phase 9 Agent 工作台精修：`AgentView.vue` 压缩顶部重复信息，把角色类型留在头部摘要、把工作台条收口到会话域 / 会话标题 / 模型 / 消息数 / 上下文负载；`AgentInputBar.vue` 重构为统一底部 composer，发送、附件、截图、模型选择与步数控制收进同一块底部工作条。 |
+| 2026-03-15 | test | Phase 9 Agent 工作台精修验证：执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/settings`，确认 `/ai` 顶部信息密度与底部输入区在真实 Electron 截图下保持稳定，设置页安装 / 数据目录卡片仍可正常渲染。 |
 
 ## Latest Check
 
+- 2026-03-14 Agent 布局回归修正：`App.vue` 已把 immersive 路由内容区改成真正的全高 flex 子布局，避免 `/ai`、`/ide` 子页面在内容变多时继续把整页撑高；此前用户看到的“输入区被顶出窗口 / 只能看到上半截工作台”不再由外层容器继续放大。
+- 2026-03-15 Gemini 原生产图回包检查：已确认问题不在前端渲染，而在 Gemini 原生请求未显式要求 `IMAGE` 模态。当前版本已在图片生成 / 编辑意图下补充 `responseModalities: ['TEXT', 'IMAGE']`，并保留既有 `inlineData -> assistant image attachment` 渲染链。
+- 2026-03-15 安装与数据目录检查：已确认安装版升级时，electron-builder 默认会从注册表读取上一版本 `InstallLocation` 并沿用旧安装目录；当前版本又把这条自定义安装脚本显式绑定进打包配置。主进程同时开始记住最近一次自动数据目录，避免重装后因为安装位置变化而把运行数据切到新的空目录。
+- 2026-03-15 Agent 工作台信息层级检查：顶部标题区与工作台条已拆成“角色摘要”和“运行摘要”两层，避免模型 / 会话 / 角色类型重复占两行；底部输入区已改成统一 composer，并在真实 Electron 截图中继续保持贴底，不再被空会话或短会话态拉出可视区。
+- 2026-03-14 Agent 对话区锚点修正：`AgentView.vue` 已把会话壳层改成“消息区吃掉剩余高度、输入区固定停在底部”的结构，`AgentMessageList.vue` 同步压缩空会话态高度，`AgentInputBar.vue` 改为显式输入高度控制，避免空会话或长消息阶段把底部输入区继续往窗口外挤。
+- 2026-03-14 角色配置区遮挡修正：`AgentProfileManager.vue` 现已改成单独滚动的配置区，角色列表与编辑表单共用一个可滚动内容层，表单头部保持粘性；此前左侧角色设置下方被遮挡、滚不到底的问题已纳入本轮前端回归修复。
+- 2026-03-14 Agent 高度链二次收口：`AgentView.vue` 已把根布局从内容敏感的 grid 改成更稳定的纵向 flex，主区明确拆成“顶部状态 / 消息滚动层 / 底部输入条”三段；同时给 `AgentView`、消息区、输入条和侧栏面板统一补上 `box-sizing: border-box`，避免 `height: 100% + padding` 继续把底部输入区和侧栏内容挤出视口。
+- 2026-03-14 角色侧栏可操作性二次收口：`AgentProfileManager.vue` 现已拆成“角色列表滚动区 + 编辑表单滚动区”双层结构，默认侧栏宽度从 `288` 提高到 `320`，最小宽度同步抬高；这轮修正后，角色卡不会再和下方编辑表单抢高度，长表单也能在左栏内独立滚动完成配置。
+- 2026-03-14 旧栏宽缓存兼容：`AgentView.vue` 现已在切换到“角色”页签时自动把历史过窄的侧栏宽度提升到可编辑范围，避免用户沿用旧布局缓存后仍然看到角色配置区过窄、表单难以操作。
+- 2026-03-14 顶部重复信息继续压缩：`AgentView.vue` 标题区已移除重复的模型/角色类型胶囊，工作台条改为集中显示会话标题、当前模型、消息数、角色类型和上下文负载；空会话态的 `session-ready` 卡片与输入区也已再缩一轮，减少顶部和中部重复占高。
+- 2026-03-14 Electron 启动报错复核：此前出现的 `Cannot find module dist-electron/main.js` 属于旧运行态在未重新构建时直接拉起 Electron 所致；本轮已通过 `npm.cmd run build` 再次确认 `dist-electron/main.js` 与 `preload.js` 正常生成，当前开发构建链恢复正常。
+- 2026-03-14 3.0.4 发包差异确认：本地 `release/v3.0.4` 目录时间戳早于这轮 Agent 布局修复，说明用户手上的 3.0.4 发行包并未包含本轮“输入区固定到底部 / 左侧角色配置区单独滚动 / 顶部信息压缩”这些最新修复；后续需要重新打包新的验证包才能让桌面安装版同步这些变更。
+- 2026-03-14 Agent 顶部密度继续收口：`AgentView.vue` 已移除标题区冗余说明，将运行态卡片从大块网格压缩成一行状态胶囊，并把会话域 / 会话标题 / 会话计数 / 上下文负载收回同一条工作台信息带，为消息区和输入区继续释放纵向空间。
 - 2026-03-14 工作台视觉对比度继续收口：`App.vue`、`IDEView.vue` 与 `AgentView.vue` 统一收紧 immersive 背景、卡片边界、阴影和页内工具条层级，最新 `ai.png` / `ide.png` 已确认 `/ai`、`/ide` 的工作台外壳与面板主体不再像前几轮那样发白发虚。
 - 2026-03-14 消息区与终端可读性继续提升：`AgentMessageList.vue` 抬高了 session-ready、消息卡片、标签、代码片段和附件卡片的对比度；`IDETerminal.vue` 同步增强了摘要胶囊、运行状态、标签卡和脚本芯片，减少真实联调时“状态存在但读不清”的问题。
 - 2026-03-14 IDE Agent 面板清理：`IDEAssistantPanel.vue` 去掉了临时重复的 sessions 状态胶囊，避免右侧 Inspector 再出现“状态标签堆叠但含义重复”的视觉噪音。

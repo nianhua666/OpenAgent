@@ -15,47 +15,52 @@
     </div>
 
     <div class="composer-shell">
-      <textarea
-        ref="textareaRef"
-        :value="modelValue"
-        class="message-input"
-        :placeholder="streaming ? '当前角色正在回复中...' : '输入需求、代码任务或控制指令，Enter 发送，Shift+Enter 换行'"
-        rows="3"
-        @input="handleInput"
-        @keydown="handleKeydown"
-        @paste="handlePaste"
-      />
-      <div class="composer-toolbar">
+      <div class="composer-main">
+        <textarea
+          ref="textareaRef"
+          :value="modelValue"
+          class="message-input"
+          :style="{ height: `${textareaHeight}px` }"
+          :placeholder="streaming ? '当前角色正在回复中...' : '输入需求、代码任务或控制指令，Enter 发送，Shift+Enter 换行'"
+          rows="1"
+          @input="handleInput"
+          @keydown="handleKeydown"
+          @paste="handlePaste"
+        />
+
+        <button class="send-btn composer-send-btn" :class="{ stop: streaming }" :disabled="effectiveSendDisabled" @click="handlePrimaryAction">
+          {{ streaming ? '停止' : '发送' }}
+        </button>
+      </div>
+
+      <div class="composer-footer">
         <div class="composer-primary-actions">
           <button class="toolbar-btn attach-btn" :disabled="streaming" @click="fileInputRef?.click()">附件</button>
           <button class="toolbar-btn screenshot-btn" :disabled="streaming || capturingScreenshot" @click="$emit('capture-screenshot')">
             {{ capturingScreenshot ? '截图中...' : '截图' }}
           </button>
         </div>
-        <button class="send-btn" :class="{ stop: streaming }" :disabled="effectiveSendDisabled" @click="handlePrimaryAction">
-          {{ streaming ? '停止' : '发送' }}
-        </button>
-      </div>
-    </div>
 
-    <div class="controls-row">
-      <div class="model-row">
-        <span class="control-label">模型</span>
-        <select class="control-select" :value="currentModelName" @change="$emit('change-model', ($event.target as HTMLSelectElement).value)">
-          <option v-if="!currentModelName" value="">请先选择模型</option>
-          <option v-for="model in availableModels" :key="model.id" :value="model.name">{{ model.label }}</option>
-        </select>
-        <button class="control-btn" :disabled="loadingModels || !canRefreshModels" @click="$emit('refresh-models')">
-          {{ loadingModels ? '刷新中...' : '刷新模型' }}
-        </button>
-        <span class="control-value">{{ currentModelLabel }}</span>
-      </div>
+        <div class="controls-row">
+          <div class="model-row">
+            <span class="control-label">模型</span>
+            <select class="control-select" :value="currentModelName" @change="$emit('change-model', ($event.target as HTMLSelectElement).value)">
+              <option v-if="!currentModelName" value="">请先选择模型</option>
+              <option v-for="model in availableModels" :key="model.id" :value="model.name">{{ model.label }}</option>
+            </select>
+            <button class="control-btn" :disabled="loadingModels || !canRefreshModels" @click="$emit('refresh-models')">
+              {{ loadingModels ? '刷新中...' : '刷新模型' }}
+            </button>
+          </div>
 
-      <div class="step-row">
-        <button class="step-btn" @click="$emit('step-delta', -1)">-</button>
-        <span>步数 {{ maxAutoSteps > 0 ? maxAutoSteps : '无限' }}</span>
-        <button class="step-btn" @click="$emit('step-delta', 1)">+</button>
-        <button class="control-btn" @click="$emit('apply-recommended-steps')">推荐 {{ recommendedAutoSteps }}</button>
+          <div class="step-row">
+            <span class="control-label">步数</span>
+            <button class="step-btn" @click="$emit('step-delta', -1)">-</button>
+            <span class="step-value">{{ maxAutoSteps > 0 ? maxAutoSteps : '无限' }}</span>
+            <button class="step-btn" @click="$emit('step-delta', 1)">+</button>
+            <button class="control-btn" @click="$emit('apply-recommended-steps')">推荐 {{ recommendedAutoSteps }}</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -95,6 +100,9 @@ const emit = defineEmits<{
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const MIN_INPUT_HEIGHT = 48
+const MAX_INPUT_HEIGHT = 120
+const textareaHeight = ref(MIN_INPUT_HEIGHT)
 
 const effectiveSendDisabled = computed(() => (props.streaming ? false : props.sendDisabled))
 
@@ -112,8 +120,14 @@ function autoResize() {
     return
   }
 
+  const currentValue = element.value.trim()
+  if (!currentValue) {
+    textareaHeight.value = MIN_INPUT_HEIGHT
+    return
+  }
+
   element.style.height = 'auto'
-  element.style.height = `${Math.min(element.scrollHeight, 140)}px`
+  textareaHeight.value = Math.min(Math.max(element.scrollHeight, MIN_INPUT_HEIGHT), MAX_INPUT_HEIGHT)
 }
 
 function handleInput(event: Event) {
@@ -170,9 +184,14 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 <style scoped>
 .agent-input-bar {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  justify-content: flex-start;
+  min-height: fit-content;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .hidden-file-input {
@@ -243,7 +262,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   min-height: 28px;
   padding: 0 10px;
 }
@@ -261,29 +280,47 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 }
 
 .composer-shell {
-  display: grid;
-  gap: 8px;
-  padding: 10px 10px 8px;
-  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.05);
 }
 
-.composer-toolbar,
+.composer-main,
+.composer-footer,
 .composer-primary-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.composer-toolbar {
+.composer-main {
+  align-items: flex-end;
+}
+
+.composer-footer {
   justify-content: space-between;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+}
+
+.composer-primary-actions {
+  flex: 0 0 auto;
 }
 
 .send-btn {
   background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 92%, white 8%), #ff9f1c);
   color: #111;
   font-weight: 700;
+}
+
+.composer-send-btn {
+  flex: 0 0 auto;
+  min-width: 68px;
+  min-height: 44px;
 }
 
 .send-btn.stop {
@@ -307,11 +344,15 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 }
 
 .message-input {
-  min-height: 88px;
-  padding: 10px 12px;
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-height: 48px;
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
   resize: none;
   width: 100%;
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 .control-select {
@@ -321,38 +362,76 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .controls-row {
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 10px 14px;
+  min-height: 28px;
+  flex: 1 1 auto;
 }
 
 .model-row,
 .step-row {
   align-items: center;
+  gap: 6px;
+}
+
+.model-row {
+  min-width: 0;
+  flex: 1 1 320px;
 }
 
 .control-label {
   color: var(--text-muted);
   font-size: 11px;
+  flex: 0 0 auto;
 }
 
-.control-value {
+.step-row {
+  flex: 0 0 auto;
+}
+
+.step-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
   font-size: 11px;
 }
 
+.control-select {
+  min-width: 180px;
+  flex: 1 1 220px;
+  max-width: min(320px, 48vw);
+}
+
 @media (max-width: 960px) {
-  .composer-toolbar {
-    flex-direction: column;
+  .composer-main {
     align-items: stretch;
+    flex-direction: column;
   }
 
-  .composer-primary-actions {
-    justify-content: space-between;
+  .composer-send-btn {
+    width: 100%;
+    min-height: 36px;
   }
 
   .controls-row {
     align-items: stretch;
     flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .model-row,
+  .step-row {
+    width: 100%;
+  }
+
+  .step-row {
+    justify-content: space-between;
   }
 }
 </style>

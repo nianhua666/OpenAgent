@@ -381,6 +381,8 @@ const rootRef = ref<HTMLElement | null>(null)
 const messagesRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const MIN_CHAT_INPUT_HEIGHT = 72
+const MAX_CHAT_INPUT_HEIGHT = 132
 const inputText = ref('')
 const pendingAttachments = ref<AIChatAttachment[]>([])
 const previewAttachment = ref<AIChatAttachment | null>(null)
@@ -674,8 +676,12 @@ function scrollToBottom() {
 function autoResize() {
   const el = inputRef.value
   if (!el) return
+  if (!el.value.trim()) {
+    el.style.height = `${MIN_CHAT_INPUT_HEIGHT}px`
+    return
+  }
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 132) + 'px'
+  el.style.height = Math.min(Math.max(el.scrollHeight, MIN_CHAT_INPUT_HEIGHT), MAX_CHAT_INPUT_HEIGHT) + 'px'
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -2031,6 +2037,8 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 8px;
   padding: 8px 10px 10px;
+  max-height: clamp(156px, 24vh, 188px);
+  overflow: auto;
   border-top: 1px solid rgba(255, 200, 220, 0.2);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 247, 250, 0.96));
 }
@@ -2088,7 +2096,9 @@ onBeforeUnmount(() => {
 
 .chat-composer-shell {
   display: grid;
+  grid-auto-rows: max-content;
   gap: 10px;
+  align-items: start;
   padding: 10px 12px 8px;
   border-radius: 16px;
   border: 1px solid rgba(255, 200, 220, 0.24);
@@ -2155,6 +2165,7 @@ onBeforeUnmount(() => {
 }
 
 .chat-input {
+  align-self: start;
   border: 1px solid rgba(255, 200, 220, 0.3);
   border-radius: 14px;
   padding: 10px 12px;

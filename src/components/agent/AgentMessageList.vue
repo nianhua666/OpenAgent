@@ -242,10 +242,12 @@ function handleRichTextClick(event: MouseEvent) {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
-  padding: 12px;
+  padding: 8px;
+  box-sizing: border-box;
+  scroll-padding-bottom: 12px;
 }
 
 .empty-state,
@@ -259,17 +261,17 @@ function handleRichTextClick(event: MouseEvent) {
 }
 
 .empty-state {
-  align-content: center;
+  align-content: start;
   justify-items: start;
-  min-height: 240px;
+  min-height: 124px;
 }
 
 .session-empty {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-content: start;
-  padding: 14px;
-  min-height: 220px;
+  min-height: 112px;
+  padding: 12px;
   border: 1px solid rgba(96, 165, 250, 0.2);
   border-radius: 14px;
   background:
@@ -279,11 +281,11 @@ function handleRichTextClick(event: MouseEvent) {
 
 .session-empty-copy {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .session-empty-copy h3 {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .session-empty-meta {
@@ -329,7 +331,7 @@ p {
 .starter-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .starter-btn,
@@ -339,8 +341,8 @@ p {
   border-radius: 999px;
   color: #334155;
   cursor: pointer;
-  font-size: 11px;
-  padding: 7px 11px;
+  font-size: 10px;
+  padding: 6px 10px;
 }
 
 .message-head {
@@ -377,7 +379,7 @@ p {
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 14px;
-  padding: 12px;
+  padding: 10px;
 }
 
 .message-card {

@@ -71,6 +71,7 @@ type WindowDragPoint = { x: number; y: number }
 interface RuntimeDataStoragePreference {
   mode: RuntimeDataStorageMode
   customUserDataPath: string
+  lastAutoUserDataPath: string
 }
 
 interface RuntimeDataStorageInfo {
@@ -79,10 +80,13 @@ interface RuntimeDataStorageInfo {
   defaultUserDataPath: string
   recommendedUserDataPath: string
   customUserDataPath: string
+  lastAutoUserDataPath: string
   dataPath: string
   logsPath: string
   tempPath: string
   live2dDefaultStoragePath: string
+  installPath: string
+  packageMode: 'development' | 'portable' | 'installed'
   usingCustomStorage: boolean
   usingRecommendedStorage: boolean
   onSystemDrive: boolean
@@ -102,7 +106,8 @@ const APP_EXTERNAL_DATA_DIR_NAME = 'OpenAgent-data'
 const LEGACY_APP_EXTERNAL_DATA_DIR_NAME = 'ai账号工具-data'
 const DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE: RuntimeDataStoragePreference = {
   mode: 'auto',
-  customUserDataPath: ''
+  customUserDataPath: '',
+  lastAutoUserDataPath: ''
 }
 const SUB2API_CONFIG_STORE_KEY = 'sub2api_config'
 const SUB2API_RUNTIME_STATE_STORE_KEY = 'sub2api_runtime_state'
@@ -202,7 +207,8 @@ function readRuntimeDataStoragePreference(): RuntimeDataStoragePreference {
     const raw = JSON.parse(readFileSync(preferenceFile, 'utf-8')) as Partial<RuntimeDataStoragePreference>
     return {
       mode: raw.mode === 'custom' ? 'custom' : 'auto',
-      customUserDataPath: normalizeDirectoryPath(raw.customUserDataPath)
+      customUserDataPath: normalizeDirectoryPath(raw.customUserDataPath),
+      lastAutoUserDataPath: normalizeDirectoryPath((raw as { lastAutoUserDataPath?: string }).lastAutoUserDataPath)
     }
   } catch {
     return { ...DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE }
@@ -211,6 +217,20 @@ function readRuntimeDataStoragePreference(): RuntimeDataStoragePreference {
 
 function writeRuntimeDataStoragePreference(preference: RuntimeDataStoragePreference) {
   writeFileSync(RUNTIME_DATA_PREFERENCE_FILE, JSON.stringify(preference, null, 2), 'utf-8')
+}
+
+function resolveStoredAutoUserDataDir(candidatePath: string | null | undefined) {
+  const normalized = normalizeDirectoryPath(candidatePath)
+  if (!normalized) {
+    return ''
+  }
+
+  try {
+    ensureDirectoryExists(normalized)
+    return normalized
+  } catch {
+    return ''
+  }
 }
 
 function buildPreferredUserDataCandidates() {
@@ -321,6 +341,11 @@ function resolveInitialUserDataDir(preference: RuntimeDataStoragePreference) {
     }
   }
 
+  const rememberedAutoPath = resolveStoredAutoUserDataDir(preference.lastAutoUserDataPath)
+  if (rememberedAutoPath) {
+    return rememberedAutoPath
+  }
+
   return resolvePreferredUserDataDir()
 }
 
@@ -344,6 +369,26 @@ function getDefaultLive2DStorageDir() {
   return join(getActiveUserDataDir(), 'live2d-models')
 }
 
+function getInstallPath() {
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    return normalizeDirectoryPath(process.env.PORTABLE_EXECUTABLE_DIR) || dirname(process.execPath)
+  }
+
+  if (app.isPackaged) {
+    return normalizeDirectoryPath(dirname(process.execPath)) || dirname(process.execPath)
+  }
+
+  return normalizeDirectoryPath(app.getAppPath()) || dirname(process.execPath)
+}
+
+function detectPackageMode(): RuntimeDataStorageInfo['packageMode'] {
+  if (!app.isPackaged) {
+    return 'development'
+  }
+
+  return process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installed'
+}
+
 let runtimeDataStoragePreference = readRuntimeDataStoragePreference()
 const INITIAL_USER_DATA_DIR = resolveInitialUserDataDir(runtimeDataStoragePreference)
 if (!isSameDirectory(INITIAL_USER_DATA_DIR, DEFAULT_USER_DATA_DIR)) {
@@ -352,8 +397,15 @@ if (!isSameDirectory(INITIAL_USER_DATA_DIR, DEFAULT_USER_DATA_DIR)) {
 }
 
 runtimeDataStoragePreference = runtimeDataStoragePreference.mode === 'custom' && isSameDirectory(resolveManualUserDataDir(runtimeDataStoragePreference.customUserDataPath), getActiveUserDataDir())
-  ? { mode: 'custom', customUserDataPath: getActiveUserDataDir() }
-  : { ...DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE }
+  ? {
+      mode: 'custom',
+      customUserDataPath: getActiveUserDataDir(),
+      lastAutoUserDataPath: normalizeDirectoryPath(runtimeDataStoragePreference.lastAutoUserDataPath)
+    }
+  : {
+      ...DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE,
+      lastAutoUserDataPath: getActiveUserDataDir()
+    }
 writeRuntimeDataStoragePreference(runtimeDataStoragePreference)
 
 function buildRuntimeDataStorageInfo(): RuntimeDataStorageInfo {
@@ -362,7 +414,10 @@ function buildRuntimeDataStorageInfo(): RuntimeDataStorageInfo {
   const customUserDataPath = runtimeDataStoragePreference.mode === 'custom'
     ? resolveManualUserDataDir(runtimeDataStoragePreference.customUserDataPath)
     : ''
+  const lastAutoUserDataPath = resolveStoredAutoUserDataDir(runtimeDataStoragePreference.lastAutoUserDataPath)
   const systemDriveRoot = resolveDriveRoot(process.env.WINDIR || DEFAULT_USER_DATA_DIR)
+  const installPath = getInstallPath()
+  const packageMode = detectPackageMode()
 
   return {
     mode: runtimeDataStoragePreference.mode,
@@ -370,10 +425,13 @@ function buildRuntimeDataStorageInfo(): RuntimeDataStorageInfo {
     defaultUserDataPath: DEFAULT_USER_DATA_DIR,
     recommendedUserDataPath,
     customUserDataPath,
+    lastAutoUserDataPath,
     dataPath: getDataDir(),
     logsPath: getLogsDir(),
     tempPath: getTempDir(),
     live2dDefaultStoragePath: getDefaultLive2DStorageDir(),
+    installPath,
+    packageMode,
     usingCustomStorage: runtimeDataStoragePreference.mode === 'custom' && isSameDirectory(activeUserDataPath, customUserDataPath),
     usingRecommendedStorage: isSameDirectory(activeUserDataPath, recommendedUserDataPath),
     onSystemDrive: resolveDriveRoot(activeUserDataPath) === systemDriveRoot,
@@ -403,8 +461,15 @@ function switchRuntimeDataStorage(nextMode: RuntimeDataStorageMode, candidatePat
   }
 
   runtimeDataStoragePreference = nextMode === 'custom'
-    ? { mode: 'custom', customUserDataPath: targetUserDataPath }
-    : { ...DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE }
+    ? {
+        mode: 'custom',
+        customUserDataPath: targetUserDataPath,
+        lastAutoUserDataPath: normalizeDirectoryPath(runtimeDataStoragePreference.lastAutoUserDataPath)
+      }
+    : {
+        ...DEFAULT_RUNTIME_DATA_STORAGE_PREFERENCE,
+        lastAutoUserDataPath: targetUserDataPath
+      }
   writeRuntimeDataStoragePreference(runtimeDataStoragePreference)
 
   ensureDataDir()
