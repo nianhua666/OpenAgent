@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 3.0.4 - 2026-03-14
+
+- Agent / IDE 对话输入区补齐了统一的手动截图能力：桌面端现在会通过 Windows 手动截图流程等待用户完成框选，再把截图自动挂到输入框上方的附件区；`AgentInputBar.vue`、`IDEAssistantPanel.vue` 和 `AIChatDialog.vue` 已接入同一条链路，并把模型选择收回到底部控制区。
+- AI 悬浮窗进一步裁成纯对话视图：`AIOverlay.vue` 与 `AIChatDialog.vue` 移除了悬浮窗内的 `AI 设置`、`Sub2API` 配置桥接和运行面板，只保留角色切换、会话和消息输入输出，避免小窗继续被配置项挤占。
+- Agent 主工作台继续压缩顶部重复信息：`AgentView.vue` 现已把模型、会话、作用域和运行态重新分层，减少标题区 / 工作台条 / 运行偏好之间的重复胶囊；消息区和输入区继续保持“中间滚动、底部贴靠”的工作台结构。
+- 修复 Agent 主工作台消息区把输入框整体挤出视口的问题：`AgentView.vue` 现已改成“头部固定 + 主区 1fr”根布局，消息流只在中央区内部滚动，底部输入区会稳定贴住工作台底边。
+- 补齐沉浸式页面的原生拖拽区：`AgentView.vue`、`IDEView.vue` 与 `AIOverlay.vue` 的页头 / 工具条现在会作为窗口拖拽区工作，按钮、下拉框与输入控件显式标记为 `no-drag`，避免拖动窗口时误选中文字。
+- 裁剪 AI 悬浮窗为纯对话视图：`AIOverlay.vue` 与 `AIChatDialog.vue` 已移除悬浮窗里的 AI 设置入口与 `Sub2API` 配置桥接，保留角色切换、会话与对话输入输出，避免小窗继续被配置面板挤占。
+- 回归验证已覆盖构建、路由与 Electron 真实渲染：本轮执行了 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai-overlay --route=/ide`，确认布局与拖拽区修正未破坏主链路。
+
 ## 3.0.3 - 2026-03-14
 
 - 继续统一 Agent 消息展示规范：经典 `/ai` 页面现在也改成了和 Agent / IDE 一致的紧凑活动卡片，系统自检、工具结果与大段原始输出不再直接刷满消息流，默认改为“结论 / 状态 / 下一步”，详细参数与原始结果按需折叠展开。

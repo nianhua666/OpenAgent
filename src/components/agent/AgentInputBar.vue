@@ -14,26 +14,33 @@
       </div>
     </div>
 
-    <div class="input-row">
-      <button class="attach-btn" :disabled="streaming" @click="fileInputRef?.click()">附件</button>
+    <div class="composer-shell">
       <textarea
         ref="textareaRef"
         :value="modelValue"
         class="message-input"
         :placeholder="streaming ? '当前角色正在回复中...' : '输入需求、代码任务或控制指令，Enter 发送，Shift+Enter 换行'"
-        rows="1"
+        rows="3"
         @input="handleInput"
         @keydown="handleKeydown"
         @paste="handlePaste"
       />
-      <button class="send-btn" :class="{ stop: streaming }" :disabled="effectiveSendDisabled" @click="handlePrimaryAction">
-        {{ streaming ? '停止' : '发送' }}
-      </button>
+      <div class="composer-toolbar">
+        <div class="composer-primary-actions">
+          <button class="toolbar-btn attach-btn" :disabled="streaming" @click="fileInputRef?.click()">附件</button>
+          <button class="toolbar-btn screenshot-btn" :disabled="streaming || capturingScreenshot" @click="$emit('capture-screenshot')">
+            {{ capturingScreenshot ? '截图中...' : '截图' }}
+          </button>
+        </div>
+        <button class="send-btn" :class="{ stop: streaming }" :disabled="effectiveSendDisabled" @click="handlePrimaryAction">
+          {{ streaming ? '停止' : '发送' }}
+        </button>
+      </div>
     </div>
 
     <div class="controls-row">
       <div class="model-row">
-        <span class="control-label">模型 {{ currentModelLabel }}</span>
+        <span class="control-label">模型</span>
         <select class="control-select" :value="currentModelName" @change="$emit('change-model', ($event.target as HTMLSelectElement).value)">
           <option v-if="!currentModelName" value="">请先选择模型</option>
           <option v-for="model in availableModels" :key="model.id" :value="model.name">{{ model.label }}</option>
@@ -41,6 +48,7 @@
         <button class="control-btn" :disabled="loadingModels || !canRefreshModels" @click="$emit('refresh-models')">
           {{ loadingModels ? '刷新中...' : '刷新模型' }}
         </button>
+        <span class="control-value">{{ currentModelLabel }}</span>
       </div>
 
       <div class="step-row">
@@ -69,6 +77,7 @@ const props = defineProps<{
   canRefreshModels: boolean
   maxAutoSteps: number
   recommendedAutoSteps: number
+  capturingScreenshot: boolean
 }>()
 
 const emit = defineEmits<{
@@ -76,6 +85,7 @@ const emit = defineEmits<{
   (e: 'send'): void
   (e: 'stop'): void
   (e: 'select-files', files: File[]): void
+  (e: 'capture-screenshot'): void
   (e: 'remove-attachment', attachmentId: string): void
   (e: 'refresh-models'): void
   (e: 'change-model', modelName: string): void
@@ -225,14 +235,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   font-size: 11px;
 }
 
-.input-row {
-  align-items: end;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.attach-btn,
+.toolbar-btn,
 .send-btn,
 .control-btn,
 .step-btn,
@@ -245,12 +248,36 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   padding: 0 10px;
 }
 
-.attach-btn,
+.toolbar-btn,
 .control-btn,
 .step-btn,
 .remove-btn {
+  align-items: center;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-secondary);
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.composer-shell {
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.composer-toolbar,
+.composer-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-toolbar {
+  justify-content: space-between;
 }
 
 .send-btn {
@@ -280,10 +307,11 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 }
 
 .message-input {
-  min-height: 42px;
+  min-height: 88px;
   padding: 10px 12px;
   resize: none;
   width: 100%;
+  line-height: 1.6;
 }
 
 .control-select {
@@ -294,6 +322,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .controls-row {
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .model-row,
@@ -306,9 +335,19 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   font-size: 11px;
 }
 
+.control-value {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 @media (max-width: 960px) {
-  .input-row {
-    grid-template-columns: 1fr;
+  .composer-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .composer-primary-actions {
+    justify-content: space-between;
   }
 
   .controls-row {

@@ -2,7 +2,7 @@
 
 > **创建时间**: 2026-03-13  
 > **当前阶段**: Phase 9 - 前端工作台重构
-> **总进度**: 98%
+> **总进度**: 99%
 
 ---
 
@@ -97,6 +97,7 @@
 | 9.7 | 统一 IDE / Agent 信息密度与可拖拽面板行为，避免“卡片堆叠式页面”继续侵入工作台视图 | 进行中 | `src/views/AgentView.vue`, `src/views/IDEView.vue`, `src/components/ide/*`, `src/components/agent/*` |
 | 9.8 | 做一轮前端专项巡检：验证主要页面可测试、可滚动、可收缩、可切换，补齐任务文档与变更日志 | 进行中 | `docs/tasks/TASKS.md`, `CHANGELOG.md`, `/ai`, `/ide`, `/ai-overlay` |
 | 9.9 | 修复工具回合“下一步”触发的上下文污染与 502 风险：压缩工具结果 / 自检消息写入，改造 Agent / IDE 会话为紧凑活动卡片，避免原始 JSON 与系统日志整段刷屏 | 已完成 | `src/utils/aiConversation.ts`, `src/utils/aiMessagePresentation.ts`, `src/stores/ai.ts`, `src/components/agent/AgentMessageList.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/utils/ai.ts` |
+| 9.10 | 为 Agent / IDE 对话输入区补齐手动截图、底部锚定输入栏与悬浮窗纯对话布局，继续压缩 Agent 顶部重复信息 | 已完成 | `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/utils/aiConversation.ts`, `src/components/AIChatDialog.vue`, `src/components/agent/AgentInputBar.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/views/AgentView.vue`, `src/views/AIOverlay.vue` |
 
 ---
 
@@ -104,6 +105,8 @@
 
 - Prompt 工程与命令执行链路已经按最新要求收口：运行时系统 Prompt、`aiPrompts.ts`、`ide_run_command` 工具声明与 Windows MCP 原始命令入口现在都改为“允许执行命令，但默认先说明目标、影响范围与回退方式”，不再使用命令黑名单或前置危险命令拦截；主进程仍会在命令长时间无输出、检测到交互式提示或超时后自动停止，并把触发停机的提示行与系统说明一并回传，工具层也保留输出头尾，减少“最后的报错被截掉、模型误判卡住原因”的问题。当前剩余工作主要是继续通过真实 TUI / 长命令人工回归观察自动停机阈值是否合适，以及继续细磨 Prompt 让模型在高影响命令前更稳定地先解释风险。
 - 工具回合“下一步”链路这一轮已确认并修复一类真实问题：工具执行后的原始 JSON 结果、任务摘要回包与“工具回合自检”系统消息过去会原样写回会话，再被下一轮 `Responses` 请求重新注入上下文，导致请求体被无意义的工具日志膨胀，并在部分接口上复现 `502 upstream_error`。当前版本已改为把工具结果压缩成紧凑结构、把原始输出仅保留在消息元数据中供前端按需展开，同时把自检消息改成单行摘要 + 结构化 metadata，并为 `502/503/504 upstream` 增加一次轻量瞬时重试。剩余工作主要是继续观察真实长任务、复杂工具链和经典 `/ai` 兼容页是否还存在零散的原始日志刷屏点。
+- Agent / IDE / AI 悬浮窗这轮又暴露出一类真实工作台问题：`/ai` 主工作台根容器未把中央区约束到剩余高度，消息流增长后会把输入区整体挤出可视区；沉浸式页头与悬浮窗标题栏也缺少明确拖拽区，用户拖动窗口时会误选文字；AI 悬浮窗还把 `Sub2API` / 配置桥接整段暴露在小窗里，打断纯对话体验。当前版本已把 Agent 根布局切到“头部固定 + 主区 1fr”、给 Agent / IDE 页头和悬浮窗标题栏加上原生拖拽区与 `no-drag` 控件边界，并把悬浮窗裁成纯对话视图；剩余工作主要是继续观察 Live2D 与其他沉浸式页面是否还存在局部误选中或拖拽手感不一致的问题。
+- Agent / IDE 对话输入区这轮补齐了统一的手动截图链路：桌面端现在会通过 Windows 手动截图流程等待用户完成框选，再自动把截图结果挂到输入框上方的附件区；Agent 主工作台、IDE Agent 以及 AI 悬浮窗都已接入同一套能力，并把模型选择收回到底部控制区，避免输入组件继续出现“中间一大块空白、控制项和发送按钮分散”的问题。当前剩余工作主要是继续补用户手动截图的真实人工回归，因为系统截图流程无法通过当前自动化脚本完全模拟。
 - IDE 终端与上下文压缩这轮继续做了“长时间运行防卡死”收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使退出事件丢失也能按快照收口；对于重复循环输出、长时间无输出、交互式提示和超时都会给出系统心跳或自动停机说明，命令若正常结束但无标准输出也会显式回传“已结束、无输出”，避免模型把“安静结束”误判成“仍在卡住”。上下文压缩则改为输出结构化 handoff 摘要，快照会记录消息锚点、最近工具、来源和已覆盖消息数，减少因只按创建时间增量切片而漏掉新消息的问题。当前剩余风险主要集中在真实 Electron 终端下 `vim` / `top` / watch 类命令的长时间人工回归，以及更深层的前后台自治调度协同。
 - IDE 模式现在已经支持多工作区并行管理：每个工作区在创建时都会先选择项目根目录，再选择独立的基础产物目录；工作区会持久化自己的数据目录、产物目录、最近打开时间、编辑会话与计划链路，切换工作区时也会独立恢复对应的编辑现场。当前剩余工作主要集中在继续补强“跨工作区复制 / 迁移提示、工作区级终端与计划资源占用观测、长时间后台连续运行”这类深水区体验，而不是基础多工作区骨架缺失。
 - Agent 模式现在已补齐“按角色覆盖运行参数”的主链路：每个角色都可以独立设定默认模型、温度与默认产物目录，主窗口 `/ai`、兼容入口 `/ai/classic` 与悬浮对话窗都会按当前角色的有效模型运行；角色切换模型后也会联动重新计算推荐自动步数。当前剩余工作主要是继续补“角色级温度 / 模型参数的更细粒度可视化、角色长期记忆管理面板、真正的一体化图片生成产物流”，而不是运行参数仍停留在全局配置。
@@ -147,6 +150,8 @@
 | 2026-03-14 | code | Phase 9 前端工作台重构：`AgentView` 已切为左侧本地工作台侧栏 + 中央视图，角色 / 会话 / 长期记忆 / 任务切换改为页内侧栏标签，新增 `AgentMemoryPanel.vue`。 |
 | 2026-03-14 | build | Phase 9 巡检：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过；`electron-builder.config.cjs` 已补 `asarUnpack` 以收口 `node-pty` 打包态加载链路。 |
 | 2026-03-14 | fix | Phase 9 工具回合 502 收口：定位到 `aiConversation.ts` 会把完整工具结果与“工具回合自检”整段写回会话，导致下一轮请求上下文被 JSON / 日志污染；现已改为压缩写入、原始结果转入 metadata，并为 `Responses` 的 502/503/504 upstream 错误增加一次轻量重试。 |
+| 2026-03-14 | fix | Phase 9 工作台交互修正：`AgentView.vue` 改为 `auto / auto / 1fr` 根布局，避免消息区把输入框挤出视口；`AgentView.vue`、`IDEView.vue` 与 `AIOverlay.vue` 新增头部原生拖拽区并显式标记 `no-drag` 控件，修复拖动窗口时误选中文字的问题；`AIChatDialog.vue` 与 `AIOverlay.vue` 同步裁掉悬浮窗里的 AI 设置 / Sub2API 配置露出，保留纯对话小窗。 |
+| 2026-03-14 | test | Phase 9 工作台交互回归：再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai-overlay --route=/ide`，确认 Agent 输入区、悬浮窗纯对话视图与沉浸式拖拽区改动未破坏桌面渲染链。 |
 | 2026-03-14 | ui | Phase 9 会话区收口：`AgentMessageList.vue` 改为把系统消息 / 工具结果渲染为紧凑活动卡片，工具调用参数和原始结果默认折叠展示；`IDEAssistantPanel.vue` 复用同一组件，并顺手修复了运行态“会话”标签乱码。 |
 | 2026-03-14 | test | Phase 9 工具回合收口验证：`npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide` 均通过，确认新消息压缩层和活动卡片展示没有破坏 `/ai`、`/ide` 主界面。 |
 | 2026-03-14 | code | Phase 9 前端精修第二轮：`IDEActivityBar.vue` 新增资源 / 终端 / Inspector 面板显隐开关，`IDEView.vue` 新增顶部 workbench 工具条、折叠态持久化与更紧凑的骨架变量，继续向可收纳工作台收口。 |
@@ -247,12 +252,17 @@
 | 2026-03-13 | code | Phase 8 终端防挂起补强：`electron/main.ts` / `preload.ts` / `env.d.ts` / `types/index.ts` 新增命令会话运行快照查询，`aiTools.ts` 在等待命令结果时改为“事件流 + 运行快照轮询”双通道收口；若命令已经退出但前端没收到终态事件，会根据快照补发心跳与终态说明，重复循环输出也会进入自动停机守卫 |
 | 2026-03-13 | review | Phase 8 长任务巡检：确认旧实现存在“快照按 createdAt 切片导致新消息被漏算、压缩摘要缺乏接力结构、命令结束无输出时模型可能误判为仍在运行、退出事件丢失会导致工具层长时间等待”的风险；当前版本已通过消息锚点快照、结构化压缩摘要、运行快照轮询与无输出显式回执完成收口 |
 | 2026-03-13 | test | Phase 8 长时间运行收口验证：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过，确认上下文快照扩展、运行快照 IPC、终端轮询收口与 `/ai`、`/ide`、`/ai-overlay`、`/sub2api` 主链路兼容 |
+| 2026-03-14 | code | Phase 9 输入区重构：`AIChatDialog.vue`、`AgentInputBar.vue` 与 `IDEAssistantPanel.vue` 已补齐手动截图入口，截图完成后会自动挂载到输入框上方附件区；模型选择统一收回到底部控制区，并把 AI 悬浮窗切成纯对话视图。 |
+| 2026-03-14 | review | Phase 9 布局巡检：`AgentView.vue` 已压缩顶部重复运行信息，`/ai` 主工作台继续保持“标题 / 会话操作 / 运行偏好 / 消息流 / 输入栏”分层，输入栏稳定贴底；`npm.cmd run check:electron-ui -- --route=/ai --route=/ai-overlay --route=/ide` 截图复核通过。 |
 
 ## Latest Check
 
 - 2026-03-14 工作台视觉对比度继续收口：`App.vue`、`IDEView.vue` 与 `AgentView.vue` 统一收紧 immersive 背景、卡片边界、阴影和页内工具条层级，最新 `ai.png` / `ide.png` 已确认 `/ai`、`/ide` 的工作台外壳与面板主体不再像前几轮那样发白发虚。
 - 2026-03-14 消息区与终端可读性继续提升：`AgentMessageList.vue` 抬高了 session-ready、消息卡片、标签、代码片段和附件卡片的对比度；`IDETerminal.vue` 同步增强了摘要胶囊、运行状态、标签卡和脚本芯片，减少真实联调时“状态存在但读不清”的问题。
 - 2026-03-14 IDE Agent 面板清理：`IDEAssistantPanel.vue` 去掉了临时重复的 sessions 状态胶囊，避免右侧 Inspector 再出现“状态标签堆叠但含义重复”的视觉噪音。
+- 2026-03-14 Agent / 悬浮窗交互修正：`AgentView.vue` 现已把消息区和输入区锁进主工作区剩余高度，输入框不会再被消息流整体挤到窗口外；`AIOverlay.vue` 与 `AIChatDialog.vue` 也已改成原生拖拽标题栏 + 纯对话视图，不再在悬浮窗里露出 AI 设置与 Sub2API 配置桥接。
+- 2026-03-14 沉浸式拖拽区修正：`AgentView.vue`、`IDEView.vue` 与 `AIOverlay.vue` 的页头 / 工具条已经显式标记为窗口拖拽区，按钮、下拉框和输入控件则保留 `no-drag`；这轮 Electron 截图回归后，工作台页头的拖拽语义已经和可交互控件分开，不会再边拖边选中文字。
+- 2026-03-14 对话输入区重构：Agent 主工作台、IDE Agent 与 AI 悬浮窗现在都支持手动截图并把结果自动插入到输入框上方附件区；悬浮窗的配置桥接已完全移除，只保留角色切换、会话与纯对话输入输出；Agent 顶部重复的模型 / 上下文 / 输出信息也已压缩回更合理的层级。
 
 - 2026-03-14 IDE 工作台密度继续收口：`IDEView.vue`、`IDEEditor.vue`、`IDEExplorer.vue`、`IDETerminal.vue`、`IDEStatusBar.vue` 与 `IDEActivityBar.vue` 统一缩小头部、标签、资源树与状态条体积，最新 Electron 截图已确认 `/ide` 的主编辑区占比和工作台层级比上一轮更接近真实桌面 IDE。
 - 2026-03-14 IDE Agent 联调修正：`IDEAssistantPanel.vue` 已改为按当前会话 / 当前角色的有效配置判断模型刷新可用性，并在配置变化时自动重拉模型目录；右侧面板新增运行态胶囊，能直接区分 `Needs Config / Syncing / Model Sync Failed / Ready`。

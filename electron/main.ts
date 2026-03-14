@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, net, screen, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, ipcMain, nativeImage, net, screen, shell } from 'electron'
 import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -13,7 +13,7 @@ import { listNativeSystemVoices, registerSystemTTSHandlers, synthesizeNativeSyst
 import { executeCommand, captureScreen, mouseClick, keyboardInput, listWindows, focusWindow } from './mcp'
 import { callManagedMcpTool, inspectManagedMcpServer, installManagedMcpPackage } from './externalMcp'
 import { createSub2ApiDesktopManager } from './sub2apiDesktop'
-import type { AppSettings, IDETerminalEvent, IDETerminalGuardReason, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowBounds, WindowShapeRect } from '../src/types'
+import type { AppSettings, IDETerminalEvent, IDETerminalGuardReason, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionMode, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, UserScreenshotCaptureResult, WindowBounds, WindowShapeRect } from '../src/types'
 import {
   AZURE_TTS_ENGINE,
   DEFAULT_TTS_SAMPLE_TEXT,
@@ -1476,6 +1476,81 @@ function resolveImageMimeType(filePath: string) {
   }
 }
 
+function waitForDelay(ms: number) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function readClipboardImageDataUrl() {
+  const image = clipboard.readImage()
+  if (image.isEmpty()) {
+    return null
+  }
+
+  const { width, height } = image.getSize()
+  const dataUrl = image.toDataURL()
+  if (!dataUrl) {
+    return null
+  }
+
+  return {
+    dataUrl,
+    mimeType: dataUrl.match(/^data:([^;]+);base64,/i)?.[1] || 'image/png',
+    width,
+    height
+  }
+}
+
+async function captureUserScreenshotFromClipboard(): Promise<UserScreenshotCaptureResult> {
+  if (process.platform !== 'win32') {
+    return {
+      success: false,
+      error: '当前手动截图流程仅支持 Windows 桌面环境'
+    }
+  }
+
+  const initialClipboardImage = readClipboardImageDataUrl()
+  const initialSignature = initialClipboardImage?.dataUrl || ''
+
+  try {
+    await shell.openExternal('ms-screenclip:')
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '无法启动系统截图工具'
+    }
+  }
+
+  const timeoutAt = Date.now() + 45_000
+  while (Date.now() < timeoutAt) {
+    await waitForDelay(250)
+    const currentClipboardImage = readClipboardImageDataUrl()
+    if (!currentClipboardImage) {
+      continue
+    }
+
+    if (currentClipboardImage.dataUrl === initialSignature) {
+      continue
+    }
+
+    return {
+      success: true,
+      dataUrl: currentClipboardImage.dataUrl,
+      mimeType: currentClipboardImage.mimeType,
+      width: currentClipboardImage.width,
+      height: currentClipboardImage.height,
+      capturedAt: Date.now()
+    }
+  }
+
+  return {
+    success: false,
+    cancelled: true,
+    error: '截图已取消或等待超时'
+  }
+}
+
 function getRendererEntryUrl(hashPath = '') {
   const url = new URL('openagent://app/index.html')
   url.hash = hashPath ? `#${hashPath}` : ''
@@ -2929,6 +3004,10 @@ app.whenReady().then(() => {
 
     const buffer = readFileSync(normalizedPath)
     return `data:${mimeType};base64,${buffer.toString('base64')}`
+  })
+
+  ipcMain.handle('dialog:captureUserScreenshot', async () => {
+    return captureUserScreenshotFromClipboard()
   })
 
   ipcMain.on('shell:openExternal', (_event, url: string) => {

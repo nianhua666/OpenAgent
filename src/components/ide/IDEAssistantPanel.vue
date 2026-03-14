@@ -56,10 +56,12 @@
       :can-refresh-models="canRefreshModels"
       :max-auto-steps="aiStore.preferences.maxAutoSteps"
       :recommended-auto-steps="recommendedAutoSteps"
+      :capturing-screenshot="capturingScreenshot"
       @update:model-value="inputText = $event"
       @send="sendMessage"
       @stop="stopCurrentRun"
       @select-files="handleSelectedFiles"
+      @capture-screenshot="captureManualScreenshot"
       @remove-attachment="removePendingAttachment"
       @refresh-models="refreshModelOptions"
       @change-model="handleModelChange"
@@ -78,7 +80,7 @@ import AgentMessageList from '@/components/agent/AgentMessageList.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
-import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
+import { cancelConversationRun, createAttachmentsFromFiles, createImageAttachmentFromDataUrl, startConversationTurn } from '@/utils/aiConversation'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 
@@ -91,6 +93,7 @@ const pendingAttachments = ref<AIChatAttachment[]>([])
 const availableAiModels = ref<AIProviderModel[]>([])
 const loadingAiModels = ref(false)
 const playingMessageId = ref('')
+const capturingScreenshot = ref(false)
 const modelLoadError = ref('')
 const messageListRef = ref<{ scrollToBottom: () => void } | null>(null)
 
@@ -292,6 +295,47 @@ async function handleSelectedFiles(files: File[]) {
     pendingAttachments.value = [...pendingAttachments.value, ...attachments]
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '附件处理失败')
+  }
+}
+
+function buildScreenshotAttachmentName() {
+  const stamp = new Date()
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `截图-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}.png`
+}
+
+async function captureManualScreenshot() {
+  if (capturingScreenshot.value || aiStore.streaming) {
+    return
+  }
+
+  const capture = window.electronAPI?.captureUserScreenshot
+  if (!capture) {
+    showToast('error', '当前环境不支持手动截图')
+    return
+  }
+
+  capturingScreenshot.value = true
+  try {
+    const result = await capture()
+    if (result.cancelled) {
+      return
+    }
+
+    if (!result.success || !result.dataUrl) {
+      throw new Error(result.error || '截图失败')
+    }
+
+    const attachment = await createImageAttachmentFromDataUrl(result.dataUrl, {
+      name: buildScreenshotAttachmentName(),
+      source: 'user'
+    })
+    pendingAttachments.value = [...pendingAttachments.value, attachment].slice(0, 8)
+    showToast('success', '截图已加入 IDE 对话输入框')
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '截图失败')
+  } finally {
+    capturingScreenshot.value = false
   }
 }
 

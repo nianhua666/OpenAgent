@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, WindowShapeRect } from '../src/types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupRedisConfig, UserScreenshotCaptureResult, WindowShapeRect } from '../src/types'
 
 // 安全地向渲染进程暴露 API
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getRuntimeDataStorageInfo: () => ipcRenderer.invoke('app:getRuntimeDataStorageInfo'),
   switchRuntimeDataStorage: (payload: { mode: 'auto' | 'custom'; targetPath?: string }) => ipcRenderer.invoke('app:switchRuntimeDataStorage', payload),
   readImageAsDataUrl: (filePath: string) => ipcRenderer.invoke('file:readImageAsDataUrl', filePath),
+  captureUserScreenshot: () => ipcRenderer.invoke('dialog:captureUserScreenshot') as Promise<UserScreenshotCaptureResult>,
   sub2ApiGetRuntimeState: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:getRuntimeState', config, managedConfig),
   sub2ApiStartRuntime: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:startRuntime', config, managedConfig),
   sub2ApiStopRuntime: () => ipcRenderer.invoke('sub2api:stopRuntime'),

@@ -8,9 +8,9 @@
           <span class="hero-chip is-mode">Agent</span>
           <span class="hero-chip">{{ currentModelLabel }}</span>
           <span class="hero-chip" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
-          <span class="hero-chip">角色 {{ agentProfiles.length }}</span>
+          <span class="hero-chip">{{ currentAgentTypeLabel }}</span>
         </div>
-        <p class="hero-subline">主窗口、悬浮窗和 Live2D 都能独立绑定角色；每个角色的提示词、记忆、权限和模型配置彼此隔离。</p>
+        <p class="hero-subline">主窗口、悬浮窗和 Live2D 会共享角色体系，但会话、记忆与权限边界彼此隔离。</p>
       </div>
       <div class="hero-actions">
         <button class="mode-pill active">Agent</button>
@@ -22,15 +22,9 @@
 
     <section class="agent-workbench-bar glass-panel">
       <div class="workbench-bar-copy">
-        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
-        <span class="workbench-pill">{{ currentAgent?.name || '小柔' }}</span>
-        <span class="workbench-pill">{{ currentAgentTypeLabel }}</span>
-        <span class="workbench-pill">{{ currentModelLabel }}</span>
-        <span class="workbench-pill" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
-        <span class="workbench-pill">总上下文 {{ currentContextSummary }}</span>
-        <span class="workbench-pill">最大输出 {{ currentOutputSummary }}</span>
-        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '新会话' }}</span>
-        <span class="workbench-pill">会话 {{ scopedSessionCount }}</span>
+        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D 会话域' : '主窗口会话域' }}</span>
+        <span class="workbench-pill">{{ currentSession ? currentSession.title : '未选择会话' }}</span>
+        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '等待第一条消息' }}</span>
       </div>
       <div class="workbench-bar-actions">
         <button class="workbench-toggle" :class="{ active: !agentWorkbenchLayout.sidebarCollapsed }" @click="toggleAgentSidebar">侧栏</button>
@@ -115,8 +109,6 @@
       <div class="agent-center">
         <AgentToolbar
           :preferences="aiStore.preferences"
-          :model-label="currentModelLabel"
-          :model-badges="currentModelBadges"
           :model-load-error="modelLoadError"
           @toggle-thinking="toggleThinkingMode"
           @cycle-thinking="cycleThinkingLevel"
@@ -189,10 +181,12 @@
           :can-refresh-models="canRefreshModels"
           :max-auto-steps="aiStore.preferences.maxAutoSteps"
           :recommended-auto-steps="recommendedAutoSteps"
+          :capturing-screenshot="capturingScreenshot"
           @update:model-value="inputText = $event"
           @send="sendMessage"
           @stop="stopCurrentRun"
           @select-files="handleSelectedFiles"
+          @capture-screenshot="captureManualScreenshot"
           @remove-attachment="removePendingAttachment"
           @refresh-models="refreshModelOptions"
           @change-model="handleModelChange"
@@ -219,8 +213,8 @@ import AgentTaskBoard from '@/components/agent/AgentTaskBoard.vue'
 import AgentToolbar from '@/components/agent/AgentToolbar.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
-import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
-import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
+import { fetchAvailableModels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { cancelConversationRun, createAttachmentsFromFiles, createImageAttachmentFromDataUrl, startConversationTurn } from '@/utils/aiConversation'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 
@@ -237,6 +231,7 @@ const availableAiModels = ref<AIProviderModel[]>([])
 const loadingAiModels = ref(false)
 const modelLoadError = ref('')
 const playingMessageId = ref('')
+const capturingScreenshot = ref(false)
 const agentSidebarTab = ref<'sessions' | 'roles' | 'memory' | 'resources' | 'tasks'>('sessions')
 const agentWorkbenchLayout = ref({
   sidebarWidth: 288,
@@ -477,30 +472,8 @@ const currentModelMeta = computed(() => {
     limits: inferModelLimits(runtimeAiConfig.value.model, runtimeAiConfig.value.protocol)
   }
 })
-const currentModelBadges = computed(() => [
-  ...getModelCapabilityLabels(currentModelMeta.value?.capabilities),
-  ...getModelLimitLabels(currentModelMeta.value?.limits)
-])
 const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
 const currentAgentTypeLabel = computed(() => currentAgent.value?.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent')
-const currentContextSummary = computed(() => {
-  if (!currentContextMetrics.value) {
-    return '待装配'
-  }
-
-  const estimated = currentContextMetrics.value.estimatedInputTokens || 0
-  const maxContext = currentContextMetrics.value.modelMaxContextTokens || 0
-  return maxContext > 0
-    ? `${formatCompactTokenCount(estimated)} / ${formatCompactTokenCount(maxContext)}`
-    : formatCompactTokenCount(estimated)
-})
-const currentOutputSummary = computed(() => {
-  if (!currentContextMetrics.value?.maxOutputTokens) {
-    return '待装配'
-  }
-
-  return formatCompactTokenCount(currentContextMetrics.value.maxOutputTokens)
-})
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
   if (aiStore.streaming) {
@@ -767,13 +740,64 @@ async function applyRecommendedAutoSteps() {
   await aiStore.updatePreferences({ maxAutoSteps: recommendedAutoSteps.value })
 }
 
-async function handleSelectedFiles(files: File[]) {
-  const nextAttachments = await createAttachmentsFromFiles(files)
+function mergePendingAttachments(nextAttachments: AIChatAttachment[]) {
   pendingAttachments.value = [...pendingAttachments.value, ...nextAttachments].slice(0, 8)
+}
+
+async function handleSelectedFiles(files: File[]) {
+  mergePendingAttachments(await createAttachmentsFromFiles(files))
 }
 
 function removePendingAttachment(attachmentId: string) {
   pendingAttachments.value = pendingAttachments.value.filter(attachment => attachment.id !== attachmentId)
+}
+
+function buildScreenshotAttachmentName() {
+  const timestamp = new Date()
+  const stamp = [
+    timestamp.getFullYear(),
+    String(timestamp.getMonth() + 1).padStart(2, '0'),
+    String(timestamp.getDate()).padStart(2, '0'),
+    '-',
+    String(timestamp.getHours()).padStart(2, '0'),
+    String(timestamp.getMinutes()).padStart(2, '0'),
+    String(timestamp.getSeconds()).padStart(2, '0'),
+  ].join('')
+
+  return `手动截图-${stamp}.png`
+}
+
+async function captureManualScreenshot() {
+  if (capturingScreenshot.value || aiStore.streaming) {
+    return
+  }
+
+  if (!window.electronAPI?.captureUserScreenshot) {
+    showToast('error', '当前环境不支持系统手动截图')
+    return
+  }
+
+  capturingScreenshot.value = true
+  try {
+    const result = await window.electronAPI.captureUserScreenshot()
+    if (!result.success || !result.dataUrl) {
+      if (!result.cancelled) {
+        showToast('error', result.error || '手动截图失败')
+      }
+      return
+    }
+
+    const attachment = await createImageAttachmentFromDataUrl(result.dataUrl, {
+      name: buildScreenshotAttachmentName(),
+      source: 'user'
+    })
+    mergePendingAttachments([attachment])
+    showToast('success', '截图已添加到输入框上方')
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '手动截图失败')
+  } finally {
+    capturingScreenshot.value = false
+  }
 }
 
 function stopCurrentRun() {
@@ -1021,6 +1045,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 .agent-view {
   --agent-accent: var(--primary);
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   height: 100%;
   min-height: 100%;
@@ -1048,6 +1073,18 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 .agent-hero,
 .agent-warning {
   padding: 8px 10px;
+}
+
+.agent-hero,
+.agent-workbench-bar {
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.agent-hero :is(button, select, input, textarea, a),
+.agent-workbench-bar :is(button, select, input, textarea, a) {
+  -webkit-app-region: no-drag;
 }
 
 .agent-hero {
@@ -1237,6 +1274,7 @@ h1 {
   display: grid;
   grid-template-columns: var(--agent-sidebar-width) var(--agent-sidebar-splitter) minmax(0, 1fr);
   gap: 6px;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }

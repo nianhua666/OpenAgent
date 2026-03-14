@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, WindowShapeRect } from './types'
+import type { AIManagedMCPPackageInstallResult, AIManagedMCPServerInspection, AppSettings, IDETerminalEvent, IDETerminalInputRequest, IDETerminalResizeRequest, IDETerminalRunRequest, IDETerminalRunResult, IDETerminalSessionCreateRequest, IDETerminalSessionInfo, IDETerminalSessionSnapshot, Live2DCursorPoint, Live2DMouthState, Live2DLibraryItem, Live2DRemoteModelRequest, Live2DStoragePaths, MCPToolResult, RuntimeDataStorageInfo, RuntimeDataStorageMode, Sub2ApiDesktopAccessResult, Sub2ApiDesktopManagedConfig, Sub2ApiDesktopRuntimeConfig, Sub2ApiDesktopSetupProfile, Sub2ApiRuntimeState, Sub2ApiSetupActionResult, Sub2ApiSetupDatabaseConfig, Sub2ApiSetupDiagnostics, Sub2ApiSetupRedisConfig, TTSSynthesizePayload, TTSSynthesisResult, TTSVoiceLibraryItem, UserScreenshotCaptureResult, WindowShapeRect } from './types'
 
 interface ElectronAPI {
   minimize: () => void
@@ -50,6 +50,7 @@ interface ElectronAPI {
   getRuntimeDataStorageInfo: () => Promise<RuntimeDataStorageInfo>
   switchRuntimeDataStorage: (payload: { mode: RuntimeDataStorageMode; targetPath?: string }) => Promise<RuntimeDataStorageInfo>
   readImageAsDataUrl: (filePath: string) => Promise<string | null>
+  captureUserScreenshot: () => Promise<UserScreenshotCaptureResult>
   sub2ApiGetRuntimeState: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
   sub2ApiStartRuntime: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
   sub2ApiStopRuntime: () => Promise<Sub2ApiRuntimeState>

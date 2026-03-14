@@ -233,25 +233,50 @@ function toAttachmentName(file: File) {
   return file.name || `未命名文件-${Date.now()}`
 }
 
+export async function createImageAttachmentFromDataUrl(
+  dataUrl: string,
+  options?: {
+    name?: string
+    source?: AIChatAttachment['source']
+    filePath?: string
+  }
+): Promise<AIChatAttachment> {
+  const normalizedDataUrl = String(dataUrl || '').trim()
+  if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(normalizedDataUrl)) {
+    throw new Error('截图数据无效，无法创建图片附件')
+  }
+
+  const dimensions = await loadImageDimensions(normalizedDataUrl)
+  const mimeType = normalizedDataUrl.match(/^data:([^;]+);base64,/i)?.[1] || 'image/png'
+  const base64Payload = normalizedDataUrl.split(',', 2)[1] || ''
+
+  return {
+    id: genId(),
+    type: 'image',
+    name: options?.name?.trim() || `截图-${Date.now()}.png`,
+    mimeType,
+    dataUrl: normalizedDataUrl,
+    source: options?.source || 'user',
+    filePath: options?.filePath,
+    width: dimensions?.width,
+    height: dimensions?.height,
+    size: Math.floor((base64Payload.length * 3) / 4)
+  }
+}
+
 export async function createImageAttachmentFromFile(file: File): Promise<AIChatAttachment> {
   if (!isImageFile(file)) {
     throw new Error('仅支持发送图片文件')
   }
 
   const dataUrl = await readFileAsDataUrl(file)
-  const dimensions = await loadImageDimensions(dataUrl)
-
-  return {
-    id: genId(),
-    type: 'image',
+  const attachment = await createImageAttachmentFromDataUrl(dataUrl, {
     name: toAttachmentName(file),
-    mimeType: file.type || 'image/png',
-    dataUrl,
-    source: 'user',
-    width: dimensions?.width,
-    height: dimensions?.height,
-    size: file.size
-  }
+    source: 'user'
+  })
+  attachment.mimeType = file.type || attachment.mimeType
+  attachment.size = file.size
+  return attachment
 }
 
 export async function createAttachmentFromFile(file: File): Promise<AIChatAttachment> {

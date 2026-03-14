@@ -6,19 +6,18 @@
         <span class="overlay-badge">Live2D · {{ overlayAgent?.name || '小柔' }}</span>
         <div class="overlay-toolbar-actions">
           <button class="overlay-toolbar-btn" @click="openMainWindowToAI">主窗口</button>
-          <button class="overlay-toolbar-btn" @click="openMainWindowToSettings">AI 设置</button>
         </div>
       </div>
 
       <AIChatDialog
         visible
         scope="live2d"
-        :native-window-drag="false"
+        :native-window-drag="true"
+        :chat-only="true"
         :show-session-manager="false"
         :style="chatStyle"
         @close="closeOverlayWindow"
         @open-main="openMainWindowToAI"
-        @open-settings="openMainWindowToSettings"
       />
     </div>
   </div>
@@ -71,14 +70,6 @@ function openMainWindowToAI() {
   void router.push(targetPath)
 }
 
-function openMainWindowToSettings() {
-  if (window.electronAPI?.navigateMainWindow) {
-    window.electronAPI.navigateMainWindow('/ai-settings')
-    return
-  }
-
-  void router.push('/ai-settings')
-}
 </script>
 
 <style lang="scss" scoped>
@@ -119,6 +110,9 @@ function openMainWindowToSettings() {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 8px 0;
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .overlay-toolbar-actions {
@@ -126,6 +120,7 @@ function openMainWindowToSettings() {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+  -webkit-app-region: no-drag;
 }
 
 .overlay-toolbar-btn {

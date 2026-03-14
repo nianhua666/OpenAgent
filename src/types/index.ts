@@ -1114,6 +1114,17 @@ export interface MCPToolResult {
   data?: unknown
 }
 
+export interface UserScreenshotCaptureResult {
+  success: boolean
+  cancelled?: boolean
+  error?: string
+  dataUrl?: string
+  mimeType?: string
+  width?: number
+  height?: number
+  capturedAt?: number
+}
+
 /** Toast 消息 */
 export interface ToastMessage {
   id: string

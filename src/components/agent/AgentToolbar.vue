@@ -3,7 +3,7 @@
     <div class="toolbar-main">
       <div>
         <p class="eyebrow">Runtime</p>
-        <h3>主代理控制面板</h3>
+        <h3>运行偏好</h3>
       </div>
 
       <div class="toolbar-actions">
@@ -13,19 +13,12 @@
         <button class="chip" :disabled="!preferences.thinkingEnabled" @click="$emit('cycle-thinking')">强度</button>
         <button class="chip" :class="{ active: preferences.planningMode }" @click="$emit('toggle-planning')">规划</button>
         <button class="chip" :class="{ active: preferences.autoMemory }" @click="$emit('toggle-memory')">记忆</button>
+        <button class="settings-link" @click="$emit('open-settings')">AI 设置</button>
       </div>
     </div>
 
-    <div class="toolbar-meta">
-      <div class="model-card">
-        <span class="meta-label">当前模型</span>
-        <strong>{{ modelLabel }}</strong>
-      </div>
-      <div class="badge-row" v-if="modelBadges.length">
-        <span v-for="badge in modelBadges" :key="badge" class="badge">{{ badge }}</span>
-      </div>
-      <span v-if="modelLoadError" class="error-text">{{ modelLoadError }}</span>
-      <button class="settings-link" @click="$emit('open-settings')">打开 AI 设置</button>
+    <div v-if="modelLoadError" class="toolbar-meta">
+      <span class="error-text">{{ modelLoadError }}</span>
     </div>
   </section>
 </template>
@@ -35,8 +28,6 @@ import type { AIChatPreferences } from '@/types'
 
 defineProps<{
   preferences: AIChatPreferences
-  modelLabel: string
-  modelBadges: string[]
   modelLoadError: string
 }>()
 
@@ -76,15 +67,13 @@ h3 {
   font-size: 15px;
 }
 
-.toolbar-actions,
-.badge-row {
+.toolbar-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
 .chip,
-.badge,
 .settings-link {
   border-radius: 999px;
   font-size: 11px;
@@ -111,36 +100,14 @@ h3 {
 }
 
 .toolbar-meta {
-  align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.model-card {
-  align-items: baseline;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  display: inline-flex;
-  gap: 8px;
-  padding: 6px 10px;
-}
-
-.meta-label {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.badge {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-  padding: 4px 8px;
+  align-items: center;
 }
 
 .error-text {
   color: #ff8d8d;
   font-size: 11px;
+  line-height: 1.55;
 }
 
 .settings-link {

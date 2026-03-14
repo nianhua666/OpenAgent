@@ -2302,6 +2302,18 @@ async function handleReplanPlan(planId: string) {
   backdrop-filter: blur(16px);
 }
 
+.ide-header,
+.workbench-toolbar {
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ide-header :is(button, select, input, textarea, a),
+.workbench-toolbar :is(button, select, input, textarea, a) {
+  -webkit-app-region: no-drag;
+}
+
 .ide-header {
   display: flex;
   align-items: center;

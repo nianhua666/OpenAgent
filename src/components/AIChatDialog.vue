@@ -9,7 +9,7 @@
           <span>{{ dialogTitle }}</span>
           <span v-if="dialogSubtitle" class="dialog-subtitle">{{ dialogSubtitle }}</span>
           <span class="chat-drag-hint">拖动此栏移动</span>
-          <span v-if="!aiStore.isConfigured" class="config-hint">未配置</span>
+          <span v-if="!aiStore.isConfigured && !props.chatOnly" class="config-hint">未配置</span>
         </div>
         <div class="chat-actions">
           <select class="agent-select" :value="selectedAgentId" :disabled="aiStore.streaming" @change="handleAgentChange(($event.target as HTMLSelectElement).value)">
@@ -35,9 +35,10 @@
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
-        <p>请先在<strong>主窗口 → 设置 → AI 设置</strong>中配置服务地址、模型和鉴权信息；如果使用本地 Ollama，API Key 可留空</p>
-        <button class="btn btn-primary btn-sm" @click="openSettings">前往设置</button>
-        <div class="sub2api-bridge-wrap">
+        <p v-if="props.chatOnly">当前悬浮窗仅保留对话区域。若要调整模型、网关或鉴权信息，请回到主窗口完成配置后再继续。</p>
+        <p v-else>请先在<strong>主窗口 → 设置 → AI 设置</strong>中配置服务地址、模型和鉴权信息；如果使用本地 Ollama，API Key 可留空</p>
+        <button v-if="!props.chatOnly" class="btn btn-primary btn-sm" @click="openSettings">前往设置</button>
+        <div v-if="!props.chatOnly" class="sub2api-bridge-wrap">
           <Sub2ApiAgentBridge compact settings-mode="emit" @open-settings="openSettings" />
         </div>
       </div>
@@ -98,7 +99,7 @@
           </aside>
 
           <div class="chat-main-pane">
-            <div class="chat-top-panel">
+            <div v-if="showRuntimeChrome" class="chat-top-panel">
               <div class="agent-identity-card">
                 <div class="agent-identity-copy">
                   <strong>{{ currentAgent?.name || '未选择角色' }}</strong>
@@ -145,7 +146,7 @@
             </div>
 
             <div class="chat-messages" ref="messagesRef" @click="handleRichTextClick">
-              <details v-if="currentTask" class="task-inline-board">
+              <details v-if="showRuntimeChrome && currentTask" class="task-inline-board">
                 <summary class="task-inline-toggle">
                   <div class="task-inline-head">
                     <div class="task-inline-main">
@@ -254,74 +255,84 @@
                   </button>
                 </div>
               </div>
-              <div class="chat-input-row">
-                <button class="icon-btn attach-btn attach-btn-inline" :disabled="aiStore.streaming" title="选择文件或图片" @click="openAttachmentPicker">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                </button>
+              <div class="chat-composer-shell">
                 <textarea
                   ref="inputRef"
                   v-model="inputText"
                   :placeholder="aiStore.streaming ? `${currentAgent?.name || '当前角色'} 正在回复中...` : '输入消息，Enter 发送，Shift+Enter 换行'"
                   class="chat-input"
-                  rows="1"
+                  rows="3"
                   @keydown="handleKeydown"
                   @paste="handleComposerPaste"
                   @input="autoResize"
                 />
-                <button
-                  class="send-btn"
-                  :class="{ 'is-stop': aiStore.streaming }"
-                  :disabled="sendButtonDisabled"
-                  :title="aiStore.streaming ? '停止当前任务' : '发送消息'"
-                  @click="handlePrimaryAction"
-                >
-                  <svg v-if="aiStore.streaming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="6" y="6" width="12" height="12" rx="2"/>
-                  </svg>
-                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                  </svg>
-                </button>
-              </div>
-              <details class="composer-control-fold">
-                <summary class="composer-control-summary">
-                  <span class="composer-summary-item">模型 {{ currentModelLabel }}</span>
-                  <span class="composer-summary-item">附件 {{ pendingAttachments.length }}</span>
-                  <span class="composer-summary-item">步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
-                </summary>
-                <div class="composer-control-content">
-                  <div class="composer-model-row">
-                    <select class="model-select" :value="runtimeAiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
-                      <option v-if="!runtimeAiConfig.model" value="">请先选择模型</option>
-                      <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
-                        {{ model.label }}
-                      </option>
-                    </select>
-                    <button class="icon-btn" :disabled="loadingAiModels || !canRefreshModels" title="刷新模型" @click="refreshModelOptions">
+                <div class="chat-composer-toolbar">
+                  <div class="chat-composer-actions">
+                    <button class="toolbar-btn attach-btn attach-btn-inline" :disabled="aiStore.streaming" title="选择文件或图片" @click="openAttachmentPicker">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0114.13-3.36L23 10"/>
-                        <path d="M20.49 15a9 9 0 01-14.13 3.36L1 14"/>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
                       </svg>
+                      <span>附件</span>
+                    </button>
+                    <button class="toolbar-btn attach-btn" :disabled="aiStore.streaming || capturingScreenshot" :title="capturingScreenshot ? '等待手动截图完成' : '手动截图'" @click="captureManualScreenshot">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 3H5a2 2 0 0 0-2 2v4"/>
+                        <path d="M15 3h4a2 2 0 0 1 2 2v4"/>
+                        <path d="M21 15v4a2 2 0 0 1-2 2h-4"/>
+                        <path d="M3 15v4a2 2 0 0 0 2 2h4"/>
+                        <rect x="7" y="7" width="10" height="10" rx="1.5"/>
+                      </svg>
+                      <span>{{ capturingScreenshot ? '截图中...' : '截图' }}</span>
                     </button>
                   </div>
-                  <div class="composer-action-row">
-                    <div class="runtime-stepper">
-                      <button class="stepper-btn" @click="adjustMaxAutoSteps(-1)">-</button>
-                      <span>步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
-                      <button class="stepper-btn" @click="adjustMaxAutoSteps(1)">+</button>
-                    </div>
-                    <button class="runtime-chip" title="按当前模型应用推荐的自动步数，用于限制长任务连续调用工具的轮数" @click="applyRecommendedAutoSteps">
-                      推荐 {{ recommendedAutoSteps }}
-                    </button>
-                  </div>
+                  <button
+                    class="send-btn"
+                    :class="{ 'is-stop': aiStore.streaming }"
+                    :disabled="sendButtonDisabled"
+                    :title="aiStore.streaming ? '停止当前任务' : '发送消息'"
+                    @click="handlePrimaryAction"
+                  >
+                    <svg v-if="aiStore.streaming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="6" y="6" width="12" height="12" rx="2"/>
+                    </svg>
+                    <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                  </button>
                 </div>
-              </details>
-              <div class="composer-inline-hint">支持任意文件、截图粘贴与工具生成的桌面截图。</div>
+              </div>
+              <div v-if="showRuntimeChrome" class="chat-control-row">
+                <div class="composer-model-row">
+                  <span class="composer-control-label">模型</span>
+                  <select class="model-select" :value="runtimeAiConfig.model" @change="handleModelChange(($event.target as HTMLSelectElement).value)">
+                    <option v-if="!runtimeAiConfig.model" value="">请先选择模型</option>
+                    <option v-for="model in availableAiModels" :key="model.id" :value="model.name">
+                      {{ model.label }}
+                    </option>
+                  </select>
+                  <button class="icon-btn" :disabled="loadingAiModels || !canRefreshModels" title="刷新模型" @click="refreshModelOptions">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="23 4 23 10 17 10"/>
+                      <polyline points="1 20 1 14 7 14"/>
+                      <path d="M3.51 9a9 9 0 0114.13-3.36L23 10"/>
+                      <path d="M20.49 15a9 9 0 01-14.13 3.36L1 14"/>
+                    </svg>
+                  </button>
+                  <span class="composer-control-value">{{ currentModelLabel }}</span>
+                </div>
+                <div class="composer-action-row">
+                  <div class="runtime-stepper">
+                    <button class="stepper-btn" @click="adjustMaxAutoSteps(-1)">-</button>
+                    <span>步数 {{ aiStore.preferences.maxAutoSteps > 0 ? aiStore.preferences.maxAutoSteps : '无限' }}</span>
+                    <button class="stepper-btn" @click="adjustMaxAutoSteps(1)">+</button>
+                  </div>
+                  <button class="runtime-chip" title="按当前模型应用推荐的自动步数，用于限制长任务连续调用工具的轮数" @click="applyRecommendedAutoSteps">
+                    推荐 {{ recommendedAutoSteps }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="showRuntimeChrome" class="composer-inline-hint">支持任意文件、截图粘贴与工具生成的桌面截图。</div>
             </div>
           </div>
         </div>
@@ -339,7 +350,7 @@ import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
 import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
-import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
+import { cancelConversationRun, createAttachmentsFromFiles, createImageAttachmentFromDataUrl, startConversationTurn } from '@/utils/aiConversation'
 import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
@@ -354,6 +365,7 @@ const props = defineProps<{
   subtitle?: string
   nativeWindowDrag?: boolean
   showSessionManager?: boolean
+  chatOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -379,10 +391,12 @@ const modelLoadError = ref('')
 const playingMessageId = ref('')
 const autoPlayedMessageId = ref('')
 const defaultLive2DSessionTitle = 'Live2D'
+const capturingScreenshot = ref(false)
 
 const chatScope = computed(() => props.scope || 'main')
 const showSessionManager = computed(() => typeof props.showSessionManager === 'boolean' ? props.showSessionManager : chatScope.value === 'live2d')
 const useNativeWindowDrag = computed(() => typeof props.nativeWindowDrag === 'boolean' ? props.nativeWindowDrag : chatScope.value === 'live2d')
+const showRuntimeChrome = computed(() => !props.chatOnly)
 const aiConfig = computed(() => aiStore.config)
 const scopedActiveSessionId = computed(() => aiStore.getActiveSessionId(chatScope.value))
 const scopedSessions = computed(() => aiStore.getSortedSessions(chatScope.value))
@@ -738,6 +752,12 @@ function mergePendingAttachments(nextAttachments: AIChatAttachment[]) {
   pendingAttachments.value = [...pendingAttachments.value, ...nextAttachments].slice(0, 8)
 }
 
+function buildScreenshotAttachmentName() {
+  const stamp = new Date()
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `截图-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}.png`
+}
+
 async function handleAttachmentSelection(event: Event) {
   const target = event.target as HTMLInputElement
   const files = Array.from(target.files || [])
@@ -776,6 +796,42 @@ async function handleComposerPaste(event: ClipboardEvent) {
 
   event.preventDefault()
   mergePendingAttachments(await createAttachmentsFromFiles(files))
+}
+
+async function captureManualScreenshot() {
+  if (capturingScreenshot.value || aiStore.streaming) {
+    return
+  }
+
+  const capture = window.electronAPI?.captureUserScreenshot
+  if (!capture) {
+    showToast('error', '当前环境不支持手动截图')
+    return
+  }
+
+  capturingScreenshot.value = true
+  try {
+    const result = await capture()
+    if (result.cancelled) {
+      return
+    }
+
+    if (!result.success || !result.dataUrl) {
+      throw new Error(result.error || '截图失败')
+    }
+
+    const attachment = await createImageAttachmentFromDataUrl(result.dataUrl, {
+      name: buildScreenshotAttachmentName(),
+      source: 'user'
+    })
+    mergePendingAttachments([attachment])
+    showToast('success', '截图已加入输入框')
+    nextTick(() => inputRef.value?.focus())
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '截图失败')
+  } finally {
+    capturingScreenshot.value = false
+  }
 }
 
 async function toggleThinkingMode() {
@@ -1269,8 +1325,8 @@ onBeforeUnmount(() => {
 }
 
 .chat-main-pane {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
 }
@@ -1456,13 +1512,6 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 700;
-}
-
-.chat-model-strip {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
 }
 
 .model-select {
@@ -1980,10 +2029,10 @@ onBeforeUnmount(() => {
 
 .chat-input-area {
   display: grid;
-  gap: 5px;
-  padding: 7px 10px 9px;
+  gap: 8px;
+  padding: 8px 10px 10px;
   border-top: 1px solid rgba(255, 200, 220, 0.2);
-  background: rgba(255, 255, 255, 0.3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 247, 250, 0.96));
 }
 
 .hidden-file-input {
@@ -2037,69 +2086,41 @@ onBeforeUnmount(() => {
   }
 }
 
-.chat-input-row {
+.chat-composer-shell {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 12px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 200, 220, 0.24);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
-.composer-control-fold {
-  border: 1px solid rgba(255, 200, 220, 0.22);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.6);
-  overflow: hidden;
-}
-
-.composer-control-summary {
+.chat-composer-toolbar,
+.chat-composer-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   align-items: center;
-  padding: 8px 10px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-
-  &::-webkit-details-marker {
-    display: none;
-  }
-
-  &::after {
-    content: '展开控制';
-    margin-left: auto;
-    color: var(--text-muted);
-    font-size: 10px;
-    font-weight: 700;
-  }
-}
-
-.composer-control-fold[open] > .composer-control-summary::after {
-  content: '收起控制';
-}
-
-.composer-summary-item {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.composer-control-content {
-  display: grid;
   gap: 8px;
-  padding: 0 10px 10px;
+}
+
+.chat-composer-toolbar {
+  justify-content: space-between;
 }
 
 .composer-model-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
 }
 
 .composer-action-row {
@@ -2134,15 +2155,14 @@ onBeforeUnmount(() => {
 }
 
 .chat-input {
-  flex: 1;
   border: 1px solid rgba(255, 200, 220, 0.3);
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 14px;
+  padding: 10px 12px;
   font-size: 12.5px;
   font-family: inherit;
   line-height: 1.5;
   resize: none;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--text-primary);
   outline: none;
   transition: border-color 0.2s;
@@ -2158,16 +2178,46 @@ onBeforeUnmount(() => {
   }
 }
 
-.attach-btn {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
+.toolbar-btn {
+  min-height: 36px;
+  width: auto;
+  padding: 0 12px;
+  gap: 6px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.98);
+  border: 1px solid rgba(203, 213, 225, 0.7);
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(244, 114, 182, 0.32);
+  color: var(--primary);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .attach-btn-inline {
   align-self: stretch;
+}
+
+.composer-control-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-control-value {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .composer-inline-hint {
@@ -2244,20 +2294,8 @@ onBeforeUnmount(() => {
     padding-right: 10px;
   }
 
-  .chat-model-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .chat-input-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
   .composer-model-row {
-    grid-template-columns: 1fr;
-  }
-
-  .composer-control-summary {
-    align-items: flex-start;
+    width: 100%;
   }
 
   .task-inline-head {
@@ -2282,6 +2320,21 @@ onBeforeUnmount(() => {
     overflow-x: auto;
     overflow-y: hidden;
     padding-bottom: 2px;
+  }
+
+  .chat-control-row,
+  .chat-composer-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-composer-actions {
+    width: 100%;
+  }
+
+  .toolbar-btn {
+    flex: 1;
+    justify-content: center;
   }
 }
 </style>
