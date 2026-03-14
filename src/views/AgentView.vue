@@ -7,6 +7,7 @@
         <div class="hero-title-row">
           <span class="hero-chip is-mode">Agent</span>
           <span class="hero-chip">{{ currentModelLabel }}</span>
+          <span class="hero-chip" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
           <span class="hero-chip">角色 {{ agentProfiles.length }}</span>
         </div>
         <p class="hero-subline">主窗口、悬浮窗和 Live2D 都能独立绑定角色；每个角色的提示词、记忆、权限和模型配置彼此隔离。</p>
@@ -24,6 +25,7 @@
         <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D' : 'Main' }}</span>
         <span class="workbench-pill">{{ currentAgent?.name || '小柔' }}</span>
         <span class="workbench-pill">{{ currentModelLabel }}</span>
+        <span class="workbench-pill" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
         <span class="workbench-pill">上下文 {{ currentContextSummary }}</span>
         <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '新会话' }}</span>
         <span class="workbench-pill">会话 {{ scopedSessionCount }}</span>
@@ -427,6 +429,40 @@ const showAgentRuntimeStatus = computed(() => {
   }
 
   return canRefreshModels.value && !loadingAiModels.value && availableAiModels.value.length === 0
+})
+const agentRuntimeTone = computed(() => {
+  if (loadingAiModels.value) {
+    return 'loading'
+  }
+
+  if (!aiStore.isConfigured || (canRefreshModels.value && availableAiModels.value.length === 0)) {
+    return 'warning'
+  }
+
+  if (modelLoadError.value) {
+    return 'danger'
+  }
+
+  return 'ready'
+})
+const agentRuntimeStatusLabel = computed(() => {
+  if (loadingAiModels.value) {
+    return '模型目录读取中'
+  }
+
+  if (!aiStore.isConfigured) {
+    return '待补齐运行配置'
+  }
+
+  if (modelLoadError.value) {
+    return '模型目录读取失败'
+  }
+
+  if (canRefreshModels.value && availableAiModels.value.length === 0) {
+    return '待刷新模型目录'
+  }
+
+  return '运行配置已就绪'
 })
 const currentModelMeta = computed(() => {
   const matched = availableAiModels.value.find(model => model.name === runtimeAiConfig.value.model || model.id === runtimeAiConfig.value.model)
@@ -1061,6 +1097,30 @@ h1 {
 .hero-chip.is-mode {
   background: color-mix(in srgb, var(--agent-accent) 24%, rgba(255, 255, 255, 0.06));
   color: var(--text-primary);
+}
+
+.hero-chip.is-ready,
+.workbench-pill.is-ready {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(187, 247, 208, 0.16));
+  color: #166534;
+}
+
+.hero-chip.is-warning,
+.workbench-pill.is-warning {
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.2), rgba(254, 240, 138, 0.18));
+  color: #854d0e;
+}
+
+.hero-chip.is-danger,
+.workbench-pill.is-danger {
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.2), rgba(254, 202, 202, 0.16));
+  color: #991b1b;
+}
+
+.hero-chip.is-loading,
+.workbench-pill.is-loading {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.18), rgba(191, 219, 254, 0.18));
+  color: #1d4ed8;
 }
 
 .hero-subline,

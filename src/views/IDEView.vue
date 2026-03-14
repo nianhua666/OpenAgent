@@ -152,6 +152,9 @@
               @click="handleWorkspaceSwitch(item.id)"
             >
               <strong>{{ item.name }}</strong>
+              <span class="recent-workspace-meta">
+                {{ formatWorkbenchTimestamp(item.lastOpenedAt || item.updatedAt || item.createdAt) }}
+              </span>
               <span class="recent-workspace-path">
                 项目 {{ compactWorkbenchPath(item.rootPath, 2) }}
               </span>
@@ -159,6 +162,25 @@
                 产物 {{ compactWorkbenchPath(item.artifactRootPath, 2) || '未设置' }}
               </span>
             </button>
+          </div>
+        </section>
+
+        <section v-else class="placeholder-panel glass-panel">
+          <div class="placeholder-panel-head">
+            <div>
+              <p class="header-eyebrow">Recent</p>
+              <strong>Quick Start</strong>
+            </div>
+            <span class="placeholder-tag">Empty</span>
+          </div>
+          <div class="placeholder-panel-body is-compact">
+            <p>当前还没有最近工作区记录。先绑定一个项目目录和产物目录，后续 IDE 会自动记住最近现场、编辑标签与计划状态。</p>
+            <div class="placeholder-tag-row">
+              <span class="placeholder-tag">Workspace Restore</span>
+              <span class="placeholder-tag">Editor Session</span>
+              <span class="placeholder-tag">Plan Sync</span>
+            </div>
+            <button class="placeholder-action" type="button" @click="openWorkspacePicker">Create Workspace</button>
           </div>
         </section>
 
@@ -570,6 +592,38 @@ function compactWorkbenchPath(targetPath: string, tailSegments = 2) {
 
   const head = /^[A-Za-z]:$/.test(segments[0]) ? `${segments[0]}/` : ''
   return `${head}.../${segments.slice(-tailSegments).join('/')}`
+}
+
+function formatWorkbenchTimestamp(timestamp?: number) {
+  if (!timestamp || !Number.isFinite(timestamp)) {
+    return '最近未打开'
+  }
+
+  const deltaMs = Date.now() - timestamp
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+
+  if (deltaMs < minuteMs) {
+    return '刚刚打开'
+  }
+
+  if (deltaMs < hourMs) {
+    return `${Math.max(1, Math.floor(deltaMs / minuteMs))} 分钟前`
+  }
+
+  if (deltaMs < dayMs) {
+    return `${Math.max(1, Math.floor(deltaMs / hourMs))} 小时前`
+  }
+
+  if (deltaMs < 7 * dayMs) {
+    return `${Math.max(1, Math.floor(deltaMs / dayMs))} 天前`
+  }
+
+  return new Date(timestamp).toLocaleDateString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+  })
 }
 
 function deriveEditorCursorState(content: string, selectionStart: number, selectionEnd: number) {
@@ -2538,6 +2592,13 @@ async function handleReplanPlan(planId: string) {
 
 .recent-workspace-card strong {
   font-size: 12px;
+  line-height: 1.4;
+}
+
+.recent-workspace-meta,
+.recent-workspace-time {
+  color: var(--text-muted);
+  font-size: 11px;
   line-height: 1.4;
 }
 
