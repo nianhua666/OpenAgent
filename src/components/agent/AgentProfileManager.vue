@@ -77,6 +77,31 @@
         <input v-model.trim="draft.description" maxlength="120" type="text" placeholder="用一句话说明这个角色适合做什么" />
       </label>
 
+      <div class="runtime-grid">
+        <label class="field">
+          <span>角色类型</span>
+          <select v-model="draft.personaType">
+            <option v-for="item in personaOptions" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
+          </select>
+          <small class="field-hint">
+            {{ personaOptions.find(item => item.value === draft.personaType)?.description }}
+          </small>
+        </label>
+
+        <label v-if="draft.personaType === 'emotional'" class="field">
+          <span>默认心情</span>
+          <input v-model.number="draft.mood" type="range" min="0" max="100" step="1" />
+          <small class="field-hint">当前 {{ normalizeMood(draft.mood) }} / 100。只用于内部调节语气和热情度，不在会话页直接展示。</small>
+        </label>
+
+        <div v-else class="field field--placeholder">
+          <span>执行倾向</span>
+          <div class="field-placeholder">功能型角色会优先严格执行需求，并尽量避免情绪表达干扰任务推进。</div>
+        </div>
+      </div>
+
       <label class="field">
         <span>系统提示词</span>
         <textarea v-model.trim="draft.systemPrompt" rows="8" placeholder="写清角色人设、语气、执行方式、能力边界和禁用事项" />
@@ -152,7 +177,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import type { AIAgentCapabilitySettings, AIAgentProfile, AIConversationScope, AIProviderModel } from '@/types'
+import type { AIAgentCapabilitySettings, AIAgentPersonaType, AIAgentProfile, AIConversationScope, AIProviderModel } from '@/types'
 import { genId } from '@/utils/helpers'
 
 type EditableAgentProfile = {
@@ -160,6 +185,8 @@ type EditableAgentProfile = {
   name: string
   description: string
   systemPrompt: string
+  personaType: AIAgentPersonaType
+  mood?: number
   preferredModel: string
   temperature: number
   preferredArtifactRoot: string
@@ -199,6 +226,19 @@ const capabilityToggles = [
   { key: 'skillEnabled', label: 'Skill', description: '允许使用托管 Skill 扩展提示与规则。' },
 ] as const satisfies Array<{ key: keyof AIAgentCapabilitySettings; label: string; description: string }>
 
+const personaOptions: Array<{ value: AIAgentPersonaType; label: string; description: string }> = [
+  {
+    value: 'functional',
+    label: '功能型 Agent',
+    description: '以执行任务、严格服从需求和稳定推进结果为主，不靠情绪表达主导对话。'
+  },
+  {
+    value: 'emotional',
+    label: '情绪型 Agent',
+    description: '保留鲜明人设与情绪温度，但仍需优先完成用户目标。'
+  }
+]
+
 const draft = reactive<EditableAgentProfile>(createDraft())
 const initialSignature = ref('')
 const canSubmit = computed(() => draft.name.trim().length > 0 && draft.systemPrompt.trim().length > 0)
@@ -215,12 +255,26 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => draft.personaType,
+  type => {
+    if (type === 'emotional') {
+      draft.mood = normalizeMood(draft.mood)
+      return
+    }
+
+    draft.mood = undefined
+  }
+)
+
 function createDraft(agent?: AIAgentProfile): EditableAgentProfile {
   return {
     id: agent?.id || '',
     name: agent?.name || '',
     description: agent?.description || '',
     systemPrompt: agent?.systemPrompt || '',
+    personaType: agent?.personaType || 'functional',
+    mood: agent?.personaType === 'emotional' ? agent.mood ?? 72 : undefined,
     preferredModel: agent?.preferredModel || '',
     temperature: typeof agent?.temperature === 'number' ? agent.temperature : 0.7,
     preferredArtifactRoot: agent?.preferredArtifactRoot || '',
@@ -247,6 +301,8 @@ function currentDraftSignature() {
     name: draft.name,
     description: draft.description,
     systemPrompt: draft.systemPrompt,
+    personaType: draft.personaType,
+    mood: draft.mood,
     preferredModel: draft.preferredModel,
     temperature: draft.temperature,
     preferredArtifactRoot: draft.preferredArtifactRoot,
@@ -300,6 +356,8 @@ function submitDraft() {
     name: draft.name.trim(),
     description: draft.description.trim(),
     systemPrompt: draft.systemPrompt.trim(),
+    personaType: draft.personaType,
+    mood: draft.personaType === 'emotional' ? normalizeMood(draft.mood) : undefined,
     preferredModel: draft.preferredModel.trim(),
     temperature: normalizeTemperature(draft.temperature),
     preferredArtifactRoot: draft.preferredArtifactRoot.trim(),
@@ -332,6 +390,14 @@ function normalizeTemperature(value: number) {
   return Math.min(Math.max(Number(value), 0), 1.5)
 }
 
+function normalizeMood(value?: number) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 72
+  }
+
+  return Math.min(Math.max(Math.round(Number(value)), 0), 100)
+}
+
 function formatTemperature(value?: number) {
   return normalizeTemperature(typeof value === 'number' ? value : 0.7).toFixed(2)
 }
@@ -345,11 +411,13 @@ function resolveBadgeLabel(agent: AIAgentProfile) {
 }
 
 function getCapabilityBadges(agent: AIAgentProfile) {
+  const agentType = agent.personaType === 'emotional' ? '情绪型' : '功能型'
   if (agent.capabilities.conversationOnly) {
-    return ['仅对话', agent.capabilities.memoryEnabled ? '记忆' : '无记忆']
+    return [agentType, '仅对话', agent.capabilities.memoryEnabled ? '记忆' : '无记忆']
   }
 
   return [
+    agentType,
     agent.capabilities.memoryEnabled ? '记忆' : '无记忆',
     agent.capabilities.fileControlEnabled ? '文件' : '无文件',
     agent.capabilities.softwareControlEnabled ? '软件' : '无软件',
@@ -519,6 +587,21 @@ h4 {
 .field textarea {
   min-height: 132px;
   resize: vertical;
+}
+
+.field--placeholder {
+  align-content: start;
+}
+
+.field-placeholder {
+  min-height: 42px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .field input:focus,

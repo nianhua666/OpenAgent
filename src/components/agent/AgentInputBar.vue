@@ -20,7 +20,7 @@
         ref="textareaRef"
         :value="modelValue"
         class="message-input"
-        :placeholder="streaming ? 'AI 正在回复中...' : '输入任务、代码需求或调度指令，Enter 发送，Shift+Enter 换行'"
+        :placeholder="streaming ? '当前角色正在回复中...' : '输入需求、代码任务或控制指令，Enter 发送，Shift+Enter 换行'"
         rows="1"
         @input="handleInput"
         @keydown="handleKeydown"

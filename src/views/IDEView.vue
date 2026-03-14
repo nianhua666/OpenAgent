@@ -2281,6 +2281,7 @@ async function handleReplanPlan(planId: string) {
   width: 100%;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   padding: 4px;
   border-radius: 18px;
   border: 1px solid rgba(100, 116, 139, 0.24);

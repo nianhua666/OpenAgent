@@ -132,7 +132,9 @@
                   <span v-for="badge in currentModelBadges" :key="badge" class="model-badge">{{ badge }}</span>
                 </div>
                 <div v-if="currentContextMetrics" class="context-inline-status">
-                  <span>上下文 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }} / {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }}</span>
+                  <span>总上下文 {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }} / {{ formatTokenCount(currentContextMetrics.modelMaxContextTokens) }}</span>
+                  <span>当前装配 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }}</span>
+                  <span>最大输出 {{ formatTokenCount(currentContextMetrics.maxOutputTokens) }}</span>
                   <span v-if="aiStore.runtime.phase === 'compressing'">压缩中</span>
                 </div>
               </div>
@@ -262,7 +264,7 @@
                 <textarea
                   ref="inputRef"
                   v-model="inputText"
-                  :placeholder="aiStore.streaming ? 'AI 正在回复中...' : '输入消息，Enter 发送，Shift+Enter 换行'"
+                  :placeholder="aiStore.streaming ? `${currentAgent?.name || '当前角色'} 正在回复中...` : '输入消息，Enter 发送，Shift+Enter 换行'"
                   class="chat-input"
                   rows="1"
                   @keydown="handleKeydown"
@@ -338,7 +340,7 @@ import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
-import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
@@ -417,8 +419,8 @@ const currentAgentCapabilityBadges = computed(() => {
     capabilities.skillEnabled ? 'Skill' : '无 Skill'
   ]
 })
-const dialogTitle = computed(() => props.title || currentAgent.value?.name || (chatScope.value === 'live2d' ? 'Live2D 对话' : 'Agent'))
-const dialogSubtitle = computed(() => props.subtitle || currentAgent.value?.description || (chatScope.value === 'live2d' ? '独立记忆与自动语音' : '主窗口文本对话'))
+const dialogTitle = computed(() => props.title || currentAgent.value?.name || 'Agent')
+const dialogSubtitle = computed(() => props.subtitle || currentAgent.value?.description || (chatScope.value === 'live2d' ? 'Live2D 标签已绑定当前角色' : '主窗口文本对话'))
 const emptyHint = computed(() => {
   if (chatScope.value === 'live2d') {
     return currentAgent.value?.name
@@ -819,7 +821,7 @@ function stopCurrentRun() {
 }
 
 function formatTokenCount(value: number) {
-  return value.toLocaleString()
+  return formatCompactTokenCount(value)
 }
 
 function formatAttachmentMeta(attachment: AIChatAttachment) {

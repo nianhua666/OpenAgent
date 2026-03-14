@@ -15,7 +15,7 @@
       <div class="message-head">
         <div>
           <p class="message-eyebrow">Session</p>
-          <h3>{{ session.title }}</h3>
+          <h3>{{ displaySessionTitle(session) }}</h3>
         </div>
         <div class="message-meta">
           <span class="scope-badge" :class="`is-${session.scope}`">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
@@ -31,11 +31,11 @@
       <div v-if="session.messages.length === 0 && !streaming" class="session-empty">
         <div class="session-empty-copy">
           <p class="empty-eyebrow">Session Ready</p>
-          <h3>{{ session.scope === 'live2d' ? 'Live2D 对话已就绪' : '主窗口对话已就绪' }}</h3>
+          <h3>当前会话已就绪</h3>
           <p class="empty-copy">当前会话还没有消息。你可以直接给出需求、补充约束、让 Agent 先拆解任务，或者让它先梳理当前角色的记忆与能力边界。</p>
         </div>
         <div class="session-empty-meta">
-          <span class="empty-fact">{{ session.title }}</span>
+          <span class="empty-fact">{{ displaySessionTitle(session) }}</span>
           <span class="empty-fact">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
           <span class="empty-fact">0 条消息</span>
         </div>
@@ -82,7 +82,7 @@
         </article>
 
         <article v-if="streaming" class="message-card is-assistant is-streaming">
-          <div class="message-role">AI</div>
+          <div class="message-role">{{ assistantLabel }}</div>
           <div class="message-body">
             <div class="message-content" v-html="renderMarkdown(streamingContent)"></div>
             <details v-if="streamingReasoningContent" class="message-reasoning" open>
@@ -116,6 +116,7 @@ const props = defineProps<{
   playingMessageId: string
   starterPrompts: string[]
   showVoiceActions: boolean
+  assistantLabel?: string
 }>()
 
 defineEmits<{
@@ -150,10 +151,21 @@ function roleLabel(role: AIChatMessage['role']) {
   const labels: Record<AIChatMessage['role'], string> = {
     system: '系统',
     user: '用户',
-    assistant: 'AI',
+    assistant: props.assistantLabel?.trim() || 'Agent',
     tool: '工具',
   }
   return labels[role]
+}
+
+function displaySessionTitle(session: AIChatSession) {
+  if (
+    session.scope === 'live2d'
+    && /^live2d(?:\s*对话|\s+\d+)?$/i.test(session.title.trim())
+  ) {
+    return props.assistantLabel?.trim() || '当前会话'
+  }
+
+  return session.title
 }
 
 function canPlayAssistantReply(message: AIChatMessage) {

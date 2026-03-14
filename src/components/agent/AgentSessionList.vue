@@ -24,7 +24,7 @@
         @click="$emit('select-session', session.id)"
       >
         <div class="session-card-head">
-          <span class="session-title">{{ session.title }}</span>
+          <span class="session-title">{{ resolveSessionTitle(session) }}</span>
           <span class="session-badge" :class="`is-${session.scope}`">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
         </div>
         <p class="session-agent">{{ resolveAgentName(session) }}</p>
@@ -86,6 +86,14 @@ function fallbackSummary(session: AIChatSession) {
 
 function resolveAgentName(session: AIChatSession) {
   return aiStore.getSessionAgent(session)?.name || '默认角色'
+}
+
+function resolveSessionTitle(session: AIChatSession) {
+  if (session.scope === 'live2d' && /^live2d(?:\s*对话|\s+\d+)?$/i.test(session.title.trim())) {
+    return resolveAgentName(session)
+  }
+
+  return session.title
 }
 </script>
 

@@ -649,12 +649,30 @@ export function getModelCapabilityLabels(capabilities?: AIModelCapabilities) {
   return labels
 }
 
+export function formatCompactTokenCount(value: number) {
+  const safeValue = Math.max(0, Math.round(Number(value) || 0))
+  if (safeValue >= 1_000_000) {
+    const millions = safeValue / 1_000_000
+    return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1).replace(/\.0$/, '')}m`
+  }
+
+  if (safeValue >= 1_000) {
+    const thousands = safeValue / 1_000
+    return `${thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, '')}k`
+  }
+
+  return `${safeValue}`
+}
+
 export function getModelLimitLabels(limits?: AIModelLimits) {
   if (!limits) {
     return []
   }
 
-  return [`上下文 ${limits.maxContextTokens.toLocaleString()}`, `输出 ${limits.maxOutputTokens.toLocaleString()}`]
+  return [
+    `总上下文 ${formatCompactTokenCount(limits.maxContextTokens)}`,
+    `最大输出 ${formatCompactTokenCount(limits.maxOutputTokens)}`
+  ]
 }
 
 export function getRecommendedAutoSteps(config: AIConfig) {

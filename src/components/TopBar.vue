@@ -48,6 +48,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAIStore } from '@/stores/ai'
 import { APP_NAME } from '@/utils/appMeta'
+import { formatCompactTokenCount } from '@/utils/ai'
 
 const props = defineProps<{
   showSearch?: boolean
@@ -83,7 +84,7 @@ const aiRuntimeLabel = computed(() => {
   const scopeLabel = aiStore.runtime.sessionScope === 'live2d' ? 'Live2D' : 'AI'
   const context = aiStore.runtime.context
   const usageLabel = context
-    ? `${context.estimatedInputTokens.toLocaleString()}/${context.selectedContextTokens.toLocaleString()}`
+    ? `上下文 ${formatCompactTokenCount(context.estimatedInputTokens)}/${formatCompactTokenCount(context.modelMaxContextTokens)} · 输出 ${formatCompactTokenCount(context.maxOutputTokens)}`
     : ''
 
   if (aiStore.runtime.phase === 'compressing') {

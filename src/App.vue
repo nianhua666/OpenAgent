@@ -260,6 +260,7 @@ onBeforeUnmount(() => {
 }
 
 .page-content--immersive {
+  overflow: hidden;
   padding: $spacing-sm;
   background:
     radial-gradient(circle at 12% 0%, rgba(59, 130, 246, 0.14), transparent 22%),
@@ -272,7 +273,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .page-content--topbarless > * {

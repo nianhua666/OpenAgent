@@ -497,7 +497,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
   }
 
   async function requestHealth(endpoint: string) {
-    return new Promise<{ healthy: boolean; message: string }>(resolve => {
+    return new Promise<{ healthy: boolean; message: string; statusCode: number | null }>(resolve => {
       const req = httpRequest(endpoint, {
         method: 'GET',
         timeout: HEALTH_REQUEST_TIMEOUT
@@ -511,6 +511,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
           if ((res.statusCode || 500) >= 200 && (res.statusCode || 500) < 300) {
             resolve({
               healthy: true,
+              statusCode: res.statusCode || 200,
               message: body.trim().slice(0, 180) || '本地网关健康检查通过'
             })
             return
@@ -518,6 +519,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
 
           resolve({
             healthy: false,
+            statusCode: res.statusCode || 500,
             message: `/health 返回 ${(res.statusCode || 500).toString()}`
           })
         })
@@ -529,6 +531,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       req.on('error', error => {
         resolve({
           healthy: false,
+          statusCode: null,
           message: error instanceof Error ? error.message : '健康检查失败'
         })
       })
@@ -545,6 +548,21 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     const result = await requestHealth(context.healthEndpoint)
     if (!runtimeProcess) {
       return state
+    }
+
+    if (!result.healthy) {
+      const setupStatus = await requestSetupJson<SetupStatusPayload>(buildSetupStatusEndpoint(context), 'GET')
+      if (setupStatus.ok) {
+        const setupMessage = setupStatus.data?.needs_setup
+          ? '本地网关已响应，等待完成初始化'
+          : '本地网关已响应，后台接口可达'
+
+        return emitState({
+          status: 'running',
+          healthy: false,
+          healthMessage: setupMessage
+        }, context)
+      }
     }
 
     if (result.healthy) {

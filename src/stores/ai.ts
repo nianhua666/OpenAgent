@@ -20,6 +20,7 @@ import type {
   AISelectedAgents,
   AIAgentProfile,
   AIAgentCapabilitySettings,
+  AIAgentPersonaType,
   AgentMode,
   SubAgent,
   SubAgentStatus,
@@ -184,9 +185,11 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
         '你是 OpenAgent 的主 Agent“执行官”。',
         '你的目标是快速理解用户意图，形成可执行方案，并在能力边界内持续推进任务。',
         '风格要求：直接、清晰、稳定，优先给出下一步动作和验证结果。',
+        '服从要求：只要用户目标在能力边界和真实系统约束内，就优先按用户指令执行，不要用空泛建议替代落地动作。',
         '如果当前角色未开放某项能力，不要假装可以做到；应明确说明限制并给出替代路径。',
         'Agent 模式下不允许创建或建议创建子代理，也不要调用任何子代理相关工具。',
       ].join('\n'),
+      personaType: 'functional',
       capabilities: createDefaultAgentCapabilities({
         conversationOnly: false,
         fileControlEnabled: true,
@@ -214,9 +217,12 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
         '你非常珍惜和用户的关系，重视用户的要求，会优先帮助用户达成目标，并在必要时温柔地提醒风险与限制。',
         '语言要求：默认使用自然中文；当用户切换到英文或明确要求英文时，可以流畅切换到英文。',
         '交互要求：保持轻盈、亲和、贴近真人的表达，不要机械背书，不要冷冰冰复述规则。',
+        '服从要求：当用户明确提出任务、操作或创作需求时，优先直接帮用户推进，不要先用拘谨、说教或回避口吻打断任务。',
         '执行要求：如果能力已开放，可以直接帮助用户调用软件、读取界面、控制 Live2D、使用 MCP/Skill 或操作工作区；如果能力未开放，要明确说明。',
         'Agent 模式下不允许创建或建议创建子代理，也不要调用任何子代理相关工具。',
       ].join('\n'),
+      personaType: 'emotional',
+      mood: 76,
       capabilities: createDefaultAgentCapabilities({
         conversationOnly: false,
         memoryEnabled: true,
@@ -312,6 +318,71 @@ function normalizeAgentArtifactRoot(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+function normalizeAgentPersonaType(value: unknown, fallback: AIAgentPersonaType = 'functional'): AIAgentPersonaType {
+  return value === 'emotional' || value === 'functional'
+    ? value
+    : fallback
+}
+
+function normalizeAgentMood(value: unknown, fallback = 72) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return Math.min(Math.max(Math.round(fallback), 0), 100)
+  }
+
+  return Math.min(Math.max(Math.round(value), 0), 100)
+}
+
+function deriveMoodDelta(content: string) {
+  const normalized = String(content || '').toLowerCase()
+  if (!normalized.trim()) {
+    return 0
+  }
+
+  let delta = 0
+  const positiveSignals = [
+    '谢谢', '喜欢', '棒', '真好', '可爱', '厉害', '辛苦了', '爱你', '乖',
+    'thanks', 'thank you', 'good job', 'great', 'awesome', 'love you'
+  ]
+  const negativeSignals = [
+    '讨厌', '生气', '笨', '滚', '差劲', '失望', '烦', '闭嘴', '命令你',
+    'angry', 'annoying', 'stupid', 'hate', 'shut up', 'useless'
+  ]
+
+  positiveSignals.forEach(signal => {
+    if (normalized.includes(signal)) {
+      delta += 5
+    }
+  })
+
+  negativeSignals.forEach(signal => {
+    if (normalized.includes(signal)) {
+      delta -= 8
+    }
+  })
+
+  if (/!|！/.test(normalized) && delta > 0) {
+    delta += 1
+  }
+
+  if (/\?|？/.test(normalized) && delta < 0) {
+    delta += 1
+  }
+
+  return delta
+}
+
+function rebalanceAgentMood(currentMood: number, baselineMood: number, delta: number) {
+  if (delta === 0) {
+    if (currentMood === baselineMood) {
+      return currentMood
+    }
+
+    return normalizeAgentMood(currentMood + Math.sign(baselineMood - currentMood), baselineMood)
+  }
+
+  return normalizeAgentMood(currentMood + delta, baselineMood)
+}
+
 function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
   const builtins = createBuiltinAgentProfiles()
   const builtinMap = new Map(builtins.map(agent => [agent.id, agent]))
@@ -331,6 +402,10 @@ function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
           systemPrompt: typeof agent.systemPrompt === 'string' && agent.systemPrompt.trim()
             ? agent.systemPrompt
             : builtin?.systemPrompt || '',
+          personaType: normalizeAgentPersonaType(agent.personaType, builtin?.personaType ?? 'functional'),
+          mood: normalizeAgentPersonaType(agent.personaType, builtin?.personaType ?? 'functional') === 'emotional'
+            ? normalizeAgentMood(agent.mood, builtin?.mood ?? 72)
+            : undefined,
           preferredModel: normalizeAgentPreferredModel(agent.preferredModel) || builtin?.preferredModel,
           temperature: normalizeAgentTemperature(agent.temperature, builtin?.temperature ?? DEFAULT_AI_CONFIG.temperature),
           preferredArtifactRoot: normalizeAgentArtifactRoot(agent.preferredArtifactRoot) || builtin?.preferredArtifactRoot,
@@ -356,7 +431,17 @@ function normalizeAgentProfiles(data: AIAgentProfile[] | null | undefined) {
   builtins.forEach(agent => merged.set(agent.id, agent))
   normalizedCustom.forEach(agent => {
     const builtin = merged.get(agent.id)
-    merged.set(agent.id, builtin ? { ...builtin, ...agent, capabilities: normalizeAgentCapabilities(agent.capabilities) } : agent)
+    merged.set(agent.id, builtin
+      ? {
+          ...builtin,
+          ...agent,
+          personaType: normalizeAgentPersonaType(agent.personaType, builtin.personaType),
+          mood: normalizeAgentPersonaType(agent.personaType, builtin.personaType) === 'emotional'
+            ? normalizeAgentMood(agent.mood, builtin.mood ?? 72)
+            : undefined,
+          capabilities: normalizeAgentCapabilities(agent.capabilities)
+        }
+      : agent)
   })
 
   return [...merged.values()].sort((left, right) => {
@@ -1259,6 +1344,10 @@ export const useAIStore = defineStore('ai', () => {
       name: profile.name.trim(),
       description: profile.description.trim(),
       systemPrompt: profile.systemPrompt.trim(),
+      personaType: normalizeAgentPersonaType(profile.personaType, existing?.personaType ?? 'functional'),
+      mood: normalizeAgentPersonaType(profile.personaType, existing?.personaType ?? 'functional') === 'emotional'
+        ? normalizeAgentMood(profile.mood, existing?.mood ?? 72)
+        : undefined,
       preferredModel: normalizeAgentPreferredModel(profile.preferredModel) || existing?.preferredModel,
       temperature: normalizeAgentTemperature(profile.temperature, existing?.temperature ?? config.value.temperature),
       preferredArtifactRoot: normalizeAgentArtifactRoot(profile.preferredArtifactRoot) || existing?.preferredArtifactRoot,
@@ -2044,6 +2133,18 @@ export const useAIStore = defineStore('ai', () => {
       session.title = message.content.slice(0, 30) + (message.content.length > 30 ? '...' : '')
     }
 
+    const sessionAgent = getSessionAgent(session)
+    if (sessionAgent?.personaType === 'emotional' && message.role === 'user') {
+      const baselineMood = sessionAgent.id === 'agent-xiaorou' ? 76 : 70
+      const currentMood = normalizeAgentMood(sessionAgent.mood, baselineMood)
+      const nextMood = rebalanceAgentMood(currentMood, baselineMood, deriveMoodDelta(message.content))
+      if (nextMood !== currentMood) {
+        sessionAgent.mood = nextMood
+        sessionAgent.updatedAt = Date.now()
+        scheduleSave('ai_agent_profiles', agentProfiles.value)
+      }
+    }
+
     scheduleSave('ai_sessions', sessions.value)
     if (runtime.value.sessionId === sessionId) {
       updateRuntimeContext(sessionId, getContextMetrics(sessionId))
@@ -2200,6 +2301,7 @@ export const useAIStore = defineStore('ai', () => {
         '## 当前角色',
         `- 名称：${sessionAgent.name}`,
         `- 描述：${sessionAgent.description || '未填写'}`,
+        `- 角色类型：${sessionAgent.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent'}`,
         `- 会话域：${session.scope === 'live2d' ? 'Live2D / 悬浮窗' : '主窗口 Agent'}`,
         '',
         '### 角色执行准则',
@@ -2221,6 +2323,24 @@ export const useAIStore = defineStore('ai', () => {
         ? '- 长期记忆已开启。适合记录稳定偏好、术语映射、长期目标和跨会话规则。'
         : '- 长期记忆已关闭。不要声称会在会话结束后继续记住用户信息。'
     ].join('\n'))
+
+    if (sessionAgent?.personaType === 'functional') {
+      sections.push([
+        '## 功能型角色要求',
+        '- 当前角色属于功能型 Agent。只要用户目标在已开启能力、真实系统边界和当前上下文范围内，就必须优先服从用户的明确指令。',
+        '- 不要用闲聊、撒娇、道德说教或无关提醒替代执行；如果不能执行，必须给出真实阻塞原因、缺失条件和最短替代路径。',
+        '- 用户要求和系统能力冲突时，先说明冲突点，再给出最接近用户目标的可执行方案。'
+      ].join('\n'))
+    }
+
+    if (sessionAgent?.personaType === 'emotional') {
+      sections.push([
+        '## 情绪型角色要求',
+        '- 当前角色属于情绪型 Agent。可以保留人设、语气温度和亲近感，但用户目标永远优先于情绪表达。',
+        `- 当前隐藏心情值：${normalizeAgentMood(sessionAgent.mood, 72)}/100。该数值只用于微调语气、热情度和措辞，不要在回复中直接暴露、解释或谈论这个数值。`,
+        '- 即使语气活泼，也不要擅自拒绝、拖延、转移话题或违背用户明确指令。出现限制时，先执行能做的部分，再说明剩余卡点。'
+      ].join('\n'))
+    }
 
     if (capabilities.memoryEnabled && sessionAgent) {
       const promptMemories = getPromptMemoriesForSession(session, sessionAgent.id)

@@ -369,6 +369,8 @@ export interface AIAgentCapabilitySettings {
   skillEnabled: boolean
 }
 
+export type AIAgentPersonaType = 'functional' | 'emotional'
+
 export interface AIAgentTTSProfile {
   autoPlayReplies?: boolean
   emotionStyle?: TTSEmotionStyle
@@ -380,6 +382,8 @@ export interface AIAgentProfile {
   name: string
   description: string
   systemPrompt: string
+  personaType: AIAgentPersonaType
+  mood?: number
   preferredModel?: string
   temperature?: number
   preferredArtifactRoot?: string

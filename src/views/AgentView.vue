@@ -22,11 +22,13 @@
 
     <section class="agent-workbench-bar glass-panel">
       <div class="workbench-bar-copy">
-        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D' : 'Main' }}</span>
+        <span class="workbench-pill is-mode">{{ selectedScope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
         <span class="workbench-pill">{{ currentAgent?.name || '小柔' }}</span>
+        <span class="workbench-pill">{{ currentAgentTypeLabel }}</span>
         <span class="workbench-pill">{{ currentModelLabel }}</span>
         <span class="workbench-pill" :class="`is-${agentRuntimeTone}`">{{ agentRuntimeStatusLabel }}</span>
-        <span class="workbench-pill">上下文 {{ currentContextSummary }}</span>
+        <span class="workbench-pill">总上下文 {{ currentContextSummary }}</span>
+        <span class="workbench-pill">最大输出 {{ currentOutputSummary }}</span>
         <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : '新会话' }}</span>
         <span class="workbench-pill">会话 {{ scopedSessionCount }}</span>
       </div>
@@ -61,7 +63,7 @@
               <p class="hero-eyebrow">Workspace</p>
               <strong>{{ currentSidebarTitle }}</strong>
             </div>
-            <span class="sidebar-scope">{{ selectedScope === 'live2d' ? 'Live2D' : 'Main' }}</span>
+            <span class="sidebar-scope">{{ selectedScope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
           </div>
 
           <AgentSessionList
@@ -170,6 +172,7 @@
           :playing-message-id="playingMessageId"
           :starter-prompts="starterPrompts"
           :show-voice-actions="showVoiceActions"
+          :assistant-label="currentAgent?.name || 'Agent'"
           @apply-prompt="applyStarterPrompt"
           @play-message="playAssistantMessage"
         />
@@ -196,13 +199,6 @@
           @step-delta="adjustMaxAutoSteps"
           @apply-recommended-steps="applyRecommendedAutoSteps"
         />
-
-        <AgentContextBar
-          :metrics="currentContextMetrics"
-          :agent-count="agentProfiles.length"
-          :current-agent-name="currentAgent?.name || ''"
-          :memory-enabled="Boolean(currentAgentCapabilities?.memoryEnabled)"
-        />
       </div>
 
     </div>
@@ -213,7 +209,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { AIChatAttachment, AIConversationScope, AIAgentProfile, AIProviderModel } from '@/types'
-import AgentContextBar from '@/components/agent/AgentContextBar.vue'
 import AgentInputBar from '@/components/agent/AgentInputBar.vue'
 import AgentMemoryPanel from '@/components/agent/AgentMemoryPanel.vue'
 import AgentMessageList from '@/components/agent/AgentMessageList.vue'
@@ -224,7 +219,7 @@ import AgentTaskBoard from '@/components/agent/AgentTaskBoard.vue'
 import AgentToolbar from '@/components/agent/AgentToolbar.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
-import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
@@ -487,14 +482,24 @@ const currentModelBadges = computed(() => [
   ...getModelLimitLabels(currentModelMeta.value?.limits)
 ])
 const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
+const currentAgentTypeLabel = computed(() => currentAgent.value?.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent')
 const currentContextSummary = computed(() => {
   if (!currentContextMetrics.value) {
     return '待装配'
   }
 
-  const selected = currentContextMetrics.value.selectedContextTokens || 0
   const estimated = currentContextMetrics.value.estimatedInputTokens || 0
-  return estimated > 0 ? `${selected}/${estimated}` : `${selected}`
+  const maxContext = currentContextMetrics.value.modelMaxContextTokens || 0
+  return maxContext > 0
+    ? `${formatCompactTokenCount(estimated)} / ${formatCompactTokenCount(maxContext)}`
+    : formatCompactTokenCount(estimated)
+})
+const currentOutputSummary = computed(() => {
+  if (!currentContextMetrics.value?.maxOutputTokens) {
+    return '待装配'
+  }
+
+  return formatCompactTokenCount(currentContextMetrics.value.maxOutputTokens)
 })
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
@@ -1014,15 +1019,17 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 
 <style scoped>
 .agent-view {
-  --agent-accent: #5b8cff;
+  --agent-accent: var(--primary);
   display: grid;
   gap: 8px;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   padding: 4px;
   border-radius: 18px;
   border: 1px solid rgba(100, 116, 139, 0.22);
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 18%),
+    radial-gradient(circle at top left, color-mix(in srgb, var(--agent-accent) 14%, transparent), transparent 18%),
     radial-gradient(circle at top right, rgba(15, 23, 42, 0.06), transparent 22%),
     linear-gradient(180deg, rgba(239, 244, 250, 0.98), rgba(219, 228, 240, 0.97));
   box-shadow:
@@ -1046,7 +1053,7 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 .agent-hero {
   align-items: center;
   background:
-    radial-gradient(circle at top right, rgba(91, 140, 255, 0.18), transparent 26%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--agent-accent) 22%, transparent), transparent 26%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(237, 243, 249, 0.92));
   display: flex;
   gap: 8px;
@@ -1157,9 +1164,9 @@ h1 {
 }
 
 .mode-pill.active {
-  background: linear-gradient(135deg, rgba(91, 140, 255, 0.2), rgba(191, 219, 254, 0.48));
-  color: #1e3a8a;
-  border-color: rgba(91, 140, 255, 0.22);
+  background: color-mix(in srgb, var(--agent-accent) 18%, rgba(255, 255, 255, 0.9));
+  color: color-mix(in srgb, var(--agent-accent) 82%, #334155 18%);
+  border-color: color-mix(in srgb, var(--agent-accent) 28%, rgba(148, 163, 184, 0.24));
 }
 
 .hero-link {
@@ -1231,6 +1238,7 @@ h1 {
   grid-template-columns: var(--agent-sidebar-width) var(--agent-sidebar-splitter) minmax(0, 1fr);
   gap: 6px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .agent-sidebar,
@@ -1275,7 +1283,7 @@ h1 {
 
 .sidebar-tab.active {
   background: color-mix(in srgb, var(--agent-accent) 24%, rgba(255, 255, 255, 0.05));
-  box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.18);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agent-accent) 26%, rgba(255, 255, 255, 0.12));
   color: var(--text-primary);
 }
 
@@ -1336,7 +1344,8 @@ h1 {
 
 .agent-center {
   grid-column: 3;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .agent-warning {
@@ -1433,14 +1442,12 @@ h1 {
 :deep(.agent-task-board),
 :deep(.agent-toolbar),
 :deep(.agent-message-list),
-:deep(.agent-input-bar),
-:deep(.agent-context-bar) {
+:deep(.agent-input-bar) {
   border-radius: 12px;
 }
 
 :deep(.agent-message-list),
-:deep(.agent-input-bar),
-:deep(.agent-context-bar) {
+:deep(.agent-input-bar) {
   box-shadow: none;
 }
 
@@ -1451,8 +1458,7 @@ h1 {
 :deep(.agent-resources-panel),
 :deep(.agent-task-board),
 :deep(.agent-message-list),
-:deep(.agent-input-bar),
-:deep(.agent-context-bar) {
+:deep(.agent-input-bar) {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.95));
   border: 1px solid rgba(100, 116, 139, 0.18);
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
@@ -1488,8 +1494,8 @@ h1 {
 
 :deep(.agent-session-list .session-card.active) {
   background: linear-gradient(180deg, rgba(224, 234, 255, 0.96), rgba(239, 246, 255, 0.92));
-  border-color: rgba(91, 140, 255, 0.26);
-  box-shadow: 0 10px 18px rgba(59, 130, 246, 0.12);
+  border-color: color-mix(in srgb, var(--agent-accent) 28%, rgba(148, 163, 184, 0.22));
+  box-shadow: 0 10px 18px color-mix(in srgb, var(--agent-accent) 16%, rgba(15, 23, 42, 0.08));
 }
 
 :deep(.agent-message-list .session-summary) {
@@ -1558,18 +1564,6 @@ h1 {
 
 :deep(.agent-profile-panel .field textarea) {
   min-height: 118px;
-}
-
-:deep(.agent-context-bar) {
-  grid-template-columns: minmax(0, 1.1fr) minmax(120px, 1fr) auto;
-  padding: 7px 9px;
-  gap: 6px;
-}
-
-:deep(.agent-context-bar .stat-pill),
-:deep(.agent-context-bar .context-label),
-:deep(.agent-context-bar .context-sub) {
-  font-size: 10px;
 }
 
 @media (max-width: 1280px) {

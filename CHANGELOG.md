@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.0.2 - 2026-03-14
+
+- 收口 Agent / IDE / Sub2API 三条主工作流的布局与滚动行为：沉浸式页面改为内部面板滚动，避免整页下滑；`/ai` 去掉底部重复上下文条，`/ide` 继续对齐左侧 Explorer、左下 MCP、中央 Editor、底部 Runtime、右侧 Inspector 的桌面 IDE 结构。
+- Agent 角色体系升级为“功能型 / 情绪型”双轨：功能型角色会在能力边界内优先执行用户明确指令；情绪型角色新增隐藏心情值并用于语气调节，但不会因为人设而偏离任务。会话与消息区统一显示角色名，不再回退成泛化 `AI` 标签，Live2D 仅保留为作用域标签。
+- Sub2API 本地一键启动与接入链路补强：桌面运行时健康检查在 `/health` 失败时会自动回退探测 `/setup/status`，并在启动 / 重启后继续自动同步本地专属 Key、初始化状态与模型目录，减少“服务已起但页面仍显示失败”的假阴性。
+- AI / Sub2API 模型能力展示口径统一：模型限制统一显示为“总上下文 / 最大输出”，并使用 `k` / `m` 紧凑单位；Agent 顶部工作台、AI 设置、对话页、悬浮窗、IDE Agent 与 Sub2API 模型目录都共用同一套限制标签。
+- 发布前验证已覆盖真实 Electron 与 Sub2API 契约：本轮通过 `npm.cmd run build`、`npm.cmd run smoke:routes`、`npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide --route=/sub2api` 与 `npm.cmd run check:sub2api`，确认桌面渲染、主路由和 Sub2API 核心 API 契约均正常。
+
 - 工作台视觉对比度继续收口：`App.vue`、`IDEView.vue` 与 `AgentView.vue` 统一收紧 immersive 背景、卡片边界、阴影和页内工具条层级，最新 Electron 截图已经能更稳定地区分工作台外壳、面板主体和页内导航锚点。
 - 消息区与终端可读性继续提升：`AgentMessageList.vue` 抬高了 session-ready、消息卡片、标签、代码片段和附件卡片的对比度；`IDETerminal.vue` 同步增强了摘要胶囊、运行状态、标签卡和脚本芯片；`IDEAssistantPanel.vue` 也去掉了临时重复的 sessions 状态胶囊。
 - 真实 Electron 视图再次复测通过：本轮重新执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui`，确认这次对比度与正文可读性调整没有破坏 `/ai` 与 `/ide` 的工作台布局和主路由可达性。
@@ -44,6 +52,11 @@
 - Agent 工作台重构第一轮：`/ai` 已改成左侧本地功能侧栏 + 中央对话区结构，页内侧栏可切换会话、角色、长期记忆与任务，新增 `AgentMemoryPanel.vue` 让长期记忆可见、可编辑、可删除。
 - Electron 打包链路补强：`electron-builder.config.cjs` 新增 `node_modules/node-pty/**/*` 的 `asarUnpack`，配合此前对 `node-pty` 的外置，继续收口 IDE 终端在打包态下的 `conpty.node` 加载风险。
 - 这轮已完成前端专项巡检：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 通过；当前仍缺真实 Electron 视图人工回归，以及本机 Chrome `exit code 13` 导致的 Playwright 浏览器自动化缺口。
+
+## 3.0.1 - 2026-03-14
+
+- 发布 3.0.1 安装包：基于当前工作台 UI 与 Electron 回归链的最新修整结果重新构建桌面产物，用于继续验证 `/ai`、`/ide`、终端与多面板工作台的实际桌面表现。
+- 工作台可读性修整纳入版本发布：这一版聚焦沉浸式背景、面板层级、消息区可读性、终端状态可见性和真实 Electron 截图回归，不引入新的主功能分支，重点是把 3.0 主工作流继续打磨到更稳定可测的状态。
 
 ## 3.0.0 - 2026-03-14
 

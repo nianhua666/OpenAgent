@@ -22,6 +22,8 @@
       </div>
     </section>
 
+    <div class="sub2api-scroll">
+
     <section v-if="showConfigSection" class="section glass-panel">
       <div class="section-head">
         <div>
@@ -684,6 +686,7 @@
       <div class="empty-title">未找到匹配的 Sub2API 设置项</div>
       <div class="empty-desc">请尝试搜索路由、模型、Codex、Responses 或网关等关键词。</div>
     </div>
+    </div>
   </div>
 </template>
 
@@ -927,7 +930,17 @@ const runtimeStatusLabel = computed(() => {
       return '未启动'
   }
 })
-const runtimeHealthLabel = computed(() => runtimeState.value.healthy ? '健康检查通过' : runtimeState.value.healthMessage || '等待启动')
+const runtimeHealthLabel = computed(() => {
+  if (runtimeState.value.healthy) {
+    return '网关在线'
+  }
+
+  if (runtimeState.value.status === 'running') {
+    return runtimeState.value.healthMessage || '进程已启动，等待初始化'
+  }
+
+  return runtimeState.value.healthMessage || '等待启动'
+})
 const runtimeLogPreviewText = computed(() => runtimeState.value.logs.slice(-12).join('\n'))
 const canStopRuntime = computed(() => runtimeState.value.status === 'running' || runtimeState.value.status === 'starting')
 const startRuntimeLabel = computed(() => runtimeState.value.status === 'missing-binary' ? '补齐二进制后启动' : '启动本地网关')
@@ -1262,9 +1275,33 @@ async function toggleDesktopAutoStart() {
   showToast('success', desktopAutoStart.value ? '已启用 Sub2API 桌面网关自启动' : '已关闭 Sub2API 桌面网关自启动')
 }
 
+async function syncDesktopRuntimeContext() {
+  try {
+    const diagnostics = await sub2ApiStore.inspectDesktopSetup()
+    if (diagnostics.status.reachable && diagnostics.status.needsSetup === false && !sub2ApiStore.config.apiKey.trim()) {
+      try {
+        await sub2ApiStore.ensureDesktopAccess()
+      } catch {
+        // 初始化未完成或后台尚未准备好时，保持诊断结果即可，不阻断启动流程。
+      }
+    }
+
+    if (sub2ApiStore.configured) {
+      try {
+        await sub2ApiStore.refreshModels(activeMode.value)
+      } catch {
+        // 模型目录读取失败不阻断启动，只保留运行时和诊断状态。
+      }
+    }
+  } catch {
+    // 启动成功但后台尚未返回 setup 诊断时，不阻断主流程。
+  }
+}
+
 async function startDesktopRuntime() {
   try {
     await sub2ApiStore.startDesktopRuntime()
+    await syncDesktopRuntimeContext()
     showToast(runtimeState.value.healthy ? 'success' : 'info', runtimeState.value.healthy ? '本地 Sub2API 网关已启动' : runtimeState.value.healthMessage || '本地网关进程已启动')
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '本地网关启动失败')
@@ -1283,6 +1320,7 @@ async function stopDesktopRuntime() {
 async function restartDesktopRuntime() {
   try {
     await sub2ApiStore.restartDesktopRuntime()
+    await syncDesktopRuntimeContext()
     showToast(runtimeState.value.healthy ? 'success' : 'info', runtimeState.value.healthy ? '本地 Sub2API 网关已重启' : runtimeState.value.healthMessage || '本地网关已重启')
   } catch (error) {
     showToast('error', error instanceof Error ? error.message : '本地网关重启失败')
@@ -1473,8 +1511,22 @@ async function copyText(text: string, label: string) {
 
 <style lang="scss" scoped>
 .sub2api-page {
+  --sub2api-accent: color-mix(in srgb, var(--primary) 78%, #f59e0b 22%);
+  --sub2api-accent-soft: color-mix(in srgb, var(--primary) 12%, rgba(255, 255, 255, 0.72));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  gap: 18px;
+}
+
+.sub2api-scroll {
   display: grid;
   gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .page-hero,
@@ -1506,8 +1558,8 @@ async function copyText(text: string, label: string) {
   width: fit-content;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(18, 85, 92, 0.12);
-  color: #12555c;
+  background: color-mix(in srgb, var(--sub2api-accent) 14%, rgba(255, 255, 255, 0.7));
+  color: color-mix(in srgb, var(--sub2api-accent) 82%, #4b5563 18%);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1526,7 +1578,7 @@ async function copyText(text: string, label: string) {
   gap: 6px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(18, 85, 92, 0.1);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 12%, rgba(255, 255, 255, 0.52));
   background: rgba(255, 255, 255, 0.62);
 
   span {
@@ -1884,7 +1936,7 @@ async function copyText(text: string, label: string) {
   gap: 14px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(18, 85, 92, 0.1);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 12%, rgba(255, 255, 255, 0.48));
   background: rgba(255, 255, 255, 0.56);
 
   summary {
@@ -1927,7 +1979,7 @@ async function copyText(text: string, label: string) {
   gap: 6px;
   padding: 14px;
   border-radius: 16px;
-  border: 1px solid rgba(18, 85, 92, 0.1);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 12%, rgba(255, 255, 255, 0.48));
   background: rgba(255, 255, 255, 0.72);
 
   strong {
@@ -1958,7 +2010,7 @@ async function copyText(text: string, label: string) {
   gap: 6px;
   padding: 14px;
   border-radius: 16px;
-  border: 1px solid rgba(18, 85, 92, 0.1);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 12%, rgba(255, 255, 255, 0.48));
   background: rgba(255, 255, 255, 0.68);
 
   strong {
@@ -1998,7 +2050,7 @@ async function copyText(text: string, label: string) {
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(18, 85, 92, 0.14);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 16%, rgba(255, 255, 255, 0.48));
   background: rgba(255, 255, 255, 0.62);
   text-align: left;
   cursor: pointer;
@@ -2017,13 +2069,13 @@ async function copyText(text: string, label: string) {
 
   &:hover {
     transform: translateY(-1px);
-    border-color: rgba(18, 85, 92, 0.28);
+    border-color: color-mix(in srgb, var(--sub2api-accent) 32%, rgba(255, 255, 255, 0.36));
     box-shadow: $shadow-card;
   }
 
   &.active {
-    border-color: rgba(18, 85, 92, 0.28);
-    background: linear-gradient(135deg, rgba(255, 249, 234, 0.85), rgba(222, 243, 236, 0.82));
+    border-color: color-mix(in srgb, var(--sub2api-accent) 34%, rgba(255, 255, 255, 0.34));
+    background: linear-gradient(135deg, color-mix(in srgb, var(--sub2api-accent) 10%, rgba(255, 249, 234, 0.92)), rgba(255, 255, 255, 0.84));
   }
 }
 
@@ -2043,8 +2095,8 @@ async function copyText(text: string, label: string) {
 
 .provider-card-tag,
 .route-pill {
-  background: rgba(18, 85, 92, 0.08);
-  color: #12555c;
+  background: color-mix(in srgb, var(--sub2api-accent) 10%, rgba(255, 255, 255, 0.72));
+  color: color-mix(in srgb, var(--sub2api-accent) 84%, #4b5563 16%);
 }
 
 .route-pill {
@@ -2064,11 +2116,11 @@ async function copyText(text: string, label: string) {
 .status-chip {
   background: rgba(255, 255, 255, 0.62);
   color: var(--text-secondary);
-  border: 1px solid rgba(18, 85, 92, 0.08);
+  border: 1px solid color-mix(in srgb, var(--sub2api-accent) 10%, rgba(255, 255, 255, 0.46));
 
   &.is-accent {
-    color: #12555c;
-    background: rgba(221, 243, 236, 0.88);
+    color: color-mix(in srgb, var(--sub2api-accent) 84%, #4b5563 16%);
+    background: color-mix(in srgb, var(--sub2api-accent) 12%, rgba(255, 255, 255, 0.86));
   }
 
   &.is-warning {

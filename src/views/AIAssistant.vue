@@ -101,9 +101,9 @@
                   <span v-for="badge in currentModelBadges" :key="badge" class="control-badge">{{ badge }}</span>
                 </div>
                 <div v-if="currentContextMetrics" class="context-status-bar">
-                  <span>上下文 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }} / {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }}</span>
-                  <span>模型上限 {{ formatTokenCount(currentContextMetrics.modelMaxContextTokens) }}</span>
-                  <span>输出上限 {{ formatTokenCount(currentContextMetrics.maxOutputTokens) }}</span>
+                  <span>总上下文 {{ formatTokenCount(currentContextMetrics.selectedContextTokens) }} / {{ formatTokenCount(currentContextMetrics.modelMaxContextTokens) }}</span>
+                  <span>当前装配 {{ formatTokenCount(currentContextMetrics.estimatedInputTokens) }}</span>
+                  <span>最大输出 {{ formatTokenCount(currentContextMetrics.maxOutputTokens) }}</span>
                   <span v-if="currentContextMetrics.compressionCount > 0">已压缩 {{ currentContextMetrics.compressionCount }} 次</span>
                   <span v-if="aiStore.runtime.phase === 'compressing'">压缩中</span>
                 </div>
@@ -208,7 +208,7 @@
               </template>
 
               <div v-if="aiStore.streaming" class="detail-msg is-assistant is-streaming">
-                <div class="msg-role-badge is-assistant">AI</div>
+                <div class="msg-role-badge is-assistant">{{ currentAgent?.name || 'Agent' }}</div>
                 <div class="msg-text">
                   <div v-html="renderRichTextContent(streamingContent)"></div>
                   <details v-if="streamingReasoningContent" class="msg-reasoning is-live" open>
@@ -253,7 +253,7 @@
                   ref="inputRef"
                   v-model="inputText"
                   class="chat-input"
-                  :placeholder="aiStore.streaming ? 'AI 正在回复中...' : '输入消息或直接附加图片，Enter 发送，Shift+Enter 换行'"
+                  :placeholder="aiStore.streaming ? `${currentAgent?.name || '当前角色'} 正在回复中...` : '输入消息或直接附加图片，Enter 发送，Shift+Enter 换行'"
                   rows="1"
                   @keydown="handleKeydown"
                   @paste="handleComposerPaste"
@@ -405,7 +405,7 @@ import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
-import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
@@ -465,6 +465,7 @@ const combinedSessions = computed<SessionListItem[]>(() => {
   return [...normalizedLive2D, ...normalizedMain]
 })
 const currentSession = computed(() => selectedSessionId.value ? aiStore.getSessionById(selectedSessionId.value) : null)
+const currentAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : aiStore.getSelectedAgent(selectedScope.value))
 const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || selectedScope.value))
 const currentTask = computed(() => currentSession.value ? aiStore.getLatestTaskForSession(currentSession.value.id) : null)
 const streamingContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.content : ''))
@@ -545,7 +546,7 @@ const sendButtonDisabled = computed(() => {
 const roleLabelMap: Record<string, string> = {
   system: '系统',
   user: '用户',
-  assistant: 'AI',
+  assistant: 'Agent',
   tool: '工具'
 }
 
@@ -557,6 +558,10 @@ const categoryLabelMap: Record<string, string> = {
 }
 
 function roleLabel(role: string) {
+  if (role === 'assistant') {
+    return currentAgent.value?.name || 'Agent'
+  }
+
   return roleLabelMap[role] || role
 }
 
@@ -843,7 +848,7 @@ function stopCurrentRun() {
 }
 
 function formatTokenCount(value: number) {
-  return value.toLocaleString()
+  return formatCompactTokenCount(value)
 }
 
 function formatAttachmentMeta(attachment: AIChatAttachment) {

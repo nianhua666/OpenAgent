@@ -319,7 +319,7 @@
             readonly
             disabled
           />
-          <span class="field-tip">当前始终锁定为 {{ formatTokenCount(resolvedTokenLimits.selectedContextTokens) }}，会随模型能力自动拉满，不再手动配置。</span>
+          <span class="field-tip">当前始终锁定为总上下文 {{ formatTokenCount(resolvedTokenLimits.selectedContextTokens) }}，会随模型能力自动拉满，不再手动配置。</span>
         </div>
       </div>
 
@@ -338,7 +338,7 @@
             step="256"
             @change="handleMaxTokensChange(($event.target as HTMLInputElement).value)"
           />
-          <span class="field-tip">当前选择 {{ formatTokenCount(resolvedTokenLimits.maxOutputTokens) }}，模型上限 {{ formatTokenCount(selectedAiModelLimits.maxOutputTokens) }}。</span>
+          <span class="field-tip">当前最大输出 {{ formatTokenCount(resolvedTokenLimits.maxOutputTokens) }}，模型最大输出 {{ formatTokenCount(selectedAiModelLimits.maxOutputTokens) }}。</span>
         </div>
       </div>
 
@@ -671,7 +671,7 @@ import { useAIResourcesStore } from '@/stores/aiResources'
 import { useAIStore } from '@/stores/ai'
 import { useSub2ApiStore } from '@/stores/sub2api'
 import { useSettingsStore } from '@/stores/settings'
-import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
+import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { matchesSearchQuery, normalizeSearchQuery } from '@/utils/search'
 import {
   SUB2API_GATEWAY_PLACEHOLDER,
@@ -1635,7 +1635,7 @@ function handleMaxTokensChange(rawValue: string) {
 }
 
 function formatTokenCount(value: number) {
-  return `${Math.max(value, 0).toLocaleString()} tokens`
+  return formatCompactTokenCount(value)
 }
 
 async function saveAIConfigNow() {

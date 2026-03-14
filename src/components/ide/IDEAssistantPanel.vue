@@ -38,6 +38,7 @@
       :playing-message-id="playingMessageId"
       :starter-prompts="starterPrompts"
       :show-voice-actions="showVoiceActions"
+      :assistant-label="currentAgent?.name || 'Agent'"
       @apply-prompt="applyStarterPrompt"
       @play-message="playAssistantMessage"
     />
@@ -76,7 +77,7 @@ import AgentInputBar from '@/components/agent/AgentInputBar.vue'
 import AgentMessageList from '@/components/agent/AgentMessageList.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
-import { fetchAvailableModels, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
@@ -168,8 +169,10 @@ const contextSummary = computed(() => {
   }
 
   const estimated = currentContextMetrics.value.estimatedInputTokens || 0
-  const selected = currentContextMetrics.value.selectedContextTokens || 0
-  return `${selected}/${estimated}`
+  const maxContext = currentContextMetrics.value.modelMaxContextTokens || 0
+  return maxContext > 0
+    ? `${formatCompactTokenCount(estimated)} / ${formatCompactTokenCount(maxContext)}`
+    : formatCompactTokenCount(estimated)
 })
 const runtimeStatusLabel = computed(() => {
   if (loadingAiModels.value) {
@@ -207,22 +210,22 @@ const runtimeStatusTone = computed(() => {
 })
 const runtimeStatusText = computed(() => {
   if (loadingAiModels.value) {
-    return 'Syncing'
+    return '模型同步中'
   }
 
   if (!runtimeConfigReady.value) {
-    return 'Needs Config'
+    return '待补齐配置'
   }
 
   if (modelLoadError.value) {
-    return 'Model Sync Failed'
+    return '模型同步失败'
   }
 
   if (!runtimeAiConfig.value.model.trim()) {
-    return 'Select Model'
+    return '待选择模型'
   }
 
-  return aiStore.streaming ? 'Responding' : 'Ready'
+  return aiStore.streaming ? '对话进行中' : '已就绪'
 })
 
 watch(() => aiStore.runtime.sessionId, () => {
@@ -385,6 +388,7 @@ function openAgentView() {
   gap: $spacing-sm;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
+  overflow: hidden;
   padding: 10px;
 }
 
