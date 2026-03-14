@@ -174,19 +174,40 @@
                       {{ roleLabel(msg.role) }}
                     </div>
                     <div class="msg-text">
-                      <div v-html="renderRichTextContent(msg.content)"></div>
-                      <div v-if="canPlayAssistantReply(msg)" class="msg-inline-actions">
-                        <button class="voice-btn" :class="{ active: playingMessageId === msg.id }" @click="playAssistantMessage(msg)">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polygon points="5 3 19 12 5 21 5 3"/>
-                          </svg>
-                          <span>{{ playingMessageId === msg.id ? '播放中' : '播放语音' }}</span>
-                        </button>
-                      </div>
-                      <details v-if="msg.reasoningContent" class="msg-reasoning">
-                        <summary>模型思考过程</summary>
-                        <div v-html="renderRichTextContent(msg.reasoningContent)"></div>
-                      </details>
+                      <template v-if="isActivityMessage(msg)">
+                        <div class="activity-card" :class="`is-${getActivityDisplay(msg)?.tone || 'info'}`">
+                          <div class="activity-head">
+                            <div class="activity-copy">
+                              <p class="activity-title">{{ getActivityDisplay(msg)?.title }}</p>
+                              <p class="activity-summary">{{ getActivityDisplay(msg)?.summary }}</p>
+                            </div>
+                            <div class="activity-badges">
+                              <span v-for="badge in getActivityDisplay(msg)?.badges || []" :key="`${msg.id}-${badge}`" class="activity-badge">
+                                {{ badge }}
+                              </span>
+                            </div>
+                          </div>
+                          <details v-if="getActivityDisplay(msg)?.details" class="activity-details">
+                            <summary>查看详情</summary>
+                            <pre class="activity-pre">{{ getActivityDisplay(msg)?.details }}</pre>
+                          </details>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div v-html="renderRichTextContent(msg.content)"></div>
+                        <div v-if="canPlayAssistantReply(msg)" class="msg-inline-actions">
+                          <button class="voice-btn" :class="{ active: playingMessageId === msg.id }" @click="playAssistantMessage(msg)">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                            <span>{{ playingMessageId === msg.id ? '播放中' : '播放语音' }}</span>
+                          </button>
+                        </div>
+                        <details v-if="msg.reasoningContent" class="msg-reasoning">
+                          <summary>模型思考过程</summary>
+                          <div v-html="renderRichTextContent(msg.reasoningContent)"></div>
+                        </details>
+                      </template>
                       <div v-if="msg.attachments?.length" class="msg-attachment-grid">
                         <button v-for="attachment in msg.attachments" :key="attachment.id" class="msg-attachment-card" @click="openAttachmentPreview(attachment)">
                           <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="msg-attachment-image" />
@@ -196,9 +217,26 @@
                       </div>
                       <div v-if="msg.toolCalls?.length" class="msg-tool-list">
                         <div v-for="tc in msg.toolCalls" :key="tc.id" class="tool-item">
-                          <span class="tool-name">{{ tc.name }}</span>
-                          <code class="tool-args">{{ tc.arguments }}</code>
-                          <div v-if="tc.result" class="tool-result">{{ tc.result }}</div>
+                          <div class="tool-item-head">
+                            <span class="tool-name">{{ tc.name }}</span>
+                            <div class="activity-badges">
+                              <span v-for="badge in getToolDisplay(tc).badges" :key="`${tc.id}-${badge}`" class="activity-badge">
+                                {{ badge }}
+                              </span>
+                            </div>
+                          </div>
+                          <p class="tool-summary">{{ getToolDisplay(tc).summary }}</p>
+                          <details v-if="tc.arguments || getToolDisplay(tc).details" class="tool-details">
+                            <summary>查看工具详情</summary>
+                            <div v-if="tc.arguments" class="tool-detail-block">
+                              <span class="tool-detail-label">参数</span>
+                              <code class="tool-args">{{ tc.arguments }}</code>
+                            </div>
+                            <div v-if="getToolDisplay(tc).details" class="tool-detail-block">
+                              <span class="tool-detail-label">结果</span>
+                              <pre class="activity-pre">{{ getToolDisplay(tc).details }}</pre>
+                            </div>
+                          </details>
                         </div>
                       </div>
                     </div>
@@ -399,13 +437,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel } from '@/types'
+import type { AIActivityDisplay } from '@/utils/aiMessagePresentation'
+import type { AIMemoryEntry, AIChatAttachment, AIChatMessage, AIChatSession, AIConversationScope, AIProviderModel, AIToolCall } from '@/types'
 import AttachmentPreviewDialog from '@/components/AttachmentPreviewDialog.vue'
 import Sub2ApiAgentBridge from '@/components/Sub2ApiAgentBridge.vue'
 import { useAIStore } from '@/stores/ai'
 import { useSettingsStore } from '@/stores/settings'
 import { cancelConversationRun, createAttachmentsFromFiles, startConversationTurn } from '@/utils/aiConversation'
 import { fetchAvailableModels, formatCompactTokenCount, getModelCapabilityLabels, getModelLimitLabels, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits } from '@/utils/ai'
+import { getActivityMessageDisplay, getToolCallDisplay } from '@/utils/aiMessagePresentation'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { playTextToSpeech, stopTTSPlayback } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
@@ -563,6 +603,18 @@ function roleLabel(role: string) {
   }
 
   return roleLabelMap[role] || role
+}
+
+function isActivityMessage(message: AIChatMessage) {
+  return message.role === 'system' || message.role === 'tool'
+}
+
+function getActivityDisplay(message: AIChatMessage): AIActivityDisplay | null {
+  return getActivityMessageDisplay(message)
+}
+
+function getToolDisplay(toolCall: AIToolCall) {
+  return getToolCallDisplay(toolCall)
 }
 
 function categoryLabel(category: string) {
@@ -1959,15 +2011,122 @@ onBeforeUnmount(() => {
 }
 
 .tool-item {
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: rgba(140, 120, 255, 0.06);
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(248, 250, 252, 0.92);
   font-size: 11px;
+}
+
+.activity-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.activity-card.is-success {
+  border-color: rgba(34, 197, 94, 0.2);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-card.is-warning {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-card.is-danger {
+  border-color: rgba(239, 68, 68, 0.2);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-head,
+.tool-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activity-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.activity-summary,
+.tool-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.activity-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.activity-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(226, 232, 240, 0.84);
+  color: #334155;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.activity-details,
+.tool-details {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-details summary,
+.tool-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.activity-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .tool-name {
   font-weight: 600;
   color: #5540a0;
+}
+
+.tool-detail-block {
+  display: grid;
+  gap: 6px;
+}
+
+.tool-detail-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .tool-args {
@@ -1979,14 +2138,6 @@ onBeforeUnmount(() => {
   font-size: 10px;
   word-break: break-all;
   line-height: 1.4;
-}
-
-.tool-result {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .chat-composer {

@@ -287,6 +287,8 @@
 - 2026-03-14 空态前端首屏已收口：`/ide` 在未绑定工作区时会显示完整的 Explorer / MCP / Editor / Runtime / Inspector 预览骨架，`/ai` 在已有会话但没有消息时会显示 session-ready 卡片与建议起手 prompt；这两处修正后，Electron 截图不再被大片空白占满，更适合继续做视觉回归和后续抛光。
 - 2026-03-14 Chrome 自动化阻塞进一步确认：`npm.cmd run check:chrome-automation` 再次验证 plain / remote-debugging / temp-profile 三种启动方式均立即退出并返回 `exit code 13`，当前浏览器自动化缺口应继续按“本机 Chrome 环境问题”处理，而不是继续误判为 OpenAgent 页面或预览服务异常。
 - 2026-03-14 工作台视觉层级继续收口：最新 Electron 截图已经能看到 `/ai` 与 `/ide` 的背景、面板边界、当前面板选中态和页内导航锚点明显强于上一轮；当前前端剩余问题已从“大结构失真”收敛为更细的文本对比、卡片内容权重和空态文案抛光。
+- 2026-03-14 经典 `/ai` 页面对齐：`AIAssistant.vue` 现已接入与 Agent / IDE 相同的活动卡片展示层，系统自检、工具结果与原始回包默认改成紧凑摘要 + 折叠详情，避免旧页面继续把原始日志整段刷进消息流，破坏测试与回归体验。
+- 2026-03-14 3.0.3 打包准备：版本号已提升到 `3.0.3`，当前变更聚焦于工具回合消息收口和经典页展示统一；本轮将以新的桌面安装包继续验证 `/ai`、`/ide` 与工具执行链的一致性。
 - 2026-03-14 Agent / IDE / Sub2API 工作台联调收口：`AgentView.vue` 去掉底部重复上下文条，顶部统一显示总上下文与最大输出；`AgentMessageList.vue` 与 `AgentSessionList.vue` 改为优先显示角色名，Live2D 会话只保留作用域标签；`App.vue`、`IDEView.vue` 与 `Sub2ApiSettings.vue` 继续收口为面板内部滚动，避免沉浸式页面整页下滑。
 - 2026-03-14 Agent 角色策略升级：`stores/ai.ts`、`aiPrompts.ts` 与 `AgentProfileManager.vue` 新增功能型 / 情绪型角色定义；功能型角色在能力边界内必须优先执行用户明确指令，情绪型角色新增隐藏心情值用于语气调节，但不会因为人设偏离任务目标。
 - 2026-03-14 Sub2API 本地接入修正：`electron/sub2apiRuntime.ts` 在 `/health` 不可用时会自动回退探测 `/setup/status`；`Sub2ApiSettings.vue` 的本地启动 / 重启链路会在运行时拉起后继续同步本地专属 Key、初始化状态与模型目录，减少桌面模式下的误报与手工跳转成本。
