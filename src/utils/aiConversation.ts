@@ -5,6 +5,7 @@ import { executeToolCall } from '@/utils/aiTools'
 import { genId } from '@/utils/helpers'
 import { shouldCreateSnapshot, createLocalContextSnapshot } from '@/utils/aiContextEngine'
 import { flushPlanToWorkspace } from '@/utils/aiPlanEngine'
+import { compactToolResultForConversation } from '@/utils/aiMessagePresentation'
 
 export interface AIConversationHooks {
   onStream: (content: string) => void
@@ -497,7 +498,10 @@ function getLatestMeaningfulUserMessage(sessionId: string) {
 function summarizeToolCallsForReview(toolCalls: AIToolCall[]) {
   return toolCalls.map((toolCall, index) => {
     const argumentsText = truncateReviewText(toolCall.arguments, 900)
-    const resultText = truncateReviewText(toolCall.result, 1600)
+    const rawResult = typeof toolCall.providerMetadata?.rawContent === 'string'
+      ? toolCall.providerMetadata.rawContent
+      : toolCall.result
+    const resultText = truncateReviewText(rawResult, 1600)
     return [
       `工具 ${index + 1}: ${toolCall.name}`,
       `参数: ${argumentsText || '无'}`,
@@ -507,14 +511,16 @@ function summarizeToolCallsForReview(toolCalls: AIToolCall[]) {
 }
 
 function buildToolRoundReviewSystemMessage(review: ToolRoundReview) {
-  return [
-    '[工具回合自检]',
-    `是否推进: ${review.progressed ? '是' : '否'}`,
-    `决策: ${review.decision}`,
-    `摘要: ${review.summary || '无'}`,
-    `原因: ${review.reason || '无'}`,
-    `下一步要求: ${review.nextAction || '根据当前信息谨慎继续'}`
-  ].join('\n')
+  const progressLabel = review.progressed ? '已推进' : '未推进'
+  const decisionLabel = review.decision === 'complete'
+    ? '完成'
+    : review.decision === 'pause'
+      ? '暂停'
+      : review.decision === 'replan'
+        ? '改计划'
+        : '继续'
+
+  return `工具回合自检：${progressLabel}，${decisionLabel}。${truncateReviewText(review.summary, 180) || '已记录当前回合状态。'}`
 }
 
 function createFallbackToolRoundReview(toolCalls: AIToolCall[]): ToolRoundReview {
@@ -950,15 +956,23 @@ async function executeToolLoop(
 
     try {
       const result = await executeToolCall(toolCall, { sessionId })
-      const toolResultContent = result.output || (result.error ? `{"success":false,"message":"${result.error}"}` : '')
-      toolCall.result = toolResultContent
+      const rawToolResultContent = result.output || (result.error ? `{"success":false,"message":"${result.error}"}` : '')
+      const compactedToolResult = compactToolResultForConversation(toolCall.name, rawToolResultContent)
+      toolCall.result = compactedToolResult.content
+      toolCall.providerMetadata = {
+        ...(toolCall.providerMetadata ?? {}),
+        ...(compactedToolResult.rawContent ? { rawContent: compactedToolResult.rawContent } : {})
+      }
 
       aiStore.addMessage(sessionId, {
         role: 'tool',
-        content: toolResultContent,
+        content: compactedToolResult.content,
         toolCallId: toolCall.id,
         toolName: toolCall.name,
-        attachments: result.attachments
+        attachments: result.attachments,
+        providerMetadata: {
+          ...(compactedToolResult.rawContent ? { rawContent: compactedToolResult.rawContent } : {})
+        }
       })
 
       if (result.attachments?.length) {
@@ -970,12 +984,25 @@ async function executeToolLoop(
       }
     } catch (error) {
       const message = toToolFailureMessage(error)
-      toolCall.result = `工具执行异常: ${message}`
+      const rawFailureContent = JSON.stringify({
+        success: false,
+        message: `工具执行异常: ${message}`
+      })
+      const compactedFailure = compactToolResultForConversation(toolCall.name, rawFailureContent)
+      toolCall.result = compactedFailure.content
+      toolCall.providerMetadata = {
+        ...(toolCall.providerMetadata ?? {}),
+        ...(compactedFailure.rawContent ? { rawContent: compactedFailure.rawContent } : {})
+      }
       aiStore.addMessage(sessionId, {
         role: 'tool',
-        content: `工具执行异常: ${message}`,
+        content: compactedFailure.content,
         toolCallId: toolCall.id,
-        toolName: toolCall.name
+        toolName: toolCall.name,
+        providerMetadata: {
+          ...(compactedFailure.rawContent ? { rawContent: compactedFailure.rawContent } : {}),
+          error: message
+        }
       })
     }
   }
@@ -1231,7 +1258,10 @@ export async function runAIResponseLoop(
       })
       aiStore.addMessage(sessionId, {
         role: 'system',
-        content: buildToolRoundReviewSystemMessage(toolRoundReview)
+        content: buildToolRoundReviewSystemMessage(toolRoundReview),
+        providerMetadata: {
+          toolRoundReview
+        }
       })
       await notifyUpdate(hooks)
 
@@ -1264,7 +1294,16 @@ export async function runAIResponseLoop(
         if (toolRoundReview.decision === 'replan' && identicalToolExecutionCount === MAX_IDENTICAL_TOOL_EXECUTIONS) {
           aiStore.addMessage(sessionId, {
             role: 'system',
-            content: '[工具回合自检]\n检测到相同工具结果连续出现。下一轮必须调整计划、补充验证或停止执行，禁止再次原样重复调用同一组工具。'
+            content: '工具回合守卫：检测到相同工具结果连续出现，下一轮必须调整计划或补充验证，不能继续原样重复调用。',
+            providerMetadata: {
+              toolRoundReview: {
+                progressed: false,
+                decision: 'replan',
+                summary: '检测到相同工具结果连续出现，下一轮必须调整计划或补充验证。',
+                reason: '连续回合返回了同一组工具结果，继续原样执行只会重复消耗上下文与接口请求。',
+                nextAction: '先基于当前结果总结状态，再切换验证方式、补充读取证据或改计划。'
+              }
+            }
           })
           await notifyUpdate(hooks)
           continue

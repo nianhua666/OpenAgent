@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 修复工具回合“下一步”阶段的上下文污染：`aiConversation.ts` 现在会把工具结果压缩后再写回会话，把原始 JSON / 日志保留在 metadata 中供界面按需展开；`stores/ai.ts` 也会在任务摘要落库前先做清洗，避免嵌套 JSON 摘要反复注入后续请求。
+- Agent / IDE 会话区改成紧凑活动卡片：`AgentMessageList.vue` 不再把系统自检、工具结果和大段原始输出整块铺在消息流中，而是默认显示“结论 / 状态 / 下一步”，详细参数与原始结果按需折叠展开；`IDEAssistantPanel.vue` 复用同一展示并修复了运行态“会话”标签乱码。
+- OpenAI / Responses 请求链路新增一次轻量 upstream 重试：对 `502/503/504` 且错误文本包含 `upstream / gateway / timeout` 的场景，会先做一次短等待后重试原组合，降低供应商瞬时波动直接打断工具回合的概率。
+
 ## 3.0.2 - 2026-03-14
 
 - 收口 Agent / IDE / Sub2API 三条主工作流的布局与滚动行为：沉浸式页面改为内部面板滚动，避免整页下滑；`/ai` 去掉底部重复上下文条，`/ide` 继续对齐左侧 Explorer、左下 MCP、中央 Editor、底部 Runtime、右侧 Inspector 的桌面 IDE 结构。

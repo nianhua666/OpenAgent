@@ -23,7 +23,7 @@
       <span class="runtime-pill">角色 {{ currentAgent?.name || '未选择' }}</span>
       <span class="runtime-pill">模型 {{ currentModelLabel }}</span>
       <span class="runtime-pill">上下文 {{ contextSummary }}</span>
-      <span class="runtime-pill">浼氳瘽 {{ sessions.length }}</span>
+      <span class="runtime-pill">会话 {{ sessions.length }}</span>
       <span v-for="badge in currentModelBadges" :key="badge" class="runtime-pill">{{ badge }}</span>
       <span v-if="modelLoadError" class="runtime-pill is-error">{{ modelLoadError }}</span>
     </div>
@@ -173,25 +173,6 @@ const contextSummary = computed(() => {
   return maxContext > 0
     ? `${formatCompactTokenCount(estimated)} / ${formatCompactTokenCount(maxContext)}`
     : formatCompactTokenCount(estimated)
-})
-const runtimeStatusLabel = computed(() => {
-  if (loadingAiModels.value) {
-    return '姝ｅ湪鍚屾'
-  }
-
-  if (!runtimeConfigReady.value) {
-    return '寰呰ˉ榻愰厤缃?'
-  }
-
-  if (modelLoadError.value) {
-    return '妯″瀷鍚屾澶辫触'
-  }
-
-  if (!runtimeAiConfig.value.model.trim()) {
-    return '寰呴€夋嫨妯″瀷'
-  }
-
-  return aiStore.streaming ? '姝ｅ湪鍥炲簲' : '宸插氨缁?'
 })
 const runtimeStatusTone = computed(() => {
   if (loadingAiModels.value || aiStore.streaming) {

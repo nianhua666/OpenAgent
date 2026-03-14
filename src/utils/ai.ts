@@ -1705,6 +1705,15 @@ function shouldRetryWithoutThinking(status: number, errorText: string) {
     && /thinking|reasoning|reasoning_effort|budget_tokens|unsupported/i.test(errorText)
 }
 
+function shouldRetryTransientUpstream(status: number, errorText: string) {
+  return [502, 503, 504].includes(status)
+    && /upstream|bad gateway|gateway|timeout|temporar|overload|server/i.test(errorText)
+}
+
+function waitForRetry(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 async function requestOpenAICompatible(
   config: AIConfig,
   stream: boolean,
@@ -1716,14 +1725,16 @@ async function requestOpenAICompatible(
   const protocol = resolveConfigProtocol(config)
   const url = normalizeChatUrl(config.baseUrl, protocol)
   const allowTools = options?.includeTools !== false
-  const queue: Array<{ includeTools: boolean; includeThinking: boolean }> = [{ includeTools: allowTools, includeThinking: true }]
+  const queue: Array<{ includeTools: boolean; includeThinking: boolean; transientRetryCount: number }> = [
+    { includeTools: allowTools, includeThinking: true, transientRetryCount: 0 }
+  ]
   const attempted = new Set<string>()
   let lastErrorText = ''
   let lastStatus = 500
 
   while (queue.length > 0) {
     const attempt = queue.shift()!
-    const attemptKey = `${attempt.includeTools}-${attempt.includeThinking}`
+    const attemptKey = `${attempt.includeTools}-${attempt.includeThinking}-${attempt.transientRetryCount}`
     if (attempted.has(attemptKey)) {
       continue
     }
@@ -1743,12 +1754,22 @@ async function requestOpenAICompatible(
     lastStatus = response.status
     lastErrorText = await response.text()
 
+    if (shouldRetryTransientUpstream(response.status, lastErrorText) && attempt.transientRetryCount < 1) {
+      await waitForRetry(250)
+      queue.unshift({
+        includeTools: attempt.includeTools,
+        includeThinking: attempt.includeThinking,
+        transientRetryCount: attempt.transientRetryCount + 1
+      })
+      continue
+    }
+
     if (allowTools && attempt.includeTools && shouldRetryWithoutTools(protocol, response.status, lastErrorText)) {
-      queue.push({ includeTools: false, includeThinking: attempt.includeThinking })
+      queue.push({ includeTools: false, includeThinking: attempt.includeThinking, transientRetryCount: 0 })
     }
 
     if (attempt.includeThinking && shouldRetryWithoutThinking(response.status, lastErrorText)) {
-      queue.push({ includeTools: attempt.includeTools, includeThinking: false })
+      queue.push({ includeTools: attempt.includeTools, includeThinking: false, transientRetryCount: 0 })
     }
   }
 
@@ -1770,14 +1791,16 @@ async function requestOpenAIResponses(
 ) {
   const url = normalizeResponsesUrl(config.baseUrl)
   const allowTools = options?.includeTools !== false
-  const queue: Array<{ includeTools: boolean; includeThinking: boolean }> = [{ includeTools: allowTools, includeThinking: true }]
+  const queue: Array<{ includeTools: boolean; includeThinking: boolean; transientRetryCount: number }> = [
+    { includeTools: allowTools, includeThinking: true, transientRetryCount: 0 }
+  ]
   const attempted = new Set<string>()
   let lastErrorText = ''
   let lastStatus = 500
 
   while (queue.length > 0) {
     const attempt = queue.shift()!
-    const attemptKey = `${attempt.includeTools}-${attempt.includeThinking}`
+    const attemptKey = `${attempt.includeTools}-${attempt.includeThinking}-${attempt.transientRetryCount}`
     if (attempted.has(attemptKey)) {
       continue
     }
@@ -1797,12 +1820,22 @@ async function requestOpenAIResponses(
     lastStatus = response.status
     lastErrorText = await response.text()
 
+    if (shouldRetryTransientUpstream(response.status, lastErrorText) && attempt.transientRetryCount < 1) {
+      await waitForRetry(250)
+      queue.unshift({
+        includeTools: attempt.includeTools,
+        includeThinking: attempt.includeThinking,
+        transientRetryCount: attempt.transientRetryCount + 1
+      })
+      continue
+    }
+
     if (allowTools && attempt.includeTools && shouldRetryWithoutTools('openai', response.status, lastErrorText)) {
-      queue.push({ includeTools: false, includeThinking: attempt.includeThinking })
+      queue.push({ includeTools: false, includeThinking: attempt.includeThinking, transientRetryCount: 0 })
     }
 
     if (attempt.includeThinking && shouldRetryWithoutThinking(response.status, lastErrorText)) {
-      queue.push({ includeTools: attempt.includeTools, includeThinking: false })
+      queue.push({ includeTools: attempt.includeTools, includeThinking: false, transientRetryCount: 0 })
     }
   }
 

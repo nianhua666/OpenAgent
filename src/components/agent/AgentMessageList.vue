@@ -50,19 +50,41 @@
         <article v-for="message in session.messages" :key="message.id" class="message-card" :class="`is-${message.role}`">
           <div class="message-role">{{ roleLabel(message.role) }}</div>
           <div class="message-body">
-            <div class="message-content" v-html="renderMarkdown(message.content)"></div>
-            <button
-              v-if="canPlayAssistantReply(message)"
-              class="voice-btn"
-              :class="{ active: playingMessageId === message.id }"
-              @click="$emit('play-message', message)"
-            >
-              {{ playingMessageId === message.id ? '播放中' : '播放语音' }}
-            </button>
-            <details v-if="message.reasoningContent" class="message-reasoning">
-              <summary>模型思考过程</summary>
-              <div v-html="renderMarkdown(message.reasoningContent)"></div>
-            </details>
+            <template v-if="isActivityMessage(message)">
+              <div class="activity-card" :class="`is-${getActivityDisplay(message)?.tone || 'info'}`">
+                <div class="activity-head">
+                  <div class="activity-copy">
+                    <p class="activity-title">{{ getActivityDisplay(message)?.title }}</p>
+                    <p class="activity-summary">{{ getActivityDisplay(message)?.summary }}</p>
+                  </div>
+                  <div class="activity-badges">
+                    <span v-for="badge in getActivityDisplay(message)?.badges || []" :key="`${message.id}-${badge}`" class="activity-badge">
+                      {{ badge }}
+                    </span>
+                  </div>
+                </div>
+                <details v-if="getActivityDisplay(message)?.details" class="activity-details">
+                  <summary>查看详情</summary>
+                  <pre class="activity-pre">{{ getActivityDisplay(message)?.details }}</pre>
+                </details>
+              </div>
+            </template>
+            <template v-else>
+              <div class="message-content" v-html="renderMarkdown(message.content)"></div>
+              <button
+                v-if="canPlayAssistantReply(message)"
+                class="voice-btn"
+                :class="{ active: playingMessageId === message.id }"
+                @click="$emit('play-message', message)"
+              >
+                {{ playingMessageId === message.id ? '播放中' : '播放语音' }}
+              </button>
+              <details v-if="message.reasoningContent" class="message-reasoning">
+                <summary>模型思考过程</summary>
+                <div v-html="renderMarkdown(message.reasoningContent)"></div>
+              </details>
+            </template>
+
             <div v-if="message.attachments?.length" class="attachment-grid">
               <div v-for="attachment in message.attachments" :key="attachment.id" class="attachment-card">
                 <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="attachment-image" />
@@ -70,11 +92,29 @@
                 <strong>{{ attachment.name }}</strong>
               </div>
             </div>
+
             <div v-if="message.toolCalls?.length" class="tool-list">
               <div v-for="toolCall in message.toolCalls" :key="toolCall.id" class="tool-item">
-                <span class="tool-name">{{ toolCall.name }}</span>
-                <code class="tool-args">{{ toolCall.arguments }}</code>
-                <div v-if="toolCall.result" class="tool-result">{{ toolCall.result }}</div>
+                <div class="tool-item-head">
+                  <span class="tool-name">{{ toolCall.name }}</span>
+                  <div class="activity-badges">
+                    <span v-for="badge in getToolDisplay(toolCall).badges" :key="`${toolCall.id}-${badge}`" class="activity-badge">
+                      {{ badge }}
+                    </span>
+                  </div>
+                </div>
+                <p class="tool-summary">{{ getToolDisplay(toolCall).summary }}</p>
+                <details v-if="toolCall.arguments || getToolDisplay(toolCall).details" class="tool-details">
+                  <summary>查看工具详情</summary>
+                  <div v-if="toolCall.arguments" class="tool-detail-block">
+                    <span class="tool-detail-label">参数</span>
+                    <code class="tool-args">{{ toolCall.arguments }}</code>
+                  </div>
+                  <div v-if="getToolDisplay(toolCall).details" class="tool-detail-block">
+                    <span class="tool-detail-label">结果</span>
+                    <pre class="activity-pre">{{ getToolDisplay(toolCall).details }}</pre>
+                  </div>
+                </details>
               </div>
             </div>
           </div>
@@ -104,8 +144,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import dayjs from 'dayjs'
-import type { AIChatMessage, AIChatSession } from '@/types'
+import type { AIActivityDisplay } from '@/utils/aiMessagePresentation'
+import type { AIChatMessage, AIChatSession, AIToolCall } from '@/types'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
+import { getActivityMessageDisplay, getToolCallDisplay } from '@/utils/aiMessagePresentation'
 import { useAIStore } from '@/stores/ai'
 
 const props = defineProps<{
@@ -170,6 +212,18 @@ function displaySessionTitle(session: AIChatSession) {
 
 function canPlayAssistantReply(message: AIChatMessage) {
   return props.showVoiceActions && message.role === 'assistant' && !!message.content.trim()
+}
+
+function isActivityMessage(message: AIChatMessage) {
+  return message.role === 'system' || message.role === 'tool'
+}
+
+function getActivityDisplay(message: AIChatMessage): AIActivityDisplay | null {
+  return getActivityMessageDisplay(message)
+}
+
+function getToolDisplay(toolCall: AIToolCall) {
+  return getToolCallDisplay(toolCall)
 }
 
 function renderMarkdown(content: string) {
@@ -266,7 +320,8 @@ p {
 
 .empty-copy,
 .session-summary p,
-.tool-result {
+.tool-summary,
+.activity-summary {
   color: #475569;
   line-height: 1.55;
 }
@@ -318,8 +373,7 @@ p {
 }
 
 .session-summary,
-.message-card,
-.tool-item {
+.message-card {
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 14px;
@@ -355,6 +409,93 @@ p {
 .message-body {
   display: grid;
   gap: 10px;
+}
+
+.activity-card,
+.tool-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.activity-card.is-success {
+  border-color: rgba(34, 197, 94, 0.2);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-card.is-warning {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-card.is-danger {
+  border-color: rgba(239, 68, 68, 0.2);
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.92), rgba(248, 250, 252, 0.96));
+}
+
+.activity-head,
+.tool-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activity-title {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.activity-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.activity-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #334155;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.activity-details,
+.tool-details {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-details summary,
+.tool-details summary {
+  cursor: pointer;
+  color: #475569;
+  font-size: 11px;
+}
+
+.activity-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .message-content :deep(code),
@@ -424,12 +565,23 @@ p {
 
 .tool-name {
   color: #9a3412;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .tool-list {
   gap: 8px;
+}
+
+.tool-detail-block {
+  display: grid;
+  gap: 6px;
+}
+
+.tool-detail-label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .streaming-indicator {
@@ -479,6 +631,15 @@ p {
 
   .message-time {
     justify-self: end;
+  }
+
+  .activity-head,
+  .tool-item-head {
+    flex-direction: column;
+  }
+
+  .activity-badges {
+    justify-content: flex-start;
   }
 }
 </style>

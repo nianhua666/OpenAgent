@@ -96,12 +96,14 @@
 | 9.6 | 重构 Agent 为多层级工作台：左侧角色列表 / 会话，顶部工作台动作按钮，中央消息区，侧边抽屉承载角色配置 / 记忆 / MCP / Skill | 进行中 | `src/views/AgentView.vue`, `src/components/agent/*`, `src/stores/ai.ts` |
 | 9.7 | 统一 IDE / Agent 信息密度与可拖拽面板行为，避免“卡片堆叠式页面”继续侵入工作台视图 | 进行中 | `src/views/AgentView.vue`, `src/views/IDEView.vue`, `src/components/ide/*`, `src/components/agent/*` |
 | 9.8 | 做一轮前端专项巡检：验证主要页面可测试、可滚动、可收缩、可切换，补齐任务文档与变更日志 | 进行中 | `docs/tasks/TASKS.md`, `CHANGELOG.md`, `/ai`, `/ide`, `/ai-overlay` |
+| 9.9 | 修复工具回合“下一步”触发的上下文污染与 502 风险：压缩工具结果 / 自检消息写入，改造 Agent / IDE 会话为紧凑活动卡片，避免原始 JSON 与系统日志整段刷屏 | 已完成 | `src/utils/aiConversation.ts`, `src/utils/aiMessagePresentation.ts`, `src/stores/ai.ts`, `src/components/agent/AgentMessageList.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/utils/ai.ts` |
 
 ---
 
 ## 当前剩余缺口
 
 - Prompt 工程与命令执行链路已经按最新要求收口：运行时系统 Prompt、`aiPrompts.ts`、`ide_run_command` 工具声明与 Windows MCP 原始命令入口现在都改为“允许执行命令，但默认先说明目标、影响范围与回退方式”，不再使用命令黑名单或前置危险命令拦截；主进程仍会在命令长时间无输出、检测到交互式提示或超时后自动停止，并把触发停机的提示行与系统说明一并回传，工具层也保留输出头尾，减少“最后的报错被截掉、模型误判卡住原因”的问题。当前剩余工作主要是继续通过真实 TUI / 长命令人工回归观察自动停机阈值是否合适，以及继续细磨 Prompt 让模型在高影响命令前更稳定地先解释风险。
+- 工具回合“下一步”链路这一轮已确认并修复一类真实问题：工具执行后的原始 JSON 结果、任务摘要回包与“工具回合自检”系统消息过去会原样写回会话，再被下一轮 `Responses` 请求重新注入上下文，导致请求体被无意义的工具日志膨胀，并在部分接口上复现 `502 upstream_error`。当前版本已改为把工具结果压缩成紧凑结构、把原始输出仅保留在消息元数据中供前端按需展开，同时把自检消息改成单行摘要 + 结构化 metadata，并为 `502/503/504 upstream` 增加一次轻量瞬时重试。剩余工作主要是继续观察真实长任务、复杂工具链和经典 `/ai` 兼容页是否还存在零散的原始日志刷屏点。
 - IDE 终端与上下文压缩这轮继续做了“长时间运行防卡死”收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使退出事件丢失也能按快照收口；对于重复循环输出、长时间无输出、交互式提示和超时都会给出系统心跳或自动停机说明，命令若正常结束但无标准输出也会显式回传“已结束、无输出”，避免模型把“安静结束”误判成“仍在卡住”。上下文压缩则改为输出结构化 handoff 摘要，快照会记录消息锚点、最近工具、来源和已覆盖消息数，减少因只按创建时间增量切片而漏掉新消息的问题。当前剩余风险主要集中在真实 Electron 终端下 `vim` / `top` / watch 类命令的长时间人工回归，以及更深层的前后台自治调度协同。
 - IDE 模式现在已经支持多工作区并行管理：每个工作区在创建时都会先选择项目根目录，再选择独立的基础产物目录；工作区会持久化自己的数据目录、产物目录、最近打开时间、编辑会话与计划链路，切换工作区时也会独立恢复对应的编辑现场。当前剩余工作主要集中在继续补强“跨工作区复制 / 迁移提示、工作区级终端与计划资源占用观测、长时间后台连续运行”这类深水区体验，而不是基础多工作区骨架缺失。
 - Agent 模式现在已补齐“按角色覆盖运行参数”的主链路：每个角色都可以独立设定默认模型、温度与默认产物目录，主窗口 `/ai`、兼容入口 `/ai/classic` 与悬浮对话窗都会按当前角色的有效模型运行；角色切换模型后也会联动重新计算推荐自动步数。当前剩余工作主要是继续补“角色级温度 / 模型参数的更细粒度可视化、角色长期记忆管理面板、真正的一体化图片生成产物流”，而不是运行参数仍停留在全局配置。
@@ -144,6 +146,9 @@
 | 2026-03-14 | code | Phase 9 前端工作台重构：`IDEView` 已重排为资源管理器 / MCP / 编辑器 / 终端 / 右侧 Inspector 骨架，并补上左右列与终端高度拖拽状态。 |
 | 2026-03-14 | code | Phase 9 前端工作台重构：`AgentView` 已切为左侧本地工作台侧栏 + 中央视图，角色 / 会话 / 长期记忆 / 任务切换改为页内侧栏标签，新增 `AgentMemoryPanel.vue`。 |
 | 2026-03-14 | build | Phase 9 巡检：`npm.cmd run build` 与 `npm.cmd run smoke:routes` 均通过；`electron-builder.config.cjs` 已补 `asarUnpack` 以收口 `node-pty` 打包态加载链路。 |
+| 2026-03-14 | fix | Phase 9 工具回合 502 收口：定位到 `aiConversation.ts` 会把完整工具结果与“工具回合自检”整段写回会话，导致下一轮请求上下文被 JSON / 日志污染；现已改为压缩写入、原始结果转入 metadata，并为 `Responses` 的 502/503/504 upstream 错误增加一次轻量重试。 |
+| 2026-03-14 | ui | Phase 9 会话区收口：`AgentMessageList.vue` 改为把系统消息 / 工具结果渲染为紧凑活动卡片，工具调用参数和原始结果默认折叠展示；`IDEAssistantPanel.vue` 复用同一组件，并顺手修复了运行态“会话”标签乱码。 |
+| 2026-03-14 | test | Phase 9 工具回合收口验证：`npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide` 均通过，确认新消息压缩层和活动卡片展示没有破坏 `/ai`、`/ide` 主界面。 |
 | 2026-03-14 | code | Phase 9 前端精修第二轮：`IDEActivityBar.vue` 新增资源 / 终端 / Inspector 面板显隐开关，`IDEView.vue` 新增顶部 workbench 工具条、折叠态持久化与更紧凑的骨架变量，继续向可收纳工作台收口。 |
 | 2026-03-14 | code | Phase 9 前端精修第二轮：`AgentView.vue` 新增页内工作台条、侧栏折叠与持久化；`AgentToolbar.vue`、`AgentInputBar.vue`、`AgentSessionList.vue`、`AgentProfileManager.vue`、`AgentTaskBoard.vue` 收紧标题、卡片、按钮与表单密度，减少卡片堆叠感。 |
 | 2026-03-14 | build | Phase 9 精修验证：全局设计令牌进一步下调后再次执行 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，主路由与工作台页面仍保持可构建、可访问。 |
@@ -287,3 +292,4 @@
 - 2026-03-14 Sub2API 本地接入修正：`electron/sub2apiRuntime.ts` 在 `/health` 不可用时会自动回退探测 `/setup/status`；`Sub2ApiSettings.vue` 的本地启动 / 重启链路会在运行时拉起后继续同步本地专属 Key、初始化状态与模型目录，减少桌面模式下的误报与手工跳转成本。
 - 2026-03-14 模型限制展示口径统一：`utils/ai.ts` 新增紧凑 token 格式化，`AISettings.vue`、`AIAssistant.vue`、`AIChatDialog.vue`、`AgentView.vue`、`IDEAssistantPanel.vue` 与 `TopBar.vue` 已统一改成“总上下文 / 最大输出”显示；`Sub2ApiSettings.vue` 中的模型目录标签也复用同一套限制文案。
 - 2026-03-14 发布前回归：再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes`、`npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide --route=/sub2api` 与 `npm.cmd run check:sub2api`，确认 `/ai`、`/ide`、`/sub2api` 真实 Electron 视图与 Sub2API 核心契约均正常；MCP / Playwright 浏览器链仍被本机 Chrome `exit code 13` 阻塞，继续按本机环境问题处理。
+- 2026-03-14 工具回合显示与上下文污染回归：当前已确认 `Agent / IDE` 主工作台里的系统自检与工具回包不再整段挤进会话区，默认改为紧凑活动卡片；同时工具结果与任务摘要不会再把原始嵌套 JSON 持续写回上下文，从而显著降低“刚执行完一步，下一轮就因上游 502 中断”的概率。

@@ -51,6 +51,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { APP_NAME } from '@/utils/appMeta'
 import { createContextMetrics, estimateMessageTokens, getRecommendedAutoSteps, inferModelCapabilities, inferModelLimits, resolveConfigTokenLimits } from '@/utils/ai'
 import { assembleContext } from '@/utils/aiContextEngine'
+import { sanitizeTaskSummaryForStorage } from '@/utils/aiMessagePresentation'
 
 // 默认系统提示词，约束AI行为
 const DEFAULT_SYSTEM_PROMPT = `你是「${APP_NAME}」的 Agent，内置于桌面应用「${APP_NAME}」。你的职责：
@@ -1911,7 +1912,9 @@ export const useAIStore = defineStore('ai', () => {
     if (existing && canReuseExistingTask) {
       existing.goal = nextGoal || existing.goal
       existing.status = payload.status || existing.status || 'running'
-      existing.summary = payload.summary?.trim() || existing.summary
+      existing.summary = payload.summary?.trim()
+        ? sanitizeTaskSummaryForStorage(payload.summary)
+        : existing.summary
       existing.steps = nextSteps ?? existing.steps
       existing.maxIterations = Math.max(payload.maxIterations ?? existing.maxIterations ?? preferences.value.maxAutoSteps, 0)
       existing.updatedAt = now
@@ -1925,7 +1928,7 @@ export const useAIStore = defineStore('ai', () => {
       goal: nextGoal,
       status: payload.status || 'planning',
       steps: nextSteps ?? [],
-      summary: payload.summary?.trim() || '',
+      summary: payload.summary?.trim() ? sanitizeTaskSummaryForStorage(payload.summary) : '',
       iterationCount: 0,
       maxIterations: Math.max(payload.maxIterations ?? preferences.value.maxAutoSteps, 0),
       createdAt: now,
@@ -1959,7 +1962,7 @@ export const useAIStore = defineStore('ai', () => {
 
     const nextSummary = payload.summary?.trim()
     if (nextSummary) {
-      task.summary = nextSummary
+      task.summary = sanitizeTaskSummaryForStorage(nextSummary)
     }
 
     if (payload.progressed) {
@@ -2005,7 +2008,7 @@ export const useAIStore = defineStore('ai', () => {
 
     finalizeAutoTaskSteps(task, 'completed')
     task.status = 'completed'
-    task.summary = summary.trim() || task.summary
+    task.summary = summary.trim() ? sanitizeTaskSummaryForStorage(summary) : task.summary
     task.completedAt = Date.now()
     task.updatedAt = task.completedAt
     scheduleSave('ai_tasks', tasks.value)
@@ -2025,7 +2028,7 @@ export const useAIStore = defineStore('ai', () => {
 
     finalizeAutoTaskSteps(task, 'blocked')
     task.status = 'blocked'
-    task.summary = summary.trim() || task.summary
+    task.summary = summary.trim() ? sanitizeTaskSummaryForStorage(summary) : task.summary
     task.updatedAt = Date.now()
     scheduleSave('ai_tasks', tasks.value)
     return task
