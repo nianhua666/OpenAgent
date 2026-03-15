@@ -279,10 +279,6 @@ watch(
     }
 
     await resetTerminalTabs()
-
-    if (nextPath) {
-      void ensureShellTab()
-    }
   },
 )
 
@@ -312,9 +308,6 @@ onMounted(() => {
     })
   }
 
-  if (props.workspacePath) {
-    void ensureShellTab()
-  }
 })
 
 onBeforeUnmount(() => {

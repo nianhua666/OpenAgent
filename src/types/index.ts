@@ -351,16 +351,18 @@ export interface AIModelCapabilities {
 
 export type AIThinkingLevel = 'off' | 'low' | 'medium' | 'high'
 
-export type AIConversationScope = 'main' | 'live2d'
+export type AIConversationScope = 'main' | 'live2d' | 'ide'
 
 export interface AIActiveSessions {
   main: string
   live2d: string
+  ide: string
 }
 
 export interface AISelectedAgents {
   main: string
   live2d: string
+  ide: string
 }
 
 export interface AIAgentCapabilitySettings {

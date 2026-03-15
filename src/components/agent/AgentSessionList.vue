@@ -25,7 +25,7 @@
       >
         <div class="session-card-head">
           <span class="session-title">{{ resolveSessionTitle(session) }}</span>
-          <span class="session-badge" :class="`is-${session.scope}`">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
+          <span class="session-badge" :class="`is-${session.scope}`">{{ scopeLabel(session.scope) }}</span>
         </div>
         <p class="session-agent">{{ resolveAgentName(session) }}</p>
         <p class="session-meta">{{ formatTime(session.updatedAt) }} · {{ session.messages.length }} 条消息</p>
@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import dayjs from 'dayjs'
-import type { AIChatSession } from '@/types'
+import type { AIChatSession, AIConversationScope } from '@/types'
 import { useAIStore } from '@/stores/ai'
 
 type SessionListItem = AIChatSession & {
@@ -94,6 +94,18 @@ function resolveSessionTitle(session: AIChatSession) {
   }
 
   return session.title
+}
+
+function scopeLabel(scope: AIConversationScope) {
+  if (scope === 'live2d') {
+    return 'Live2D'
+  }
+
+  if (scope === 'ide') {
+    return 'IDE'
+  }
+
+  return '主窗口'
 }
 </script>
 
@@ -170,6 +182,10 @@ h3 {
 .session-title {
   font-size: 13px;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-badge,
@@ -194,6 +210,11 @@ h3 {
   color: #ffd08a;
 }
 
+.session-badge.is-ide {
+  background: rgba(96, 165, 250, 0.16);
+  color: #2563eb;
+}
+
 .pin-tag {
   background: rgba(255, 196, 0, 0.14);
   color: #ffcf5c;
@@ -212,6 +233,14 @@ h3 {
 .session-agent {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.session-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .muted {

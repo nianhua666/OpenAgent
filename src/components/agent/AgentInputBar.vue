@@ -100,8 +100,8 @@ const emit = defineEmits<{
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
-const MIN_INPUT_HEIGHT = 48
-const MAX_INPUT_HEIGHT = 120
+const MIN_INPUT_HEIGHT = 44
+const MAX_INPUT_HEIGHT = 96
 const textareaHeight = ref(MIN_INPUT_HEIGHT)
 
 const effectiveSendDisabled = computed(() => (props.streaming ? false : props.sendDisabled))
@@ -186,8 +186,8 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .agent-input-bar {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
+  gap: 5px;
+  padding: 5px;
   justify-content: flex-start;
   min-height: fit-content;
   overflow: hidden;
@@ -282,8 +282,8 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .composer-shell {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 7px;
+  gap: 5px;
+  padding: 6px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.05);
@@ -320,7 +320,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .composer-send-btn {
   flex: 0 0 auto;
   min-width: 68px;
-  min-height: 44px;
+  min-height: 40px;
 }
 
 .send-btn.stop {
@@ -346,10 +346,10 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .message-input {
   align-self: stretch;
   flex: 1 1 auto;
-  min-height: 48px;
-  max-height: 120px;
+  min-height: 44px;
+  max-height: 96px;
   overflow: auto;
-  padding: 8px 10px;
+  padding: 7px 10px;
   resize: none;
   width: 100%;
   line-height: 1.55;
@@ -405,7 +405,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .control-select {
   min-width: 180px;
   flex: 1 1 220px;
-  max-width: min(320px, 48vw);
+  max-width: min(300px, 46vw);
 }
 
 @media (max-width: 960px) {

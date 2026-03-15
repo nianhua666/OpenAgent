@@ -2,8 +2,8 @@
   <section ref="scrollRef" class="agent-message-list glass-panel" @click="handleRichTextClick">
     <div v-if="!session" class="empty-state">
       <p class="empty-eyebrow">Ready</p>
-      <h3>当前角色等待任务</h3>
-      <p class="empty-copy">你可以让它先梳理需求、记录长期记忆、调用工具、直接控制软件或创建执行计划；Agent 模式不会继续派生子代理。</p>
+      <h3>{{ emptyStateTitle }}</h3>
+      <p class="empty-copy">{{ emptyStateDescription }}</p>
       <div class="starter-list">
         <button v-for="prompt in starterPrompts" :key="prompt" class="starter-btn" @click="$emit('apply-prompt', prompt)">
           {{ prompt }}
@@ -18,7 +18,7 @@
           <h3>{{ displaySessionTitle(session) }}</h3>
         </div>
         <div class="message-meta">
-          <span class="scope-badge" :class="`is-${session.scope}`">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
+          <span class="scope-badge" :class="`is-${session.scope}`">{{ scopeLabel(session.scope) }}</span>
           <span>{{ formatTime(session.createdAt) }}</span>
         </div>
       </div>
@@ -36,7 +36,7 @@
         </div>
         <div class="session-empty-meta">
           <span class="empty-fact">{{ displaySessionTitle(session) }}</span>
-          <span class="empty-fact">{{ session.scope === 'live2d' ? 'Live2D' : '主窗口' }}</span>
+          <span class="empty-fact">{{ scopeLabel(session.scope) }}</span>
           <span class="empty-fact">0 条消息</span>
         </div>
         <div class="starter-list">
@@ -142,10 +142,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 import type { AIActivityDisplay } from '@/utils/aiMessagePresentation'
-import type { AIChatMessage, AIChatSession, AIToolCall } from '@/types'
+import type { AIChatMessage, AIChatSession, AIToolCall, AIConversationScope } from '@/types'
 import { handleRichTextActivation, renderRichText as renderRichTextContent } from '@/utils/aiRichText'
 import { getActivityMessageDisplay, getToolCallDisplay } from '@/utils/aiMessagePresentation'
 import { useAIStore } from '@/stores/ai'
@@ -159,6 +159,7 @@ const props = defineProps<{
   starterPrompts: string[]
   showVoiceActions: boolean
   assistantLabel?: string
+  scopeHint?: AIConversationScope
 }>()
 
 defineEmits<{
@@ -168,6 +169,15 @@ defineEmits<{
 
 const scrollRef = ref<HTMLElement | null>(null)
 const aiStore = useAIStore()
+const resolvedScopeHint = computed(() => props.session?.scope || props.scopeHint || 'main')
+const emptyStateTitle = computed(() => resolvedScopeHint.value === 'ide' ? 'IDE 主Agent 等待任务' : '当前角色等待任务')
+const emptyStateDescription = computed(() => {
+  if (resolvedScopeHint.value === 'ide') {
+    return '你可以让 IDE 主Agent 先拆解工作区目标、创建计划、调度子代理并持续验证结果；IDE 会话不会复用 Agent 模式的人设和长期记忆。'
+  }
+
+  return '你可以让它先梳理需求、记录长期记忆、调用工具、直接控制软件或创建执行计划；Agent 模式不会继续派生子代理。'
+})
 
 defineExpose({
   scrollToBottom,
@@ -197,6 +207,18 @@ function roleLabel(role: AIChatMessage['role']) {
     tool: '工具',
   }
   return labels[role]
+}
+
+function scopeLabel(scope: AIConversationScope) {
+  if (scope === 'live2d') {
+    return 'Live2D'
+  }
+
+  if (scope === 'ide') {
+    return 'IDE'
+  }
+
+  return '主窗口'
 }
 
 function displaySessionTitle(session: AIChatSession) {
@@ -372,6 +394,11 @@ p {
 .scope-badge.is-main {
   background: rgba(254, 240, 138, 0.78);
   color: #854d0e;
+}
+
+.scope-badge.is-ide {
+  background: rgba(191, 219, 254, 0.82);
+  color: #1d4ed8;
 }
 
 .session-summary,

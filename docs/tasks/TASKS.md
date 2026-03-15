@@ -166,6 +166,9 @@
 | 2026-03-15 | code | Phase 9 情绪机制与长任务协议收口：新增 `agentMood.ts`，把情绪型 Agent 的隐藏心情值映射为五档心情带，并在 `stores/ai.ts` / `aiPrompts.ts` 中补齐“更自然的人情味表达 + 任务优先级不失控”的 Prompt 规则；`aiAutonomyScheduler.ts` / `aiPlanEngine.ts` / `IDEPlanPanel.vue` 则把 IDE 长任务推进统一到 `Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue` 的循环节律。 |
 | 2026-03-15 | fix | Phase 9 情绪链路补全：`AgentView.vue`、`AIChatDialog.vue` 与 `IDEAssistantPanel.vue` 的 TTS 播放现已接入心情带驱动，不再只读取角色静态 TTS 配置；情绪型 Agent 的心情变化会影响语气和播报风格，但不会覆盖执行用户明确需求的主目标。 |
 | 2026-03-15 | build | Phase 9 情绪机制与自治循环节律验证：执行 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，确认新增类型、自治状态字段、Prompt 收口和 TTS 心情映射未破坏主构建与关键路由。 |
+| 2026-03-15 | ui | Phase 9 深度前端精修：`AgentView.vue` 再次压缩顶部重复状态（会话域口径统一、长会话标题紧凑化、`hero` 摘要短句化）；`AgentSessionList.vue` 对标题与摘要增加截断策略，避免长摘要卡片继续吞掉左栏可操作空间。 |
+| 2026-03-15 | ui | Phase 9 深度前端精修：`IDEAssistantPanel.vue` 收敛运行徽标密度并为 runtime 条增加可滚动紧凑区，`IDEView.vue` 将右栏默认 / 最小宽度上调，降低 Inspector 窄栏下输入区和状态组件互相遮挡的问题。 |
+| 2026-03-15 | test | Phase 9 深度前端回归：再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai?panel=roles --route=/ide`，确认 Agent 顶部去重、角色编辑侧栏、IDE 右栏与底部输入区均保持可交互。 |
 | 2026-03-15 | polish | Phase 9 情绪链路一致性收口：`AIAssistant.vue` 现已接入 `resolveMoodAwareTtsOverrides`，经典页会沿用角色心情带播报；`AgentProfileManager.vue` 则补上心情带即时预览，方便调校情绪型角色的人情味与执行倾向。 |
 | 2026-03-14 | ui | Phase 9 会话区收口：`AgentMessageList.vue` 改为把系统消息 / 工具结果渲染为紧凑活动卡片，工具调用参数和原始结果默认折叠展示；`IDEAssistantPanel.vue` 复用同一组件，并顺手修复了运行态“会话”标签乱码。 |
 | 2026-03-14 | test | Phase 9 工具回合收口验证：`npm.cmd run build`、`npm.cmd run smoke:routes` 与 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ide` 均通过，确认新消息压缩层和活动卡片展示没有破坏 `/ai`、`/ide` 主界面。 |
@@ -275,6 +278,9 @@
 | 2026-03-15 | build | Phase 9 安装 / 数据目录保护后已通过 `npm.cmd run build` 与 `npm.cmd run smoke:routes`，确认主进程数据目录调整与设置页展示未破坏构建和主路由。 |
 | 2026-03-15 | code | Phase 9 Agent 工作台精修：`AgentView.vue` 压缩顶部重复信息，把角色类型留在头部摘要、把工作台条收口到会话域 / 会话标题 / 模型 / 消息数 / 上下文负载；`AgentInputBar.vue` 重构为统一底部 composer，发送、附件、截图、模型选择与步数控制收进同一块底部工作条。 |
 | 2026-03-15 | test | Phase 9 Agent 工作台精修验证：执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/settings`，确认 `/ai` 顶部信息密度与底部输入区在真实 Electron 截图下保持稳定，设置页安装 / 数据目录卡片仍可正常渲染。 |
+| 2026-03-15 | code | Phase 9 会话隔离与布局修正：`types/index.ts` / `stores/ai.ts` 新增独立 `ide` 会话域，`IDEAssistantPanel.vue` 改为只读取 IDE 会话与 IDE 主Agent，不再复用 `main` 会话；`AgentView.vue` / `AgentProfileManager.vue` / `AgentInputBar.vue` / `AgentMessageList.vue` 继续收紧高度链、左栏滚动链和底部 composer，修复会话增多后输入区被挤出视口、角色配置区保存按钮被遮挡的问题。 |
+| 2026-03-15 | code | Phase 9 IDE 右栏与终端收口：`IDEAssistantPanel.vue` 进一步压缩为窄栏专用布局，运行条只保留主Agent / 模型 / 上下文等必要信息；`IDETerminal.vue` 取消工作区打开后的自动 shell 启动，避免 IDE 一进入就额外拉起 PTY，降低首屏负担与“跑两下就断”的误判概率。 |
+| 2026-03-15 | test | Phase 9 会话隔离与布局回归：执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai?panel=roles --route=/ide`，确认 Agent 输入区重新贴底、角色编辑区恢复可操作，IDE 右侧已切换为独立 `IDE 对话`，并且 IDE 首屏不再默认自动创建交互终端。 |
 
 ## Latest Check
 
@@ -282,6 +288,9 @@
 - 2026-03-15 Gemini 原生产图回包检查：已确认问题不在前端渲染，而在 Gemini 原生请求未显式要求 `IMAGE` 模态。当前版本已在图片生成 / 编辑意图下补充 `responseModalities: ['TEXT', 'IMAGE']`，并保留既有 `inlineData -> assistant image attachment` 渲染链。
 - 2026-03-15 安装与数据目录检查：已确认安装版升级时，electron-builder 默认会从注册表读取上一版本 `InstallLocation` 并沿用旧安装目录；当前版本又把这条自定义安装脚本显式绑定进打包配置。主进程同时开始记住最近一次自动数据目录，避免重装后因为安装位置变化而把运行数据切到新的空目录。
 - 2026-03-15 Agent 工作台信息层级检查：顶部标题区与工作台条已拆成“角色摘要”和“运行摘要”两层，避免模型 / 会话 / 角色类型重复占两行；底部输入区已改成统一 composer，并在真实 Electron 截图中继续保持贴底，不再被空会话或短会话态拉出可视区。
+- 2026-03-15 Agent / IDE 会话隔离检查：`IDEAssistantPanel.vue` 已切换到独立 `ide` 会话域，IDE 对话不会再读写 `main` Agent 会话；同时 `stores/ai.ts` 对会话改绑角色增加了“仅空会话允许改绑”的底层限制，避免已有消息的会话被切换角色后造成记忆与人设错乱。
+- 2026-03-15 IDE 终端首屏检查：`IDETerminal.vue` 已取消工作区打开后的自动交互 shell 启动，真实 Electron 截图中 `/ide` 首屏不再默认创建终端会话；当前终端只会在用户手动新建或主Agent明确发起命令后启动，有助于减少首屏负担与误判性的“自动断开”现象。
+- 2026-03-15 角色编辑区滚动检查：`AgentProfileManager.vue` 已拆成“角色列表独立滚动 + 编辑表单独立滚动”双层结构，`/ai?panel=roles` 的真实 Electron 截图已确认保存按钮与表单底部区域重新进入可操作视口。
 - 2026-03-14 Agent 对话区锚点修正：`AgentView.vue` 已把会话壳层改成“消息区吃掉剩余高度、输入区固定停在底部”的结构，`AgentMessageList.vue` 同步压缩空会话态高度，`AgentInputBar.vue` 改为显式输入高度控制，避免空会话或长消息阶段把底部输入区继续往窗口外挤。
 - 2026-03-14 角色配置区遮挡修正：`AgentProfileManager.vue` 现已改成单独滚动的配置区，角色列表与编辑表单共用一个可滚动内容层，表单头部保持粘性；此前左侧角色设置下方被遮挡、滚不到底的问题已纳入本轮前端回归修复。
 - 2026-03-14 Agent 高度链二次收口：`AgentView.vue` 已把根布局从内容敏感的 grid 改成更稳定的纵向 flex，主区明确拆成“顶部状态 / 消息滚动层 / 底部输入条”三段；同时给 `AgentView`、消息区、输入条和侧栏面板统一补上 `box-sizing: border-box`，避免 `height: 100% + padding` 继续把底部输入区和侧栏内容挤出视口。

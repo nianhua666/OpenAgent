@@ -123,17 +123,21 @@ const MAX_SUMMARY_POINTS = 8
 // 自动保存防抖延迟
 const AUTOSAVE_DELAY = 500
 const AUTO_TASK_STEP_PREFIX = 'auto-step-'
+const CONVERSATION_SCOPES: AIConversationScope[] = ['main', 'live2d', 'ide']
 const DEFAULT_ACTIVE_SESSIONS: AIActiveSessions = {
   main: '',
-  live2d: ''
+  live2d: '',
+  ide: ''
 }
 
 const DEFAULT_SELECTED_AGENTS: AISelectedAgents = {
   main: 'agent-executor',
-  live2d: 'agent-xiaorou'
+  live2d: 'agent-xiaorou',
+  ide: 'agent-ide-master'
 }
 
 const LIVE2D_SESSION_BASE_TITLE = 'Live2D'
+const IDE_SESSION_BASE_TITLE = 'IDE 对话'
 
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let electronAIStoreSyncBound = false
@@ -211,6 +215,35 @@ function createBuiltinAgentProfiles(): AIAgentProfile[] {
       updatedAt: now
     },
     {
+      id: 'agent-ide-master',
+      name: 'IDE 主Agent',
+      description: 'IDE 模式专用主 Agent，负责规划长任务、分配子代理并持续验证工作区结果。',
+      systemPrompt: [
+        '你是 OpenAgent 的 IDE 主Agent。',
+        '你的职责是围绕当前工作区持续规划、执行、验证和记录开发任务，并在需要时调度子代理协作。',
+        '你必须优先保持工作区上下文完整，不要借用主窗口 Agent 会话的人设、记忆或闲聊语气。',
+        'IDE 模式允许你创建和分配子代理，但只有你可以发起委派；子代理绝不能继续创建代理。',
+        '执行风格要求：以结果、验证、回读和开发效率为先，避免无关寒暄。'
+      ].join('\n'),
+      personaType: 'functional',
+      capabilities: createDefaultAgentCapabilities({
+        conversationOnly: false,
+        memoryEnabled: true,
+        fileControlEnabled: true,
+        softwareControlEnabled: true,
+        mcpEnabled: true,
+        skillEnabled: true,
+      }),
+      temperature: 0.15,
+      tts: {
+        emotionStyle: 'assistant',
+        emotionIntensity: 1
+      },
+      isBuiltin: true,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
       id: 'agent-xiaorou',
       name: '小柔',
       description: 'Live2D / 悬浮窗默认角色。语气活泼温柔，支持中英双语，默认开启长期记忆与软件协作。',
@@ -266,11 +299,19 @@ function buildDefaultSessionTitle(scope: AIConversationScope, existingSessions: 
     return `${LIVE2D_SESSION_BASE_TITLE} ${index}`
   }
 
+  if (scope === 'ide') {
+    return `${IDE_SESSION_BASE_TITLE} ${existingSessions.length + 1}`
+  }
+
   return `对话 ${existingSessions.length + 1}`
 }
 
 function normalizeConversationScope(scope: string | undefined): AIConversationScope {
-  return scope === 'live2d' ? 'live2d' : 'main'
+  if (scope === 'live2d' || scope === 'ide') {
+    return scope
+  }
+
+  return 'main'
 }
 
 function normalizeActiveSessions(data: Partial<AIActiveSessions> | string | null | undefined) {
@@ -283,14 +324,16 @@ function normalizeActiveSessions(data: Partial<AIActiveSessions> | string | null
 
   return {
     main: typeof data?.main === 'string' ? data.main : '',
-    live2d: typeof data?.live2d === 'string' ? data.live2d : ''
+    live2d: typeof data?.live2d === 'string' ? data.live2d : '',
+    ide: typeof data?.ide === 'string' ? data.ide : ''
   }
 }
 
 function normalizeSelectedAgents(data: Partial<AISelectedAgents> | null | undefined) {
   return {
     main: typeof data?.main === 'string' ? data.main : DEFAULT_SELECTED_AGENTS.main,
-    live2d: typeof data?.live2d === 'string' ? data.live2d : DEFAULT_SELECTED_AGENTS.live2d
+    live2d: typeof data?.live2d === 'string' ? data.live2d : DEFAULT_SELECTED_AGENTS.live2d,
+    ide: typeof data?.ide === 'string' ? data.ide : DEFAULT_SELECTED_AGENTS.ide
   }
 }
 
@@ -1219,14 +1262,18 @@ export const useAIStore = defineStore('ai', () => {
   }
 
   function getEffectiveConfig(target?: AIChatSession | string | AIConversationScope | null) {
-    const resolvedSession = typeof target === 'string'
+    const resolvedScope = typeof target === 'string' && CONVERSATION_SCOPES.includes(target as AIConversationScope)
+      ? target as AIConversationScope
+      : null
+    const resolvedSession = typeof target === 'string' && !resolvedScope
       ? getSessionById(target)
       : (target && typeof target === 'object' && 'messages' in target ? target as AIChatSession : null)
     const scope = resolvedSession?.scope
-      || (target === 'live2d' || target === 'main' ? target : agentMode.value === 'ide' ? 'main' : 'main')
+      || resolvedScope
+      || (agentMode.value === 'ide' ? 'ide' : 'main')
     const resolvedAgent = resolvedSession
       ? getSessionAgent(resolvedSession)
-      : (agentMode.value === 'agent' ? getSelectedAgent(scope) : null)
+      : getSelectedAgent(scope)
 
     const nextConfig: AIConfig = {
       ...config.value,
@@ -1360,7 +1407,8 @@ export const useAIStore = defineStore('ai', () => {
     memories.value = memories.value.map(memory => memory.agentId === agentId ? { ...memory, agentId: undefined } : memory)
     applySelectedAgentsSnapshot({
       main: selectedAgentIds.value.main === agentId ? DEFAULT_SELECTED_AGENTS.main : selectedAgentIds.value.main,
-      live2d: selectedAgentIds.value.live2d === agentId ? DEFAULT_SELECTED_AGENTS.live2d : selectedAgentIds.value.live2d
+      live2d: selectedAgentIds.value.live2d === agentId ? DEFAULT_SELECTED_AGENTS.live2d : selectedAgentIds.value.live2d,
+      ide: selectedAgentIds.value.ide === agentId ? DEFAULT_SELECTED_AGENTS.ide : selectedAgentIds.value.ide
     })
 
     await Promise.all([
@@ -1375,7 +1423,7 @@ export const useAIStore = defineStore('ai', () => {
   async function assignSessionAgent(sessionId: string, agentId: string) {
     const session = getSessionById(sessionId)
     const targetAgent = getAgentProfile(agentId)
-    if (!session || !targetAgent) {
+    if (!session || !targetAgent || session.messages.length > 0) {
       return null
     }
 
@@ -1396,7 +1444,7 @@ export const useAIStore = defineStore('ai', () => {
   function applySessionsSnapshot(snapshot: AIChatSession[] | null | undefined) {
     sessions.value = normalizeSessions(snapshot)
 
-    ;(['main', 'live2d'] as AIConversationScope[]).forEach(scope => {
+    CONVERSATION_SCOPES.forEach(scope => {
       const currentId = activeSessionIds.value[scope]
       if (currentId && !sessions.value.some(session => session.id === currentId && session.scope === scope)) {
         const fallbackSession = getSortedSessions(scope)[0]
@@ -1413,7 +1461,10 @@ export const useAIStore = defineStore('ai', () => {
         : getSortedSessions('main')[0]?.id ?? '',
       live2d: sessions.value.some(session => session.id === normalized.live2d && session.scope === 'live2d')
         ? normalized.live2d
-        : getSortedSessions('live2d')[0]?.id ?? ''
+        : getSortedSessions('live2d')[0]?.id ?? '',
+      ide: sessions.value.some(session => session.id === normalized.ide && session.scope === 'ide')
+        ? normalized.ide
+        : getSortedSessions('ide')[0]?.id ?? ''
     }
   }
 
@@ -1433,7 +1484,8 @@ export const useAIStore = defineStore('ai', () => {
     const normalized = normalizeSelectedAgents(snapshot)
     selectedAgentIds.value = {
       main: getAgentProfile(normalized.main) ? normalized.main : getAgentProfile(DEFAULT_SELECTED_AGENTS.main)?.id || agentProfiles.value[0]?.id || '',
-      live2d: getAgentProfile(normalized.live2d) ? normalized.live2d : getAgentProfile(DEFAULT_SELECTED_AGENTS.live2d)?.id || agentProfiles.value[0]?.id || ''
+      live2d: getAgentProfile(normalized.live2d) ? normalized.live2d : getAgentProfile(DEFAULT_SELECTED_AGENTS.live2d)?.id || agentProfiles.value[0]?.id || '',
+      ide: getAgentProfile(normalized.ide) ? normalized.ide : getAgentProfile(DEFAULT_SELECTED_AGENTS.ide)?.id || agentProfiles.value[0]?.id || ''
     }
   }
 
@@ -2030,14 +2082,6 @@ export const useAIStore = defineStore('ai', () => {
     const session = sessions.value.find(item => item.id === sessionId && (!scope || item.scope === scope))
     if (session) {
       setActiveSessionId(session.scope, sessionId)
-      const agentId = resolveSessionAgentId(session)
-      if (agentId) {
-        selectedAgentIds.value = {
-          ...selectedAgentIds.value,
-          [session.scope]: agentId
-        }
-        void saveData('ai_selected_agents', selectedAgentIds.value)
-      }
       persistActiveSessions()
     }
   }
@@ -2268,6 +2312,14 @@ export const useAIStore = defineStore('ai', () => {
     const basePrompt = config.value.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT
     const latestSnapshot = getLatestContextSnapshot(session.id)
     const sections: string[] = [basePrompt]
+    const scopeLabel = session.scope === 'live2d'
+      ? 'Live2D / 悬浮窗'
+      : session.scope === 'ide'
+        ? 'IDE 主Agent'
+        : '主窗口 Agent'
+    const delegationRule = session.scope === 'ide'
+      ? '- IDE 模式允许主Agent按计划创建和调度子代理，但只有主Agent可以创建、分配和回收子代理，子代理绝不能继续创建代理。'
+      : '- Agent 模式禁止创建、建议创建或调度子代理，也不要调用任何子代理相关工具。'
 
     if (sessionAgent?.systemPrompt.trim()) {
       sections.push([
@@ -2275,20 +2327,20 @@ export const useAIStore = defineStore('ai', () => {
         `- 名称：${sessionAgent.name}`,
         `- 描述：${sessionAgent.description || '未填写'}`,
         `- 角色类型：${sessionAgent.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent'}`,
-        `- 会话域：${session.scope === 'live2d' ? 'Live2D / 悬浮窗' : '主窗口 Agent'}`,
+        `- 会话域：${scopeLabel}`,
         '',
         '### 角色执行准则',
         sessionAgent.systemPrompt.trim()
       ].join('\n'))
     } else {
-      sections.push(`## 当前角色\n- 会话域：${session.scope === 'live2d' ? 'Live2D / 悬浮窗' : '主窗口 Agent'}`)
+      sections.push(`## 当前角色\n- 会话域：${scopeLabel}`)
     }
 
     sections.push([
       '## 能力边界',
       `- 已开启：${capabilitySummary.allowed.join('、') || '无'}`,
       `- 已关闭：${capabilitySummary.disabled.join('、') || '无'}`,
-      '- Agent 模式禁止创建、建议创建或调度子代理，也不要调用任何子代理相关工具。',
+      delegationRule,
       capabilities.conversationOnly
         ? '- 当前角色为仅对话模式。除非长期记忆被明确开启，否则不要调用任何外部工具，也不要承诺会直接修改应用、文件或系统。'
         : '- 当前角色可以在已开启的能力范围内调用工具，但必须先确认目标、说明风险，并对结果做回读验证。',

@@ -81,7 +81,11 @@ const aiRuntimeLabel = computed(() => {
     return ''
   }
 
-  const scopeLabel = aiStore.runtime.sessionScope === 'live2d' ? 'Live2D' : 'AI'
+  const scopeLabel = aiStore.runtime.sessionScope === 'live2d'
+    ? 'Live2D'
+    : aiStore.runtime.sessionScope === 'ide'
+      ? 'IDE'
+      : 'AI'
   const context = aiStore.runtime.context
   const usageLabel = context
     ? `上下文 ${formatCompactTokenCount(context.estimatedInputTokens)}/${formatCompactTokenCount(context.modelMaxContextTokens)} · 输出 ${formatCompactTokenCount(context.maxOutputTokens)}`
@@ -130,17 +134,25 @@ function closeWin() {
 
 function openAIPanel() {
   const runtimeSessionId = aiStore.runtime.sessionId
-  const runtimeScope = aiStore.runtime.sessionScope === 'live2d' ? 'live2d' : 'main'
+  const runtimeScope = aiStore.runtime.sessionScope === 'live2d'
+    ? 'live2d'
+    : aiStore.runtime.sessionScope === 'ide'
+      ? 'ide'
+      : 'main'
 
   if (runtimeSessionId) {
     aiStore.switchSession(runtimeSessionId, runtimeScope)
-    void router.push({
-      path: '/ai',
-      query: {
-        scope: runtimeScope,
-        sessionId: runtimeSessionId
-      }
-    })
+    if (runtimeScope === 'ide') {
+      void router.push('/ide')
+    } else {
+      void router.push({
+        path: '/ai',
+        query: {
+          scope: runtimeScope,
+          sessionId: runtimeSessionId
+        }
+      })
+    }
     return
   }
 

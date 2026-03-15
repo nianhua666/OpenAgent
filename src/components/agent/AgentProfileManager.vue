@@ -465,7 +465,7 @@ function getCapabilityBadges(agent: AIAgentProfile) {
   gap: 10px;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(180px, min(30vh, 260px)) minmax(0, 1fr);
   overflow: hidden;
   padding-bottom: 10px;
   align-content: start;
@@ -474,12 +474,16 @@ function getCapabilityBadges(agent: AIAgentProfile) {
 .agent-list-shell,
 .agent-form-shell {
   min-height: 0;
-  overflow: auto;
   padding-right: 2px;
 }
 
 .agent-list-shell {
+  overflow: auto;
   max-height: min(32vh, 280px);
+}
+
+.agent-form-shell {
+  overflow: hidden;
 }
 
 .panel-head,
@@ -607,6 +611,9 @@ h4 {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding-top: 12px;
   align-content: start;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
 }
 
 .field {

@@ -436,7 +436,7 @@ type IdeWorkbenchLayoutState = {
 
 const DEFAULT_IDE_WORKBENCH_LAYOUT: IdeWorkbenchLayoutState = {
   leftWidth: 232,
-  rightWidth: 312,
+  rightWidth: 336,
   bottomHeight: 196,
   mcpHeight: 156,
   leftCollapsed: false,
@@ -848,7 +848,7 @@ function loadIdeWorkbenchLayout() {
     const parsed = JSON.parse(raw) as Partial<typeof ideWorkbenchLayout.value>
     ideWorkbenchLayout.value = {
       leftWidth: clampWorkbenchSize(parsed.leftWidth, 212, 360, DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth),
-      rightWidth: clampWorkbenchSize(parsed.rightWidth, 276, 420, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
+      rightWidth: clampWorkbenchSize(parsed.rightWidth, 300, 440, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
       bottomHeight: clampWorkbenchSize(parsed.bottomHeight, 150, 320, DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight),
       mcpHeight: clampWorkbenchSize(parsed.mcpHeight, 112, 240, DEFAULT_IDE_WORKBENCH_LAYOUT.mcpHeight),
       leftCollapsed: parsed.leftCollapsed === true,
@@ -964,7 +964,7 @@ function startIdeResize(target: 'left' | 'right' | 'bottom' | 'mcp', event: Poin
 
     if (target === 'right') {
       ideWorkbenchLayout.value.rightCollapsed = false
-      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 276, 420, startLayout.rightWidth)
+      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 300, 440, startLayout.rightWidth)
       return
     }
 
@@ -2426,7 +2426,7 @@ async function handleReplanPlan(planId: string) {
 
 .ide-empty-shell {
   display: grid;
-  grid-template-columns: 52px minmax(208px, 236px) minmax(0, 1fr) minmax(280px, 332px);
+  grid-template-columns: 52px minmax(208px, 236px) minmax(0, 1fr) minmax(300px, 360px);
   gap: 8px;
   flex: 1;
   min-height: 520px;
@@ -2785,6 +2785,7 @@ async function handleReplanPlan(planId: string) {
   min-height: 0;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .ide-left-column {
@@ -2829,7 +2830,9 @@ async function handleReplanPlan(planId: string) {
 .ide-assistant-panel-slot,
 .ide-plan-panel-slot,
 .ide-devlog-panel-slot {
+  display: grid;
   min-height: 0;
+  overflow: hidden;
 }
 
 .ide-terminal-slot {
@@ -3019,6 +3022,15 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-terminal .terminal-summary),
 :deep(.ide-assistant-panel .runtime-strip) {
   border-radius: 12px;
+}
+
+:deep(.ide-assistant-panel) {
+  height: 100%;
+}
+
+:deep(.ide-assistant-panel .assistant-messages),
+:deep(.ide-assistant-panel .assistant-input) {
+  min-height: 0;
 }
 
 :deep(.ide-explorer .tree-row) {

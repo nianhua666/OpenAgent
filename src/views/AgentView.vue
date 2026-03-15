@@ -22,9 +22,9 @@
     <section class="agent-workbench-bar glass-panel">
       <div class="workbench-bar-copy">
         <span class="workbench-pill is-mode">{{ currentScopeLabel }}</span>
-        <span class="workbench-pill">{{ currentSession ? currentSession.title : '等待会话' }}</span>
-        <span class="workbench-pill">{{ currentModelLabel }}</span>
-        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : `${scopedSessionCount} 个会话` }}</span>
+        <span class="workbench-pill">{{ compactSessionLabel }}</span>
+        <span class="workbench-pill">{{ currentSessionAgent?.name || currentAgent?.name || '默认角色' }}</span>
+        <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : `${scopedSessionCount} 会话` }}</span>
         <span v-if="currentContextMetrics" class="workbench-pill">
           上下文 {{ formatCompactTokens(currentContextMetrics.estimatedInputTokens) }} / {{ formatCompactTokens(currentContextMetrics.modelMaxContextTokens) }}
         </span>
@@ -110,54 +110,52 @@
       <button class="agent-splitter" type="button" aria-label="resize agent sidebar" @pointerdown="startAgentResize" @dblclick="resetAgentSidebarLayout" />
 
       <div class="agent-center">
-        <AgentToolbar
-          :preferences="aiStore.preferences"
-          :model-load-error="modelLoadError"
-          @toggle-thinking="toggleThinkingMode"
-          @cycle-thinking="cycleThinkingLevel"
-          @toggle-planning="togglePlanningMode"
-          @toggle-memory="toggleAutoMemory"
-          @open-settings="openSettingsPage"
-        />
+        <div class="agent-runtime-stack">
+          <AgentToolbar
+            :preferences="aiStore.preferences"
+            :model-load-error="modelLoadError"
+            @toggle-thinking="toggleThinkingMode"
+            @cycle-thinking="cycleThinkingLevel"
+            @toggle-planning="togglePlanningMode"
+            @toggle-memory="toggleAutoMemory"
+            @open-settings="openSettingsPage"
+          />
 
-        <section v-if="false" class="agent-warning glass-panel">
-          <strong>当前还没有可用模型配置。</strong>
-          <p>先在 AI 设置里补齐服务地址、模型和鉴权信息，角色能力边界才会落到真实对话链路里。</p>
-        </section>
+          <section v-if="showAgentRuntimeStatus" class="agent-warning glass-panel">
+            <div class="agent-warning-copy">
+              <strong>{{ agentRuntimeNoticeTitle }}</strong>
+              <p>{{ agentRuntimeNoticeDescription }}</p>
+            </div>
 
-        <section v-if="showAgentRuntimeStatus" class="agent-warning glass-panel">
-          <div class="agent-warning-copy">
-            <strong>{{ agentRuntimeNoticeTitle }}</strong>
-            <p>{{ agentRuntimeNoticeDescription }}</p>
-          </div>
+            <div class="agent-warning-inline">
+              <span
+                v-for="item in agentRuntimeChecks"
+                :key="item.key"
+                class="agent-warning-pill"
+                :class="{ 'is-ready': item.ready, 'is-problem': !item.ready }"
+              >
+                {{ item.label }}: {{ item.value }}
+              </span>
+            </div>
 
-          <div class="agent-warning-inline">
-            <span
-              v-for="item in agentRuntimeChecks"
-              :key="item.key"
-              class="agent-warning-pill"
-              :class="{ 'is-ready': item.ready, 'is-problem': !item.ready }"
-            >
-              {{ item.label }}: {{ item.value }}
-            </span>
-          </div>
-
-          <div class="agent-warning-actions">
-            <button class="warning-action is-primary" type="button" @click="openSettingsPage">打开 AI 设置</button>
-            <button
-              class="warning-action"
-              type="button"
-              :disabled="!canRefreshModels || loadingAiModels"
-              @click="refreshModelOptions"
-            >
-              {{ loadingAiModels ? '刷新中...' : '刷新模型列表' }}
-            </button>
-            <button class="warning-action" type="button" @click="openSub2ApiPage">Sub2API</button>
-          </div>
-        </section>
+            <div class="agent-warning-actions">
+              <button class="warning-action is-primary" type="button" @click="openSettingsPage">打开 AI 设置</button>
+              <button
+                class="warning-action"
+                type="button"
+                :disabled="!canRefreshModels || loadingAiModels"
+                @click="refreshModelOptions"
+              >
+                {{ loadingAiModels ? '刷新中...' : '刷新模型列表' }}
+              </button>
+              <button class="warning-action" type="button" @click="openSub2ApiPage">Sub2API</button>
+            </div>
+          </section>
+        </div>
 
         <AgentMessageList
           ref="messageListRef"
+          :scope-hint="selectedScope"
           :session="currentSession"
           :streaming="aiStore.streaming"
           :streaming-content="streamingContent"
@@ -250,7 +248,7 @@ const starterPrompts = [
 
 const mainSessions = computed(() => aiStore.getSortedSessions('main'))
 const live2dSessions = computed(() => aiStore.getSortedSessions('live2d'))
-const agentProfiles = computed(() => aiStore.getAgentProfiles())
+const agentProfiles = computed(() => aiStore.getAgentProfiles().filter(agent => agent.id !== 'agent-ide-master'))
 const selectedAgentId = computed(() => aiStore.getSelectedAgentId(selectedScope.value))
 const combinedSessions = computed(() => {
   const pinnedLive2D = live2dSessions.value
@@ -273,7 +271,17 @@ const currentTask = computed(() => (currentSession.value ? aiStore.getLatestTask
 const currentSessionAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : null)
 const currentSessionAgentId = computed(() => currentSessionAgent.value?.id || '')
 const currentAgent = computed(() => currentSessionAgent.value || aiStore.getSelectedAgent(selectedScope.value))
-const currentScopeLabel = computed(() => selectedScope.value === 'live2d' ? 'Live2D 会话域' : '主窗口会话域')
+const currentScopeLabel = computed(() => {
+  if (selectedScope.value === 'live2d') {
+    return 'Live2D'
+  }
+
+  if (selectedScope.value === 'ide') {
+    return 'IDE'
+  }
+
+  return '主窗口'
+})
 const agentWorkbenchStyle = computed(() => ({
   '--agent-sidebar-width': agentWorkbenchLayout.value.sidebarCollapsed
     ? '72px'
@@ -477,14 +485,24 @@ const currentModelMeta = computed(() => {
 })
 const currentModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model.trim() || '未选择')
 const currentAgentTypeLabel = computed(() => currentAgent.value?.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent')
-const heroSummary = computed(() => {
-  const agentName = currentAgent.value?.name || '当前角色'
-  const scopeSummary = currentScopeLabel.value
+const compactSessionLabel = computed(() => {
   if (!currentSession.value) {
-    return `${scopeSummary} 已就绪，${agentName} 会在你开始对话后接管当前工作流。`
+    return '等待会话'
   }
 
-  return `${scopeSummary} 正在承载会话「${currentSession.value.title}」，输入区会固定停靠在底部，消息和配置分别在各自面板内部滚动。`
+  const raw = currentSession.value.title.trim()
+  if (raw.length <= 20) {
+    return raw
+  }
+
+  return `${raw.slice(0, 20)}…`
+})
+const heroSummary = computed(() => {
+  if (!currentSession.value) {
+    return `${currentScopeLabel.value} 已就绪，输入后会自动创建会话并固定停靠底部输入区。`
+  }
+
+  return `${currentScopeLabel.value} 正在运行，消息区和侧栏均为独立滚动，不会再挤压输入区。`
 })
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
@@ -1083,8 +1101,8 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 <style scoped>
 .agent-view {
   --agent-accent: var(--primary);
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   flex: 1 1 auto;
   height: 100%;
@@ -1219,6 +1237,9 @@ h1 {
   line-height: 1.45;
   max-width: 920px;
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mode-pill,
@@ -1275,13 +1296,15 @@ h1 {
 .workbench-bar-actions {
   flex: 0 0 auto;
   justify-content: flex-end;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .workbench-pill {
   display: inline-flex;
   align-items: center;
   min-height: 18px;
-  max-width: 220px;
+  max-width: 180px;
   padding: 0 6px;
   border-radius: 999px;
   background: rgba(226, 232, 240, 0.74);
@@ -1308,6 +1331,7 @@ h1 {
   font-size: 9px;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .workbench-toggle.active {
@@ -1319,7 +1343,6 @@ h1 {
 .agent-layout {
   display: grid;
   grid-template-columns: var(--agent-sidebar-width) var(--agent-sidebar-splitter) minmax(0, 1fr);
-  flex: 1 1 auto;
   gap: 6px;
   height: 100%;
   min-height: 0;
@@ -1446,23 +1469,27 @@ h1 {
 
 .agent-center {
   grid-column: 3;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 6px;
   min-height: 0;
   overflow: hidden;
 }
 
+.agent-runtime-stack {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+}
+
 :deep(.agent-message-list) {
-  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   box-sizing: border-box;
 }
 
 :deep(.agent-input-bar) {
-  flex: 0 0 auto;
   align-self: stretch;
-  margin-top: auto;
   min-height: fit-content;
   box-sizing: border-box;
 }

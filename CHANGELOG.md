@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Agent / IDE 会话彻底隔离：`src/types/index.ts` 与 `src/stores/ai.ts` 新增独立 `ide` 会话域，`IDEAssistantPanel.vue` 改为只读取 IDE 主Agent与 IDE 会话，不再复用 `main` Agent 对话；`stores/ai.ts` 还在底层收紧了“已有消息的会话不可再改绑角色”，避免会话切角色导致记忆和人设错乱。
+- IDE 主Agent 收口：新增内置 `agent-ide-master` 作为 IDE 模式专用主Agent，负责工作区规划、子代理委派与长任务推进；该角色不会出现在普通 Agent 角色列表中，从而避免 IDE 配置继续污染 Agent 模式。
+- Agent 工作台布局继续修正：`AgentView.vue` 改成更稳定的三段式壳层，消息区内部滚动、输入区固定贴底；`AgentProfileManager.vue` 拆成“角色列表滚动区 + 编辑表单滚动区”，重新保证左侧角色配置区可完整滚动和保存。
+- IDE 右栏与输入区继续压缩：`IDEAssistantPanel.vue` 为窄栏场景补上专用 composer 布局，主Agent信息、会话摘要、输入区和模型控制不再互相挤压；`AgentMessageList.vue` / `AgentSessionList.vue` 也新增 `IDE` 域标签，空会话时会明确提示 IDE 主Agent与子代理的职责边界。
+- IDE 终端首屏继续减负：`IDETerminal.vue` 取消了工作区打开后的自动 shell 启动，终端现在只会在用户手动创建或主Agent明确发起时才拉起，有助于减少 IDE 首屏负担和误判性的“终端自动断开”体验。
+- 本轮验证已再次通过 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai?panel=roles --route=/ide`，确认 Agent 输入区、角色编辑区与 IDE 右侧工作区在真实 Electron 渲染下均恢复到可操作状态。
+
+## 3.0.7 - 2026-03-15
+
+- Agent / IDE 会话彻底隔离：新增独立 `ide` 会话域，IDE 右侧主Agent面板不再复用普通 Agent 会话；同时禁止“已有消息的会话再切角色”，避免角色记忆与会话上下文串线。
+- IDE 专用主Agent 收口：内置隐藏角色 `agent-ide-master` 只服务 IDE 规划与委派，不再出现在普通 Agent 角色列表中，减少 Agent 模式与 IDE 模式的配置互相污染。
+- Agent 工作台布局继续修正：主区保持“顶部工具 / 中部消息滚动 / 底部输入”三段式结构，左侧角色配置拆成独立滚动链；这次又进一步压缩了顶部状态重复、紧凑化会话标题，并限制会话卡片摘要高度。
+- IDE Inspector 窄栏继续减负：右栏默认宽度上调，主Agent运行条缩减为核心状态与模型信息，输入区最大高度继续收敛，减少窄栏下的遮挡和拥挤。
+- IDE 终端首屏减负：取消工作区打开后的自动 shell 启动，终端只在用户手动创建或主Agent明确发起时拉起，减少“刚进 IDE 就自动运行又断掉”的误判。
+- 本轮验证已再次通过 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ai --route=/ai?panel=roles --route=/ide`，确认 Agent 顶部去重、角色编辑侧栏与 IDE 右栏在真实 Electron 渲染下保持可操作。
+
 ## 3.0.6 - 2026-03-15
 
 - 情绪型 Agent 心情机制正式落地：新增 `src/utils/agentMood.ts`，把角色隐藏心情值收口为 `guarded / reserved / steady / warm / bright` 五档情绪带，并为每一档定义语气摘要、执行倾向、Prompt 指引与 TTS 情绪映射；`stores/ai.ts` 现会按用户对话语气、关怀/受伤线索与默认基线动态调整情绪型角色的隐藏心情，但不会因为命令式措辞破坏对用户需求的执行优先级。

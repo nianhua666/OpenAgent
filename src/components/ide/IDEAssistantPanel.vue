@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div class="panel-copy">
         <p class="panel-eyebrow">Assistant</p>
-        <h3>IDE Agent</h3>
+        <h3>主Agent</h3>
       </div>
 
       <div class="panel-actions">
@@ -14,23 +14,24 @@
           </option>
         </select>
         <button class="btn btn-secondary btn-sm" :disabled="aiStore.streaming" @click="startNewSession">新会话</button>
-        <button class="btn btn-ghost btn-sm" @click="openAgentView">全屏</button>
+        <button class="btn btn-ghost btn-sm" @click="openIdeWorkbench">全屏</button>
       </div>
     </div>
 
     <div class="runtime-strip">
       <span class="runtime-pill" :class="`is-${runtimeStatusTone}`">{{ runtimeStatusText }}</span>
-      <span class="runtime-pill">角色 {{ currentAgent?.name || '未选择' }}</span>
-      <span class="runtime-pill">模型 {{ currentModelLabel }}</span>
-      <span class="runtime-pill">上下文 {{ contextSummary }}</span>
-      <span class="runtime-pill">会话 {{ sessions.length }}</span>
-      <span v-for="badge in currentModelBadges" :key="badge" class="runtime-pill">{{ badge }}</span>
+      <span class="runtime-pill">{{ currentAgent?.name || '未选择角色' }}</span>
+      <span class="runtime-pill">{{ currentModelLabel }}</span>
+      <span class="runtime-pill">{{ contextSummary }}</span>
+      <span class="runtime-pill">{{ sessions.length }} 会话</span>
+      <span v-for="badge in compactModelBadges" :key="badge" class="runtime-pill">{{ badge }}</span>
       <span v-if="modelLoadError" class="runtime-pill is-error">{{ modelLoadError }}</span>
     </div>
 
     <AgentMessageList
       ref="messageListRef"
       class="assistant-messages"
+      :scope-hint="IDE_SCOPE"
       :session="currentSession"
       :streaming="aiStore.streaming"
       :streaming-content="streamingContent"
@@ -85,6 +86,7 @@ import { resolveMoodAwareTtsOverrides } from '@/utils/agentMood'
 import { playTextToSpeech } from '@/utils/ttsPlayback'
 import { showToast } from '@/utils/toast'
 
+const IDE_SCOPE = 'ide'
 const aiStore = useAIStore()
 const settingsStore = useSettingsStore()
 const router = useRouter()
@@ -103,10 +105,10 @@ const starterPrompts = [
   '先看当前已打开文件和工作区状态，再告诉我最值得做的修复项。',
 ]
 
-const sessions = computed(() => aiStore.getSortedSessions('main'))
-const currentSession = computed<AIChatSession | null>(() => aiStore.getActiveSession('main'))
-const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || 'main'))
-const currentAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : aiStore.getSelectedAgent('main'))
+const sessions = computed(() => aiStore.getSortedSessions(IDE_SCOPE))
+const currentSession = computed<AIChatSession | null>(() => aiStore.getActiveSession(IDE_SCOPE))
+const runtimeAiConfig = computed(() => aiStore.getEffectiveConfig(currentSession.value || IDE_SCOPE))
+const currentAgent = computed(() => currentSession.value ? aiStore.getSessionAgent(currentSession.value) : aiStore.getSelectedAgent(IDE_SCOPE))
 const streamingContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.content : ''))
 const streamingReasoningContent = computed(() => (aiStore.runtime.sessionId === currentSession.value?.id ? aiStore.runtime.reasoningContent : ''))
 const currentContextMetrics = computed(() => {
@@ -145,8 +147,9 @@ const currentModelBadges = computed(() => {
 
   const capabilities = meta.capabilities || inferModelCapabilities(meta.name, runtimeAiConfig.value.protocol)
   const limits = meta.limits || inferModelLimits(meta.name, runtimeAiConfig.value.protocol)
-  return [...getModelCapabilityLabels(capabilities), ...getModelLimitLabels(limits)]
+  return [...getModelCapabilityLabels(capabilities), ...getModelLimitLabels(limits)].slice(0, 4)
 })
+const compactModelBadges = computed(() => currentModelBadges.value.slice(0, 2))
 const runtimeModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model || 'Unconfigured')
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const showVoiceActions = computed(() => Boolean(settingsStore.settings.ttsShowMainReplyButton || currentAgent.value?.tts.autoPlayReplies))
@@ -251,8 +254,8 @@ function startNewSession() {
     return
   }
 
-  const session = aiStore.createSession(undefined, 'main', aiStore.getSelectedAgentId('main'))
-  aiStore.switchSession(session.id, 'main')
+  const session = aiStore.createSession(undefined, IDE_SCOPE, aiStore.getSelectedAgentId(IDE_SCOPE))
+  aiStore.switchSession(session.id, IDE_SCOPE)
   scrollMessageListToBottom()
 }
 
@@ -261,7 +264,7 @@ function handleSessionChange(sessionId: string) {
     return
   }
 
-  aiStore.switchSession(sessionId, 'main')
+  aiStore.switchSession(sessionId, IDE_SCOPE)
   scrollMessageListToBottom()
 }
 
@@ -352,8 +355,8 @@ async function sendMessage() {
 
   let session = currentSession.value
   if (!session) {
-    session = aiStore.createSession(undefined, 'main', aiStore.getSelectedAgentId('main'))
-    aiStore.switchSession(session.id, 'main')
+    session = aiStore.createSession(undefined, IDE_SCOPE, aiStore.getSelectedAgentId(IDE_SCOPE))
+    aiStore.switchSession(session.id, IDE_SCOPE)
   }
 
   const attachments = [...pendingAttachments.value]
@@ -397,11 +400,20 @@ function applyRecommendedAutoSteps() {
 }
 
 function handleModelChange(modelName: string) {
-  aiStore.updateConfig({ model: modelName })
+  const ideAgent = aiStore.getSelectedAgent(IDE_SCOPE) || currentAgent.value
+  if (!ideAgent) {
+    aiStore.updateConfig({ model: modelName })
+    return
+  }
+
+  void aiStore.upsertAgentProfile({
+    ...ideAgent,
+    preferredModel: modelName,
+  })
 }
 
-function openAgentView() {
-  void router.push('/ai')
+function openIdeWorkbench() {
+  void router.push('/ide')
 }
 </script>
 
@@ -425,6 +437,7 @@ function openAgentView() {
 .panel-head {
   justify-content: space-between;
   gap: $spacing-sm;
+  flex-wrap: wrap;
 }
 
 .panel-copy {
@@ -451,9 +464,19 @@ function openAgentView() {
   gap: 6px;
 }
 
+.panel-actions {
+  justify-content: flex-end;
+}
+
+.runtime-strip {
+  max-height: 58px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
 .session-select {
   min-width: 0;
-  max-width: 180px;
+  max-width: 168px;
   min-height: 30px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -461,6 +484,9 @@ function openAgentView() {
   background: rgba(15, 23, 42, 0.04);
   color: var(--text-primary);
   font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .runtime-pill {
@@ -508,5 +534,26 @@ function openAgentView() {
   background: transparent;
   border: 0;
   box-shadow: none;
+  max-height: min(38vh, 220px);
+  overflow: auto;
+}
+
+:deep(.agent-input-bar .composer-main),
+:deep(.agent-input-bar .composer-footer),
+:deep(.agent-input-bar .controls-row) {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+:deep(.agent-input-bar .composer-send-btn),
+:deep(.agent-input-bar .model-row),
+:deep(.agent-input-bar .step-row),
+:deep(.agent-input-bar .control-select) {
+  width: 100%;
+  max-width: none;
+}
+
+:deep(.agent-input-bar .step-row) {
+  justify-content: space-between;
 }
 </style>
