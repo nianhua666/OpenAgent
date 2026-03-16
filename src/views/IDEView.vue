@@ -214,13 +214,15 @@
       <section class="workbench-toolbar glass-panel">
         <div class="workbench-toolbar-copy">
           <span class="toolbar-pill is-mode">Workbench</span>
-          <span class="toolbar-pill is-path" :title="workspace.rootPath">{{ workspaceRootLabel }}</span>
-          <span class="toolbar-pill" :title="workspace.artifactRootPath">产物 {{ artifactRootLabel }}</span>
-          <span class="toolbar-pill">{{ workspace.language || '未识别语言' }}</span>
-          <span class="toolbar-pill">{{ workspace.framework || '未识别框架' }}</span>
-          <span class="toolbar-pill" :title="activeFilePath || ''">{{ activeFileLabel }}</span>
-          <span class="toolbar-pill">标签 {{ editorTabs.length }}</span>
-          <span class="toolbar-pill">未保存 {{ dirtyFileCount }}</span>
+          <span
+            v-for="fact in workbenchFacts"
+            :key="fact.key"
+            class="toolbar-pill"
+            :class="fact.className"
+            :title="fact.title"
+          >
+            {{ fact.label }}
+          </span>
         </div>
         <div class="workbench-toolbar-actions">
           <button class="toolbar-toggle" :class="{ active: !ideWorkbenchLayout.leftCollapsed }" @click="toggleIdePane('left')">资源</button>
@@ -285,6 +287,7 @@
             @close-tab="closeTab"
             @update-content="updateActiveTabContent"
             @update-selection="updateActiveTabSelection"
+            @retry="retryActiveTab"
             @save="saveActiveTab"
             @save-all="saveAllTabs"
           />
@@ -373,10 +376,11 @@ import IDEPlanPanel from '@/components/ide/IDEPlanPanel.vue'
 import IDEStatusBar from '@/components/ide/IDEStatusBar.vue'
 import IDETerminal from '@/components/ide/IDETerminal.vue'
 import { useAIStore } from '@/stores/ai'
-import type { AutonomyRun, IDEEditorSession, PlanStatus, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
+import type { AutonomyRun, IDEEditorSession, IDEWorkspace, PlanStatus, ProjectPlanDriftSummary, ProjectPlanExecutionPacket } from '@/types'
 import { copyWorkspaceEntry, createWorkspaceDirectory, createWorkspaceFile, deleteWorkspaceEntry, renameWorkspaceEntry, workspaceFileExists, openWorkspace, readWorkspaceFile, refreshWorkspaceStructure, writeWorkspaceFile } from '@/utils/aiIDEWorkspace'
 import { syncAutonomyRunState } from '@/utils/aiAutonomyScheduler'
 import { buildPlanExecutionPacket, flushPlanToWorkspace, generateInitialPlanPhases, inspectPlanWorkspaceDrift, recordPlanWorkspaceSnapshot, replanProjectPlan, syncPlanWorkspaceBaseline } from '@/utils/aiPlanEngine'
+import { loadIdeMonaco } from '@/utils/ideMonaco'
 import { getSuggestedWorkspaceArtifactRoot } from '@/utils/runtimeDirectories'
 import { showToast } from '@/utils/toast'
 
@@ -423,6 +427,8 @@ interface EditorSelectionPayload {
 }
 
 type WorkspacePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
+const IDE_FILE_READ_TIMEOUT_MS = 8_000
+
 type IdeWorkbenchLayoutState = {
   leftWidth: number
   rightWidth: number
@@ -435,9 +441,9 @@ type IdeWorkbenchLayoutState = {
 }
 
 const DEFAULT_IDE_WORKBENCH_LAYOUT: IdeWorkbenchLayoutState = {
-  leftWidth: 232,
-  rightWidth: 336,
-  bottomHeight: 196,
+  leftWidth: 244,
+  rightWidth: 428,
+  bottomHeight: 220,
   mcpHeight: 156,
   leftCollapsed: false,
   rightCollapsed: false,
@@ -466,6 +472,7 @@ let selectedPlanDriftRequestId = 0
 let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
 let syncingEditorSession = false
 let removeIdeResizeListeners: (() => void) | null = null
+const editorLoadRequestTokens = new Map<string, number>()
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspaceList = computed(() => aiStore.getIDEWorkspaces())
@@ -549,6 +556,51 @@ const editorCursorState = computed(() => {
 const workspaceRootLabel = computed(() => compactWorkbenchPath(workspace.value?.rootPath || '', 2) || '未绑定工作区')
 const artifactRootLabel = computed(() => compactWorkbenchPath(workspace.value?.artifactRootPath || '', 2) || '未设置')
 const activeFileLabel = computed(() => activeFilePath.value ? compactWorkbenchPath(activeFilePath.value, 3) : '未选择文件')
+const workbenchFacts = computed(() => {
+  const stackSummary = [workspace.value?.language, workspace.value?.framework]
+    .filter(label => label && !label.startsWith('未识别'))
+    .join(' · ') || '语言 / 框架待识别'
+
+  const facts = [
+    {
+      key: 'stack',
+      label: stackSummary,
+      title: stackSummary,
+      className: '',
+    },
+    {
+      key: 'artifact',
+      label: `产物 ${artifactRootLabel.value}`,
+      title: workspace.value?.artifactRootPath || '',
+      className: '',
+    },
+    {
+      key: 'active-file',
+      label: activeFileLabel.value,
+      title: activeFilePath.value || '',
+      className: 'is-file',
+    },
+    {
+      key: 'editor-state',
+      label: `${editorTabs.value.length} 标签 · ${dirtyFileCount.value} 待保存`,
+      title: dirtyFileCount.value > 0
+        ? `当前共打开 ${editorTabs.value.length} 个标签，另有 ${dirtyFileCount.value} 个文件未保存`
+        : `当前共打开 ${editorTabs.value.length} 个标签，当前没有未保存文件`,
+      className: dirtyFileCount.value > 0 ? 'is-warning' : '',
+    },
+  ]
+
+  if (artifactRootLabel.value && artifactRootLabel.value !== '未设置') {
+    facts.splice(1, 0, {
+      key: 'artifact',
+      label: `产物 ${artifactRootLabel.value}`,
+      title: workspace.value?.artifactRootPath || '',
+      className: '',
+    })
+  }
+
+  return facts
+})
 
 async function withEditorSessionSyncPaused(task: () => void | Promise<void>) {
   syncingEditorSession = true
@@ -648,10 +700,11 @@ function buildEditorSessionSnapshot(): IDEEditorSession | null {
     .filter(tab => tab.path.trim() && !tab.loading && (!tab.error || tab.content !== tab.savedContent))
     .map(tab => {
       const normalizedSelection = normalizeEditorSelectionRange(tab.content, tab.selectionStart, tab.selectionEnd)
+      const hasUnsavedDraft = tab.content !== tab.savedContent
       return {
         path: tab.path,
-        content: tab.content,
-        savedContent: tab.savedContent,
+        content: hasUnsavedDraft ? tab.content : '',
+        savedContent: hasUnsavedDraft ? tab.savedContent : '',
         language: tab.language,
         selectionStart: normalizedSelection.selectionStart,
         selectionEnd: normalizedSelection.selectionEnd,
@@ -703,13 +756,14 @@ async function restoreEditorSessionForWorkspace(workspaceId: string) {
     .map(tab => {
       const normalizedPath = normalizeWorkspaceRelativePath(tab.path)
       const fileMissing = shouldValidateTabs && !workspaceFileSet.has(normalizedPath)
+      const requiresReload = !fileMissing && tab.content === tab.savedContent
       const normalizedSelection = normalizeEditorSelectionRange(tab.content, tab.selectionStart ?? 0, tab.selectionEnd ?? 0)
       return {
         path: normalizedPath,
-        content: tab.content,
-        savedContent: tab.savedContent,
+        content: requiresReload ? '' : tab.content,
+        savedContent: requiresReload ? '' : tab.savedContent,
         language: tab.language,
-        loading: false,
+        loading: requiresReload,
         error: fileMissing ? '文件已不在当前工作区中，当前保留的是上次未保存草稿。' : '',
         selectionStart: normalizedSelection.selectionStart,
         selectionEnd: normalizedSelection.selectionEnd,
@@ -726,6 +780,22 @@ async function restoreEditorSessionForWorkspace(workspaceId: string) {
       ? session.activePath
       : restorableTabs[0]?.path || ''
   })
+
+  const tabsToReload = restorableTabs.filter(tab => tab.loading && !tab.error)
+  if (tabsToReload.length > 0) {
+    const activeReloadTab = tabsToReload.find(tab => tab.path === activeFilePath.value)
+    if (activeReloadTab) {
+      await openFile(activeReloadTab.path, { forceReload: true })
+    }
+
+    for (const tab of tabsToReload) {
+      if (tab.path === activeFilePath.value) {
+        continue
+      }
+
+      void openFile(tab.path, { forceReload: true, activate: false })
+    }
+  }
 
   return {
     totalTabs: restorableTabs.length,
@@ -814,6 +884,7 @@ onMounted(async () => {
   if (!aiStore.loaded) {
     await aiStore.init()
   }
+  void loadIdeMonaco()
   loadIdeWorkbenchLayout()
   window.addEventListener('beforeunload', handleBeforeUnload)
   await loadWorkspaceScripts()
@@ -847,9 +918,9 @@ function loadIdeWorkbenchLayout() {
 
     const parsed = JSON.parse(raw) as Partial<typeof ideWorkbenchLayout.value>
     ideWorkbenchLayout.value = {
-      leftWidth: clampWorkbenchSize(parsed.leftWidth, 212, 360, DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth),
-      rightWidth: clampWorkbenchSize(parsed.rightWidth, 300, 440, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
-      bottomHeight: clampWorkbenchSize(parsed.bottomHeight, 150, 320, DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight),
+      leftWidth: clampWorkbenchSize(parsed.leftWidth, 220, 380, DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth),
+      rightWidth: clampWorkbenchSize(parsed.rightWidth, 360, 560, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
+      bottomHeight: clampWorkbenchSize(parsed.bottomHeight, 168, 340, DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight),
       mcpHeight: clampWorkbenchSize(parsed.mcpHeight, 112, 240, DEFAULT_IDE_WORKBENCH_LAYOUT.mcpHeight),
       leftCollapsed: parsed.leftCollapsed === true,
       rightCollapsed: parsed.rightCollapsed === true,
@@ -958,13 +1029,13 @@ function startIdeResize(target: 'left' | 'right' | 'bottom' | 'mcp', event: Poin
   const handlePointerMove = (moveEvent: PointerEvent) => {
     if (target === 'left') {
       ideWorkbenchLayout.value.leftCollapsed = false
-      ideWorkbenchLayout.value.leftWidth = clampWorkbenchSize(startLayout.leftWidth + (moveEvent.clientX - startX), 212, 360, startLayout.leftWidth)
+      ideWorkbenchLayout.value.leftWidth = clampWorkbenchSize(startLayout.leftWidth + (moveEvent.clientX - startX), 220, 380, startLayout.leftWidth)
       return
     }
 
     if (target === 'right') {
       ideWorkbenchLayout.value.rightCollapsed = false
-      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 300, 440, startLayout.rightWidth)
+      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 360, 560, startLayout.rightWidth)
       return
     }
 
@@ -975,7 +1046,7 @@ function startIdeResize(target: 'left' | 'right' | 'bottom' | 'mcp', event: Poin
     }
 
     ideWorkbenchLayout.value.bottomCollapsed = false
-    ideWorkbenchLayout.value.bottomHeight = clampWorkbenchSize(startLayout.bottomHeight - (moveEvent.clientY - startY), 150, 320, startLayout.bottomHeight)
+    ideWorkbenchLayout.value.bottomHeight = clampWorkbenchSize(startLayout.bottomHeight - (moveEvent.clientY - startY), 168, 340, startLayout.bottomHeight)
   }
 
   const stopResize = () => {
@@ -1214,42 +1285,126 @@ async function syncSelectedAutonomyRun(options?: { note?: string; silent?: boole
   }
 }
 
-async function openFile(path: string) {
+async function openFile(path: string, options?: { forceReload?: boolean; activate?: boolean }) {
   if (!workspace.value) {
     return
   }
 
+  const shouldActivate = options?.activate !== false
   const existingTab = editorTabs.value.find(tab => tab.path === path)
   if (existingTab) {
-    activeFilePath.value = path
-    return
+    if (shouldActivate) {
+      activeFilePath.value = path
+    }
+    if (!options?.forceReload && !existingTab.error && !existingTab.loading) {
+      return
+    }
   }
 
   const language = workspace.value.structure?.files.find(file => file.path === path)?.language
-  const nextTab: EditorTabState = {
-    path,
-    content: '',
-    savedContent: '',
-    language,
-    loading: true,
-    error: '',
-    selectionStart: 0,
-    selectionEnd: 0,
+  if (!existingTab) {
+    const nextTab: EditorTabState = {
+      path,
+      content: '',
+      savedContent: '',
+      language,
+      loading: true,
+      error: '',
+      selectionStart: 0,
+      selectionEnd: 0,
+    }
+    editorTabs.value = [...editorTabs.value, nextTab]
+  } else {
+    patchEditorTab(path, currentTab => ({
+      ...currentTab,
+      language: currentTab.language || language,
+      loading: true,
+      error: '',
+    }))
   }
 
-  editorTabs.value.push(nextTab)
-  activeFilePath.value = path
+  if (shouldActivate) {
+    activeFilePath.value = path
+  }
+  const requestToken = beginEditorTabLoad(path)
 
-  const content = await readWorkspaceFile(workspace.value, path)
-  if (content === null) {
-    nextTab.loading = false
-    nextTab.error = '文件不可读，可能是二进制文件、过大文件或路径无效。'
-    return
+  try {
+    const content = await readWorkspaceFileWithTimeout(workspace.value, path)
+    if (!isLatestEditorTabLoad(path, requestToken)) {
+      return
+    }
+
+    if (content === null) {
+      patchEditorTab(path, currentTab => ({
+        ...currentTab,
+        loading: false,
+        error: '文件不可读，可能是二进制文件、过大文件、路径无效，或本次读取已超时。',
+      }))
+      return
+    }
+
+    patchEditorTab(path, currentTab => ({
+      ...currentTab,
+      content,
+      savedContent: content,
+      language: currentTab.language || language,
+      loading: false,
+      error: '',
+    }))
+  } catch (error) {
+    if (!isLatestEditorTabLoad(path, requestToken)) {
+      return
+    }
+
+    console.error('openFile failed:', error)
+    patchEditorTab(path, currentTab => ({
+      ...currentTab,
+      loading: false,
+      error: '文件读取失败，请重试或刷新工作区后再打开。',
+    }))
+  }
+}
+
+async function readWorkspaceFileWithTimeout(currentWorkspace: IDEWorkspace, relativePath: string) {
+  return await Promise.race([
+    readWorkspaceFile(currentWorkspace, relativePath),
+    new Promise<null>(resolve => {
+      window.setTimeout(() => resolve(null), IDE_FILE_READ_TIMEOUT_MS)
+    }),
+  ])
+}
+
+function beginEditorTabLoad(path: string) {
+  const nextToken = (editorLoadRequestTokens.get(path) || 0) + 1
+  editorLoadRequestTokens.set(path, nextToken)
+  return nextToken
+}
+
+function isLatestEditorTabLoad(path: string, requestToken: number) {
+  return editorLoadRequestTokens.get(path) === requestToken
+}
+
+function patchEditorTab(
+  path: string,
+  updater: Partial<EditorTabState> | ((tab: EditorTabState) => EditorTabState),
+) {
+  const tabIndex = editorTabs.value.findIndex(tab => tab.path === path)
+  if (tabIndex < 0) {
+    return null
   }
 
-  nextTab.content = content
-  nextTab.savedContent = content
-  nextTab.loading = false
+  const currentTab = editorTabs.value[tabIndex]
+  const nextTab = typeof updater === 'function'
+    ? updater(currentTab)
+    : { ...currentTab, ...updater }
+
+  editorTabs.value = [
+    ...editorTabs.value.slice(0, tabIndex),
+    nextTab,
+    ...editorTabs.value.slice(tabIndex + 1),
+  ]
+
+  return nextTab
 }
 
 function selectTab(path: string) {
@@ -1268,6 +1423,7 @@ function closeTab(path: string) {
 
   const currentIndex = editorTabs.value.findIndex(item => item.path === path)
   editorTabs.value = editorTabs.value.filter(item => item.path !== path)
+  editorLoadRequestTokens.delete(path)
 
   if (activeFilePath.value === path) {
     const fallback = editorTabs.value[currentIndex] || editorTabs.value[currentIndex - 1] || editorTabs.value[0] || null
@@ -1276,16 +1432,33 @@ function closeTab(path: string) {
 }
 
 function updateActiveTabContent(content: string) {
-  if (activeTab.value) {
-    activeTab.value.content = content
+  if (!activeTab.value) {
+    return
+  }
+
+  const path = activeTab.value.path
+  patchEditorTab(path, currentTab => {
     const normalizedSelection = normalizeEditorSelectionRange(
       content,
-      activeTab.value.selectionStart,
-      activeTab.value.selectionEnd,
+      currentTab.selectionStart,
+      currentTab.selectionEnd,
     )
-    activeTab.value.selectionStart = normalizedSelection.selectionStart
-    activeTab.value.selectionEnd = normalizedSelection.selectionEnd
+
+    return {
+      ...currentTab,
+      content,
+      selectionStart: normalizedSelection.selectionStart,
+      selectionEnd: normalizedSelection.selectionEnd,
+    }
+  })
+}
+
+function retryActiveTab() {
+  if (!activeTab.value) {
+    return
   }
+
+  void openFile(activeTab.value.path, { forceReload: true })
 }
 
 function updateActiveTabSelection(payload: EditorSelectionPayload) {
@@ -1293,13 +1466,19 @@ function updateActiveTabSelection(payload: EditorSelectionPayload) {
     return
   }
 
-  const normalizedSelection = normalizeEditorSelectionRange(
-    activeTab.value.content,
-    payload.selectionStart,
-    payload.selectionEnd,
-  )
-  activeTab.value.selectionStart = normalizedSelection.selectionStart
-  activeTab.value.selectionEnd = normalizedSelection.selectionEnd
+  patchEditorTab(activeTab.value.path, currentTab => {
+    const normalizedSelection = normalizeEditorSelectionRange(
+      currentTab.content,
+      payload.selectionStart,
+      payload.selectionEnd,
+    )
+
+    return {
+      ...currentTab,
+      selectionStart: normalizedSelection.selectionStart,
+      selectionEnd: normalizedSelection.selectionEnd,
+    }
+  })
 }
 
 async function saveActiveTab() {
@@ -1313,7 +1492,10 @@ async function saveActiveTab() {
     return
   }
 
-  activeTab.value.savedContent = activeTab.value.content
+  patchEditorTab(activeTab.value.path, currentTab => ({
+    ...currentTab,
+    savedContent: currentTab.content,
+  }))
   await refreshSelectedPlanDrift({ silent: true })
   showToast('success', `已保存：${activeTab.value.path}`)
 }
@@ -1334,7 +1516,10 @@ async function saveAllTabs() {
       showToast('error', `保存失败：${tab.path}`)
       return
     }
-    tab.savedContent = tab.content
+    patchEditorTab(tab.path, currentTab => ({
+      ...currentTab,
+      savedContent: currentTab.content,
+    }))
   }
 
   showToast('success', `已保存 ${dirtyTabs.length} 个文件`)
@@ -2283,23 +2468,21 @@ async function handleReplanPlan(planId: string) {
   min-height: 0;
   overflow: hidden;
   padding: 4px;
-  border-radius: 18px;
-  border: 1px solid rgba(100, 116, 139, 0.24);
+  border-radius: 14px;
+  border: 1px solid rgba(30, 41, 59, 0.18);
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.14), transparent 18%),
-    radial-gradient(circle at top right, rgba(15, 23, 42, 0.06), transparent 22%),
-    linear-gradient(180deg, rgba(239, 244, 250, 0.98), rgba(219, 228, 240, 0.97));
+    linear-gradient(180deg, rgba(229, 235, 243, 0.99), rgba(213, 222, 234, 0.99));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.62),
-    0 12px 26px rgba(15, 23, 42, 0.08);
+    inset 0 1px 0 rgba(255, 255, 255, 0.48),
+    0 10px 24px rgba(15, 23, 42, 0.1);
 }
 
 .ide-view :deep(.glass-panel) {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.97));
-  border-color: rgba(100, 116, 139, 0.22);
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(16px);
+    linear-gradient(180deg, rgba(251, 252, 253, 0.99), rgba(244, 247, 251, 0.99));
+  border-color: rgba(100, 116, 139, 0.16);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(6px);
 }
 
 .ide-header,
@@ -2319,12 +2502,11 @@ async function handleReplanPlan(planId: string) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 8px;
-  border: 1px solid rgba(100, 116, 139, 0.18);
+  padding: 8px 10px;
+  border: 1px solid rgba(100, 116, 139, 0.14);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 244, 250, 0.9)),
-    radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 26%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    linear-gradient(180deg, rgba(247, 249, 252, 0.99), rgba(238, 243, 249, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
 }
 
 .header-copy {
@@ -2352,7 +2534,7 @@ async function handleReplanPlan(planId: string) {
 }
 
 .header-copy h1 {
-  font-size: 18px;
+  font-size: 19px;
   line-height: 1.05;
 }
 
@@ -2426,7 +2608,7 @@ async function handleReplanPlan(planId: string) {
 
 .ide-empty-shell {
   display: grid;
-  grid-template-columns: 52px minmax(208px, 236px) minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-columns: 52px minmax(216px, 244px) minmax(0, 1fr) minmax(320px, 380px);
   gap: 8px;
   flex: 1;
   min-height: 520px;
@@ -2696,28 +2878,37 @@ async function handleReplanPlan(planId: string) {
   justify-content: space-between;
   gap: 6px;
   padding: 5px 7px;
-  border: 1px solid rgba(100, 116, 139, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(238, 243, 248, 0.88));
-  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
+  border: 1px solid rgba(100, 116, 139, 0.14);
+  background: linear-gradient(180deg, rgba(244, 247, 251, 0.98), rgba(233, 239, 246, 0.94));
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
 }
 
 .workbench-toolbar-copy,
 .workbench-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
+}
+
+.workbench-toolbar-copy {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.workbench-toolbar-actions {
   justify-content: flex-end;
 }
 
 .toolbar-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  max-width: 212px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: rgba(226, 232, 240, 0.7);
+  min-height: 22px;
+  max-width: 220px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: rgba(226, 232, 240, 0.94);
   border: 1px solid rgba(148, 163, 184, 0.16);
   color: #334155;
   font-size: 10px;
@@ -2732,15 +2923,24 @@ async function handleReplanPlan(planId: string) {
 }
 
 .toolbar-pill.is-path {
-  max-width: 248px;
+  max-width: 230px;
+}
+
+.toolbar-pill.is-file {
+  max-width: 188px;
+}
+
+.toolbar-pill.is-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: #9a3412;
 }
 
 .toolbar-toggle {
   min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.62);
+  padding: 0 9px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  background: rgba(248, 250, 252, 0.92);
   color: #475569;
   font-size: 11px;
   font-weight: 700;
@@ -2748,9 +2948,9 @@ async function handleReplanPlan(planId: string) {
   transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
 
   &.active {
-    background: color-mix(in srgb, var(--primary) 16%, rgba(255, 255, 255, 0.92));
-    border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
-    color: var(--text-primary);
+    background: color-mix(in srgb, var(--primary) 14%, rgba(255, 255, 255, 0.96));
+    border-color: color-mix(in srgb, var(--primary) 38%, rgba(148, 163, 184, 0.2));
+    color: #1f2937;
   }
 
   &:hover {
@@ -2921,10 +3121,10 @@ async function handleReplanPlan(planId: string) {
 .inspector-toolbar {
   display: grid;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid rgba(100, 116, 139, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 244, 249, 0.88));
-  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(237, 242, 248, 0.94));
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
 }
 
 .inspector-copy {
@@ -2961,9 +3161,9 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-plan-panel),
 :deep(.ide-dev-log),
 :deep(.ide-assistant-panel) {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.95));
-  border: 1px solid rgba(100, 116, 139, 0.18);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(180deg, rgba(252, 253, 254, 0.99), rgba(246, 248, 251, 0.99));
+  border: 1px solid rgba(100, 116, 139, 0.14);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
 }
 
 :deep(.ide-activity-bar) {
@@ -2991,7 +3191,7 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-plan-panel),
 :deep(.ide-dev-log),
 :deep(.ide-assistant-panel) {
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 :deep(.ide-explorer),
@@ -3039,14 +3239,14 @@ async function handleReplanPlan(planId: string) {
 }
 
 :deep(.ide-editor .editor-tabs) {
-  gap: 4px;
-  padding-bottom: 6px;
+  gap: 1px;
+  padding-bottom: 0;
 }
 
 :deep(.ide-editor .editor-tab) {
-  min-height: 28px;
-  padding: 0 9px;
-  border-radius: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px 8px 0 0;
 }
 
 :deep(.ide-editor .editor-toolbar),
@@ -3055,9 +3255,11 @@ async function handleReplanPlan(planId: string) {
   padding: 4px 8px;
 }
 
-:deep(.ide-editor .editor-textarea) {
-  font-size: 11px;
-  line-height: 1.5;
+:deep(.ide-editor .editor-host),
+:deep(.ide-editor .monaco-editor),
+:deep(.ide-editor .monaco-editor .view-lines) {
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 :deep(.ide-terminal .terminal-tab) {
@@ -3079,12 +3281,29 @@ async function handleReplanPlan(planId: string) {
 }
 
 :deep(.ide-assistant-panel .panel-head) {
-  align-items: flex-start;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 :deep(.ide-assistant-panel .session-select) {
   min-height: 32px;
   padding: 0 10px;
+}
+
+:deep(.ide-assistant-panel .runtime-strip) {
+  margin-top: -2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+:deep(.ide-assistant-panel .assistant-messages) {
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(247, 250, 253, 0.92), rgba(242, 246, 251, 0.9));
+}
+
+:deep(.ide-assistant-panel .assistant-input) {
+  padding-top: 2px;
 }
 
 @media (max-width: 1440px) {

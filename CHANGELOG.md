@@ -1,7 +1,13 @@
 # 更新日志
 
-## Unreleased
+## 3.0.8 - 2026-03-16
 
+- IDE 文件读取卡死修复：`IDEView.vue` 的 `openFile()` 不再在 `await` 之后直接回写被推入响应式数组前的原始 tab 对象，改为通过稳定的 reactive patch 更新标签状态，并为文件读取补上请求序号保护，避免编辑器实际已读完文件却一直停在“正在读取文件...”。
+- IDE 编辑器空态 / 加载态继续收口：`IDEEditor.vue` 把原来的整页发白 loading 改成了更紧凑的状态卡，新增明确的失败原因与“重新读取”入口，让文件读取失败与文件仍在加载中的状态更容易区分。
+- IDE 编辑器真正切到 Monaco 主链：`IDEEditor.vue` 新增初始化诊断与稳定挂载链，`src/utils/ideMonaco.ts` 的 Monaco 主题、语言贡献与编辑器实例已在真实 Electron 渲染下确认生效，`Python / JSON` 等文件现在可正常显示语法高亮、行号与不同颜色字体，不再出现“标签已打开但编辑区一直空白”的假死状态。
+- IDE 文件读取补上超时兜底：`IDEView.vue` 新增工作区文件读取超时保护，后续即使本地磁盘、网络盘或 IPC 出现异常延迟，也不会再无限停留在“正在读取文件...”，而是明确落到可重试错误态。
+- IDE 工作台继续向桌面 IDE 形态收口：`IDEView.vue`、`IDEEditor.vue`、`IDEAssistantPanel.vue` 调整了默认栏宽、终端高度、事实条去重、编辑器标签样式与 Inspector 密度，继续压低发白发粉的玻璃卡片感，让编辑区在视觉上重新成为核心焦点。
+- 构建链补强 Windows 资源复制稳定性：`vite.config.mts` 的桌面 TTS 资源复制逻辑改为带重试的异步复制，降低 `EBUSY / EPERM` 导致的重复构建或打包失败概率。
 - Agent / IDE 会话彻底隔离：`src/types/index.ts` 与 `src/stores/ai.ts` 新增独立 `ide` 会话域，`IDEAssistantPanel.vue` 改为只读取 IDE 主Agent与 IDE 会话，不再复用 `main` Agent 对话；`stores/ai.ts` 还在底层收紧了“已有消息的会话不可再改绑角色”，避免会话切角色导致记忆和人设错乱。
 - IDE 主Agent 收口：新增内置 `agent-ide-master` 作为 IDE 模式专用主Agent，负责工作区规划、子代理委派与长任务推进；该角色不会出现在普通 Agent 角色列表中，从而避免 IDE 配置继续污染 Agent 模式。
 - Agent 工作台布局继续修正：`AgentView.vue` 改成更稳定的三段式壳层，消息区内部滚动、输入区固定贴底；`AgentProfileManager.vue` 拆成“角色列表滚动区 + 编辑表单滚动区”，重新保证左侧角色配置区可完整滚动和保存。

@@ -19,174 +19,106 @@
       <div v-if="tabs.length === 0" class="editor-tab-placeholder">{{ workspaceName || '未打开工作区' }}</div>
     </div>
 
-    <div v-if="!activeTab" class="editor-empty">
-      <strong>编辑器已就绪</strong>
-      <p>从左侧文件浏览器选择一个文件，或先打开一个工作区。</p>
+    <div class="editor-toolbar">
+      <div class="editor-meta">
+        <div class="editor-path" :title="activeTab?.path || workspaceName || '未打开文件'">
+          {{ activeTab?.path || workspaceName || '未打开文件' }}
+        </div>
+        <div class="editor-meta-row">
+          <span class="editor-meta-pill">{{ activeLanguageLabel }}</span>
+          <span class="editor-meta-pill">UTF-8</span>
+          <span v-if="activeTab && activeTab.content !== activeTab.savedContent" class="editor-meta-pill is-warning">未保存</span>
+        </div>
+      </div>
+
+      <div class="editor-actions">
+        <button
+          class="btn btn-ghost btn-sm"
+          :disabled="toolbarActionsDisabled"
+          @click="runEditorAction('actions.find')"
+        >
+          查找
+        </button>
+        <button
+          class="btn btn-ghost btn-sm"
+          :disabled="toolbarActionsDisabled"
+          @click="runEditorAction('editor.action.startFindReplaceAction')"
+        >
+          替换
+        </button>
+        <button class="btn btn-secondary btn-sm" :disabled="!activeTab || activeTab.loading" @click="$emit('save')">保存</button>
+        <button class="btn btn-ghost btn-sm" @click="$emit('save-all')">全部保存</button>
+      </div>
     </div>
 
-    <template v-else>
-      <div class="editor-toolbar">
-        <div class="editor-path">{{ activeTab.path }}</div>
-        <div class="editor-actions">
-          <button
-            class="btn btn-ghost btn-sm"
-            :class="{ 'is-active': showSearchPanel && !replaceMode }"
-            :disabled="activeTab.loading || Boolean(activeTab.error)"
-            @click="openSearch('find')"
-          >
-            查找
-          </button>
-          <button
-            class="btn btn-ghost btn-sm"
-            :class="{ 'is-active': showSearchPanel && replaceMode }"
-            :disabled="activeTab.loading || Boolean(activeTab.error)"
-            @click="openSearch('replace')"
-          >
-            替换
-          </button>
-          <button class="btn btn-secondary btn-sm" :disabled="activeTab.loading" @click="$emit('save')">保存</button>
-          <button class="btn btn-ghost btn-sm" @click="$emit('save-all')">全部保存</button>
+    <div class="editor-surface" :class="{ 'is-blocked': !activeTab || Boolean(activeTab?.error || editorInitError || activeTab?.loading) }">
+      <div ref="editorHostRef" class="editor-host"></div>
+      <div v-if="!activeTab" class="editor-state-overlay editor-state--empty">
+        <div class="editor-empty-card">
+          <span class="editor-state-eyebrow">Ready</span>
+          <strong>编辑器已就绪</strong>
+          <p>从左侧文件浏览器选择一个文件，或先打开一个工作区。Monaco 编辑器会在首次进入时初始化语法高亮、查找替换和基础代码提示。</p>
         </div>
       </div>
-
-      <div v-if="showSearchPanel && !activeTab.loading && !activeTab.error" class="editor-search-panel">
-        <div class="editor-search-row">
-          <label class="editor-search-field">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/>
-            </svg>
-            <input
-              ref="searchInputRef"
-              v-model="searchQuery"
-              type="text"
-              class="editor-search-input"
-              placeholder="查找"
-              @keydown="handleSearchInputKeydown"
-            >
-          </label>
-
+      <div v-else-if="activeTab.error || editorInitError" class="editor-state-overlay editor-state--error">
+        <div class="editor-state-card">
+          <span class="editor-state-eyebrow">{{ editorInitError ? '编辑器初始化失败' : '读取失败' }}</span>
+          <strong>{{ editorInitError ? 'Monaco 编辑器暂时未能启动' : `暂时无法打开 ${fileName(activeTab.path)}` }}</strong>
+          <p>{{ editorInitError || activeTab.error }}</p>
           <button
-            class="editor-search-chip"
-            :class="{ 'is-active': matchCase }"
+            class="btn btn-secondary btn-sm"
             type="button"
-            title="区分大小写"
-            @click="matchCase = !matchCase"
+            @click="editorInitError ? retryEditorInitialization() : $emit('retry')"
           >
-            Aa
-          </button>
-
-          <button
-            class="editor-icon-button"
-            type="button"
-            title="上一个匹配"
-            :disabled="!hasMatches"
-            @click="navigateMatches(-1)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="18 15 12 9 6 15"/>
-            </svg>
-          </button>
-
-          <button
-            class="editor-icon-button"
-            type="button"
-            title="下一个匹配"
-            :disabled="!hasMatches"
-            @click="navigateMatches(1)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </button>
-
-          <span class="editor-search-summary">{{ searchSummary }}</span>
-
-          <button class="editor-icon-button" type="button" title="关闭查找" @click="closeSearch">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        <div v-if="replaceMode" class="editor-search-row">
-          <label class="editor-search-field">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-            </svg>
-            <input
-              v-model="replaceQuery"
-              type="text"
-              class="editor-search-input"
-              placeholder="替换为"
-              @keydown="handleReplaceInputKeydown"
-            >
-          </label>
-
-          <button class="btn btn-secondary btn-sm" type="button" :disabled="!hasMatches" @click="replaceCurrentMatch">
-            替换当前
-          </button>
-          <button class="btn btn-ghost btn-sm" type="button" :disabled="!hasMatches" @click="replaceAllMatches">
-            全部替换
+            {{ editorInitError ? '重新初始化编辑器' : '重新读取' }}
           </button>
         </div>
       </div>
-
-      <div v-if="activeTab.error" class="editor-error">
-        <strong>文件读取失败</strong>
-        <p>{{ activeTab.error }}</p>
-      </div>
-
-      <div v-else-if="activeTab.loading" class="editor-loading">
-        <div class="editor-loading-bar"></div>
-        <span>正在读取文件...</span>
-      </div>
-
-      <div v-else class="editor-surface">
-        <div ref="gutterRef" class="editor-gutter" aria-hidden="true">
-          <span
-            v-for="lineNumber in lineNumbers"
-            :key="lineNumber"
-            class="editor-gutter-line"
-            :class="{ 'is-active': lineNumber === cursorLine }"
-          >
-            {{ lineNumber }}
-          </span>
+      <div v-else-if="activeTab.loading" class="editor-state-overlay editor-state--loading">
+        <div class="editor-state-card">
+          <span class="editor-state-eyebrow">正在同步文件</span>
+          <strong>{{ fileName(activeTab.path) }}</strong>
+          <p>正在从工作区载入内容并初始化语法高亮。若文件较大或位于网络盘，首次读取会稍慢一点。</p>
+          <div class="editor-loading-skeleton">
+            <div class="editor-loading-bar is-primary"></div>
+            <div class="editor-loading-bar"></div>
+            <div class="editor-loading-bar is-short"></div>
+          </div>
         </div>
-
-        <textarea
-          ref="textareaRef"
-          class="editor-textarea"
-          :value="activeTab.content"
-          spellcheck="false"
-          wrap="off"
-          autocapitalize="off"
-          autocomplete="off"
-          autocorrect="off"
-          @input="handleInput"
-          @keydown="handleEditorKeydown"
-          @click="handleSelectionChange"
-          @keyup="handleSelectionChange"
-          @mouseup="handleSelectionChange"
-          @select="handleSelectionChange"
-          @scroll="syncGutterScroll"
-        />
       </div>
-
-      <div class="editor-footer">
-        <span>{{ activeTab.language || 'Plain Text' }}</span>
-        <span>{{ lineCount }} 行</span>
-        <span>{{ activeTab.content.length }} 字符</span>
-        <span>Ln {{ cursorLine }}, Col {{ cursorColumn }}</span>
-        <span v-if="selectionLength > 0">已选 {{ selectionLength }}</span>
-        <span v-if="showSearchPanel && searchQuery" class="editor-search-footer">{{ searchSummary }}</span>
-        <span v-if="activeTab.content !== activeTab.savedContent" class="editor-unsaved">未保存</span>
+      <div v-else-if="initializingEditor && !editorRef" class="editor-state-overlay editor-state--initializing">
+        <div class="editor-state-card">
+          <span class="editor-state-eyebrow">初始化编辑器</span>
+          <strong>正在装载 Monaco 编辑器内核</strong>
+          <p>首次进入会加载语言服务、主题和代码提示能力。完成后会直接显示文件内容。</p>
+          <div class="editor-loading-skeleton">
+            <div class="editor-loading-bar is-primary"></div>
+            <div class="editor-loading-bar"></div>
+            <div class="editor-loading-bar is-short"></div>
+          </div>
+        </div>
       </div>
-    </template>
+    </div>
+
+    <div class="editor-footer">
+      <span>{{ activeLanguageLabel }}</span>
+      <span>{{ lineCount }} 行</span>
+      <span>{{ activeTab?.content.length || 0 }} 字符</span>
+      <span>Ln {{ cursorLine }}, Col {{ cursorColumn }}</span>
+      <span v-if="selectionLength > 0">已选 {{ selectionLength }}</span>
+      <span class="editor-runtime">{{ editorRuntimeLabel }}</span>
+      <span v-if="activeTab && activeTab.content !== activeTab.savedContent" class="editor-unsaved">未保存</span>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchPostEffect, type PropType } from 'vue'
+import { formatMonacoLanguageLabel, loadIdeMonaco, resolveMonacoLanguage } from '@/utils/ideMonaco'
+
+type MonacoModule = typeof import('monaco-editor/esm/vs/editor/editor.api')
+type MonacoEditor = import('monaco-editor/esm/vs/editor/editor.api').editor.IStandaloneCodeEditor
+type MonacoModel = import('monaco-editor/esm/vs/editor/editor.api').editor.ITextModel
 
 interface EditorTab {
   path: string
@@ -197,11 +129,6 @@ interface EditorTab {
   error: string
   selectionStart?: number
   selectionEnd?: number
-}
-
-interface SearchMatch {
-  start: number
-  end: number
 }
 
 const props = defineProps({
@@ -224,20 +151,85 @@ const emit = defineEmits<{
   (event: 'close-tab', path: string): void
   (event: 'update-content', content: string): void
   (event: 'update-selection', payload: { selectionStart: number; selectionEnd: number }): void
+  (event: 'retry'): void
   (event: 'save'): void
   (event: 'save-all'): void
 }>()
 
-const textareaRef = ref<HTMLTextAreaElement | null>(null)
-const gutterRef = ref<HTMLDivElement | null>(null)
-const searchInputRef = ref<HTMLInputElement | null>(null)
-const showSearchPanel = ref(false)
-const replaceMode = ref(false)
-const searchQuery = ref('')
-const replaceQuery = ref('')
-const matchCase = ref(false)
+const editorHostRef = ref<HTMLDivElement | null>(null)
+const monacoRef = shallowRef<MonacoModule | null>(null)
+const editorRef = shallowRef<MonacoEditor | null>(null)
+const modelRegistry = new Map<string, MonacoModel>()
+const initializingEditor = ref(false)
+const editorInitError = ref('')
+const selectionLength = ref(0)
+const cursorLine = ref(1)
+const cursorColumn = ref(1)
+let contentSyncMuted = false
+let selectionSyncMuted = false
+let editorInitializationPromise: Promise<void> | null = null
+let editorInitializationFrame: number | null = null
+let editorBootstrapTimer: number | null = null
+let editorBootstrapAttempts = 0
+
+type IDEEditorDebugState = {
+  mountedAt?: number
+  mounted?: boolean
+  hostReady?: boolean
+  hostChildCount?: number
+  activePath?: string
+  activeTabLoading?: boolean
+  activeTabError?: string
+  tabCount?: number
+  initState?: string
+  initStartedAt?: number
+  initFinishedAt?: number
+  initAttempts?: number
+  editorReady?: boolean
+  error?: string
+}
+
+function updateEditorDebugState(patch: Partial<IDEEditorDebugState>) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const targetWindow = window as Window & {
+    __OPENAGENT_IDE_EDITOR_DEBUG__?: IDEEditorDebugState
+  }
+
+  targetWindow.__OPENAGENT_IDE_EDITOR_DEBUG__ = {
+    mounted: false,
+    hostReady: Boolean(editorHostRef.value),
+    hostChildCount: editorHostRef.value?.childElementCount || 0,
+    activePath: props.activePath,
+    activeTabLoading: Boolean(activeTab.value?.loading),
+    activeTabError: activeTab.value?.error || '',
+    tabCount: props.tabs.length,
+    initState: editorRef.value ? 'ready' : initializingEditor.value ? 'initializing' : 'idle',
+    initAttempts: editorBootstrapAttempts,
+    editorReady: Boolean(editorRef.value),
+    error: editorInitError.value,
+    ...(targetWindow.__OPENAGENT_IDE_EDITOR_DEBUG__ || {}),
+    ...patch,
+  }
+}
 
 const activeTab = computed(() => props.tabs.find(tab => tab.path === props.activePath) ?? null)
+const activeLanguage = computed(() => resolveMonacoLanguage(activeTab.value?.language, activeTab.value?.path || ''))
+const activeLanguageLabel = computed(() => formatMonacoLanguageLabel(activeLanguage.value))
+const toolbarActionsDisabled = computed(() => !activeTab.value || activeTab.value.loading || Boolean(activeTab.value.error) || Boolean(editorInitError.value))
+const editorRuntimeLabel = computed(() => {
+  if (editorInitError.value) {
+    return 'Monaco 初始化失败'
+  }
+
+  if (editorRef.value) {
+    return 'Monaco'
+  }
+
+  return initializingEditor.value ? '正在装载编辑器' : '等待挂载'
+})
 const lineCount = computed(() => {
   if (!activeTab.value) {
     return 0
@@ -245,86 +237,461 @@ const lineCount = computed(() => {
 
   return activeTab.value.content.split(/\r?\n/).length
 })
-const lineNumbers = computed(() => Array.from({ length: Math.max(lineCount.value, 1) }, (_, index) => index + 1))
-const selectionRange = computed(() => {
-  if (!activeTab.value) {
-    return { selectionStart: 0, selectionEnd: 0 }
-  }
-
-  return normalizeSelectionRange(
-    activeTab.value.content,
-    activeTab.value.selectionStart ?? 0,
-    activeTab.value.selectionEnd ?? 0,
-  )
-})
-const cursorState = computed(() => deriveCursorState(
-  activeTab.value?.content ?? '',
-  selectionRange.value.selectionStart,
-  selectionRange.value.selectionEnd,
-))
-const cursorLine = computed(() => cursorState.value.line)
-const cursorColumn = computed(() => cursorState.value.column)
-const selectionLength = computed(() => cursorState.value.selectionLength)
-const matches = computed(() => collectMatches(activeTab.value?.content ?? '', searchQuery.value, matchCase.value))
-const hasMatches = computed(() => matches.value.length > 0)
-const currentMatchIndex = computed(() => resolveCurrentMatchIndex(
-  selectionRange.value.selectionStart,
-  selectionRange.value.selectionEnd,
-  matches.value,
-))
-const searchSummary = computed(() => {
-  if (!showSearchPanel.value) {
-    return ''
-  }
-
-  if (searchQuery.value.length === 0) {
-    return '输入内容后开始查找'
-  }
-
-  if (!hasMatches.value) {
-    return '0 个匹配'
-  }
-
-  if (currentMatchIndex.value >= 0) {
-    return `${currentMatchIndex.value + 1} / ${matches.value.length}`
-  }
-
-  return `共 ${matches.value.length} 个匹配`
-})
 
 watch(
-  () => [activeTab.value?.path ?? '', activeTab.value?.loading ?? false],
-  async () => {
-    await nextTick()
-    if (!activeTab.value || activeTab.value.loading || activeTab.value.error) {
-      return
-    }
-
-    applySelectionToTextarea(selectionRange.value.selectionStart, selectionRange.value.selectionEnd, {
-      emitSelection: false,
-      focus: false,
-    })
-    syncGutterScroll()
+  () => props.tabs.map(tab => `${tab.path}:${tab.language || ''}`),
+  () => {
+    syncTabModels()
+    void syncActiveEditorState()
   },
   { immediate: true },
 )
 
 watch(
-  () => searchQuery.value,
+  () => activeTab.value?.content ?? '',
   () => {
-    if (!showSearchPanel.value || searchQuery.value.length === 0 || matches.value.length === 0) {
-      return
-    }
-
-    if (currentMatchIndex.value >= 0) {
-      return
-    }
-
-    void nextTick(() => {
-      navigateMatches(1, { focus: false })
-    })
+    syncActiveModelContent()
   },
 )
+
+watch(
+  () => [activeTab.value?.selectionStart ?? 0, activeTab.value?.selectionEnd ?? 0, activeTab.value?.path ?? ''],
+  () => {
+    syncSelectionFromProps()
+  },
+)
+
+watch(
+  () => [activeTab.value?.path ?? '', activeTab.value?.loading ?? false, activeTab.value?.error ?? ''],
+  () => {
+    void syncActiveEditorState()
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  updateEditorDebugState({
+    mounted: true,
+    mountedAt: Date.now(),
+    initState: 'mounted',
+  })
+  void loadIdeMonaco().then(monaco => {
+    monacoRef.value = monaco
+    updateEditorDebugState({
+      initState: editorRef.value ? 'ready' : 'monaco-loaded',
+    })
+  })
+  void nextTick(() => {
+    updateEditorDebugState({
+      hostReady: Boolean(editorHostRef.value),
+      hostChildCount: editorHostRef.value?.childElementCount || 0,
+      initState: editorRef.value ? 'ready' : 'next-tick',
+    })
+    scheduleEditorInitialization()
+    void syncActiveEditorState()
+  })
+  startEditorBootstrapLoop()
+})
+
+watchPostEffect(() => {
+  updateEditorDebugState({
+    hostReady: Boolean(editorHostRef.value),
+    hostChildCount: editorHostRef.value?.childElementCount || 0,
+    activePath: props.activePath,
+    activeTabLoading: Boolean(activeTab.value?.loading),
+    activeTabError: activeTab.value?.error || '',
+    tabCount: props.tabs.length,
+    initState: editorRef.value ? 'ready' : initializingEditor.value ? 'initializing' : 'idle',
+    editorReady: Boolean(editorRef.value),
+    error: editorInitError.value,
+  })
+
+  if (!editorHostRef.value || editorRef.value || editorInitError.value) {
+    return
+  }
+
+  scheduleEditorInitialization()
+})
+
+onBeforeUnmount(() => {
+  if (editorInitializationFrame !== null) {
+    window.cancelAnimationFrame(editorInitializationFrame)
+    editorInitializationFrame = null
+  }
+  stopEditorBootstrapLoop()
+  for (const model of modelRegistry.values()) {
+    model.dispose()
+  }
+  modelRegistry.clear()
+  editorRef.value?.dispose()
+})
+
+function scheduleEditorInitialization() {
+  if (!editorHostRef.value || editorRef.value || editorInitializationPromise || editorInitError.value) {
+    return
+  }
+
+  updateEditorDebugState({
+    initState: 'scheduled',
+    hostReady: Boolean(editorHostRef.value),
+    hostChildCount: editorHostRef.value?.childElementCount || 0,
+  })
+
+  if (editorInitializationFrame !== null) {
+    window.cancelAnimationFrame(editorInitializationFrame)
+  }
+
+  editorInitializationFrame = window.requestAnimationFrame(() => {
+    editorInitializationFrame = null
+    if (!editorHostRef.value || editorRef.value || editorInitializationPromise || editorInitError.value) {
+      return
+    }
+
+    updateEditorDebugState({
+      initState: 'frame-fired',
+      hostReady: Boolean(editorHostRef.value),
+      hostChildCount: editorHostRef.value?.childElementCount || 0,
+    })
+    void initializeMonacoEditor()
+  })
+}
+
+function startEditorBootstrapLoop() {
+  stopEditorBootstrapLoop()
+  editorBootstrapAttempts = 0
+  editorBootstrapTimer = window.setInterval(() => {
+    if (editorRef.value || editorInitError.value) {
+      stopEditorBootstrapLoop()
+      return
+    }
+
+    editorBootstrapAttempts += 1
+    updateEditorDebugState({
+      initAttempts: editorBootstrapAttempts,
+      initState: 'bootstrap-loop',
+      hostReady: Boolean(editorHostRef.value),
+      hostChildCount: editorHostRef.value?.childElementCount || 0,
+    })
+    if (editorHostRef.value && !editorInitializationPromise) {
+      void initializeMonacoEditor()
+    }
+
+    if (editorBootstrapAttempts >= 60) {
+      stopEditorBootstrapLoop()
+    }
+  }, 120)
+}
+
+function stopEditorBootstrapLoop() {
+  if (editorBootstrapTimer !== null) {
+    window.clearInterval(editorBootstrapTimer)
+    editorBootstrapTimer = null
+  }
+}
+
+async function initializeMonacoEditor() {
+  if (editorRef.value) {
+    updateEditorDebugState({
+      initState: 'ready',
+      editorReady: true,
+      hostChildCount: editorHostRef.value?.childElementCount || 0,
+    })
+    return
+  }
+
+  if (editorInitializationPromise) {
+    await editorInitializationPromise
+    return
+  }
+
+  editorInitializationPromise = (async () => {
+    await nextTick()
+    if (!editorHostRef.value) {
+      updateEditorDebugState({
+        initState: 'host-missing-after-tick',
+        hostReady: false,
+        hostChildCount: 0,
+      })
+      return
+    }
+
+    initializingEditor.value = true
+    editorInitError.value = ''
+    updateEditorDebugState({
+      initState: 'starting',
+      initStartedAt: Date.now(),
+      hostReady: true,
+      hostChildCount: editorHostRef.value.childElementCount,
+      error: '',
+    })
+
+    try {
+      const monaco = await loadIdeMonaco()
+      monacoRef.value = monaco
+      updateEditorDebugState({
+        initState: 'monaco-ready',
+        hostReady: Boolean(editorHostRef.value),
+        hostChildCount: editorHostRef.value?.childElementCount || 0,
+      })
+
+      if (!editorHostRef.value || editorRef.value) {
+        updateEditorDebugState({
+          initState: editorRef.value ? 'already-ready' : 'host-missing-before-create',
+          hostReady: Boolean(editorHostRef.value),
+          hostChildCount: editorHostRef.value?.childElementCount || 0,
+        })
+        return
+      }
+
+      const editor = monaco.editor.create(editorHostRef.value, {
+        value: '',
+        language: 'plaintext',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        smoothScrolling: true,
+        renderLineHighlight: 'gutter',
+        wordWrap: 'off',
+        fontFamily: 'Cascadia Code, Consolas, SFMono-Regular, monospace',
+        fontSize: 13,
+        lineHeight: 20,
+        tabSize: 2,
+        insertSpaces: true,
+        quickSuggestions: { other: true, comments: false, strings: true },
+        suggestOnTriggerCharacters: true,
+        wordBasedSuggestions: 'currentDocument',
+        bracketPairColorization: { enabled: true },
+        guides: { bracketPairs: true, indentation: true },
+        stickyScroll: { enabled: false },
+        padding: { top: 12, bottom: 12 },
+        fixedOverflowWidgets: true,
+        contextmenu: true,
+        overviewRulerLanes: 0,
+        scrollbar: {
+          verticalScrollbarSize: 10,
+          horizontalScrollbarSize: 10,
+        },
+      })
+
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS, () => emit('save-all'))
+
+      editor.onDidChangeModelContent(() => {
+        if (contentSyncMuted) {
+          return
+        }
+
+        const model = editor.getModel()
+        if (!model || !activeTab.value) {
+          return
+        }
+
+        emit('update-content', model.getValue())
+      })
+
+      editor.onDidChangeCursorSelection(event => {
+        const model = editor.getModel()
+        if (!model) {
+          return
+        }
+
+        const selectionStart = model.getOffsetAt(event.selection.getStartPosition())
+        const selectionEnd = model.getOffsetAt(event.selection.getEndPosition())
+        updateCursorState(model.getValue(), selectionStart, selectionEnd)
+
+        if (selectionSyncMuted) {
+          return
+        }
+
+        emit('update-selection', { selectionStart, selectionEnd })
+      })
+
+      editorRef.value = editor
+      console.info('[IDEEditor] Monaco editor created')
+      updateEditorDebugState({
+        initState: 'created',
+        initFinishedAt: Date.now(),
+        hostReady: true,
+        hostChildCount: editorHostRef.value.childElementCount,
+        editorReady: true,
+      })
+      syncTabModels()
+      await syncActiveEditorState()
+    } catch (error) {
+      console.error('Failed to initialize Monaco editor:', error)
+      editorInitError.value = error instanceof Error ? error.message : '未知错误'
+      updateEditorDebugState({
+        initState: 'failed',
+        initFinishedAt: Date.now(),
+        error: editorInitError.value,
+        editorReady: false,
+        hostReady: Boolean(editorHostRef.value),
+        hostChildCount: editorHostRef.value?.childElementCount || 0,
+      })
+    } finally {
+      initializingEditor.value = false
+      editorInitializationPromise = null
+      updateEditorDebugState({
+        initState: editorRef.value ? 'ready' : editorInitError.value ? 'failed' : 'idle',
+        editorReady: Boolean(editorRef.value),
+        error: editorInitError.value,
+        hostReady: Boolean(editorHostRef.value),
+        hostChildCount: editorHostRef.value?.childElementCount || 0,
+      })
+    }
+  })()
+
+  await editorInitializationPromise
+}
+
+function buildModelUri(monaco: MonacoModule, filePath: string) {
+  const normalizedPath = filePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/')
+  return monaco.Uri.parse(`file:///openagent-workspace/${normalizedPath}`)
+}
+
+function getOrCreateModel(tab: EditorTab) {
+  const monaco = monacoRef.value
+  if (!monaco) {
+    return null
+  }
+
+  const existingModel = modelRegistry.get(tab.path)
+  if (existingModel) {
+    const language = resolveMonacoLanguage(tab.language, tab.path)
+    if (existingModel.getLanguageId() !== language) {
+      monaco.editor.setModelLanguage(existingModel, language)
+    }
+    return existingModel
+  }
+
+  const model = monaco.editor.createModel(
+    tab.content,
+    resolveMonacoLanguage(tab.language, tab.path),
+    buildModelUri(monaco, tab.path),
+  )
+  modelRegistry.set(tab.path, model)
+  return model
+}
+
+function syncTabModels() {
+  const nextPaths = new Set(props.tabs.map(tab => tab.path))
+
+  for (const [path, model] of modelRegistry.entries()) {
+    if (!nextPaths.has(path)) {
+      model.dispose()
+      modelRegistry.delete(path)
+    }
+  }
+
+  for (const tab of props.tabs) {
+    getOrCreateModel(tab)
+  }
+}
+
+function syncModelContent(model: MonacoModel, content: string) {
+  if (model.getValue() === content) {
+    return
+  }
+
+  contentSyncMuted = true
+  model.setValue(content)
+  contentSyncMuted = false
+}
+
+async function syncActiveEditorState() {
+  updateEditorDebugState({
+    activePath: props.activePath,
+    activeTabLoading: Boolean(activeTab.value?.loading),
+    activeTabError: activeTab.value?.error || '',
+    tabCount: props.tabs.length,
+    initState: editorRef.value ? 'syncing' : editorInitializationPromise ? 'waiting-init' : 'sync-requested',
+  })
+
+  if (!editorRef.value) {
+    await initializeMonacoEditor()
+  }
+
+  const editor = editorRef.value
+  if (!editor || editorInitError.value) {
+    updateEditorDebugState({
+      initState: editorInitError.value ? 'sync-blocked-by-error' : 'sync-no-editor',
+      editorReady: Boolean(editor),
+      error: editorInitError.value,
+    })
+    return
+  }
+
+  if (!activeTab.value || activeTab.value.loading || activeTab.value.error) {
+    editor.setModel(null)
+    updateEditorDebugState({
+      initState: !activeTab.value ? 'no-active-tab' : activeTab.value.loading ? 'active-tab-loading' : 'active-tab-error',
+      editorReady: true,
+      hostChildCount: editorHostRef.value?.childElementCount || 0,
+    })
+    return
+  }
+
+  const model = getOrCreateModel(activeTab.value)
+  if (!model) {
+    return
+  }
+
+  syncModelContent(model, activeTab.value.content)
+
+  if (editor.getModel() !== model) {
+    editor.setModel(model)
+  }
+
+  applySelectionToEditor(activeTab.value.selectionStart ?? 0, activeTab.value.selectionEnd ?? 0)
+  updateCursorState(activeTab.value.content, activeTab.value.selectionStart ?? 0, activeTab.value.selectionEnd ?? 0)
+
+  await nextTick()
+  editor.layout()
+  updateEditorDebugState({
+    initState: 'active-model-ready',
+    editorReady: true,
+    hostChildCount: editorHostRef.value?.childElementCount || 0,
+  })
+}
+
+function syncActiveModelContent() {
+  const editor = editorRef.value
+  if (!editor || !activeTab.value || activeTab.value.loading || activeTab.value.error) {
+    return
+  }
+
+  const model = getOrCreateModel(activeTab.value)
+  if (!model) {
+    return
+  }
+
+  syncModelContent(model, activeTab.value.content)
+  updateCursorState(activeTab.value.content, activeTab.value.selectionStart ?? 0, activeTab.value.selectionEnd ?? 0)
+}
+
+function syncSelectionFromProps() {
+  if (!editorRef.value || !activeTab.value || activeTab.value.loading || activeTab.value.error) {
+    return
+  }
+
+  applySelectionToEditor(activeTab.value.selectionStart ?? 0, activeTab.value.selectionEnd ?? 0)
+}
+
+function updateCursorState(content: string, selectionStart: number, selectionEnd: number) {
+  const normalizedSelection = normalizeSelectionRange(content, selectionStart, selectionEnd)
+  const leadingContent = content.slice(0, normalizedSelection.selectionStart)
+  const lines = leadingContent.split(/\r?\n/)
+  const activeLine = lines[lines.length - 1] ?? ''
+
+  cursorLine.value = lines.length
+  cursorColumn.value = activeLine.length + 1
+  selectionLength.value = normalizedSelection.selectionEnd - normalizedSelection.selectionStart
+}
 
 function normalizeSelectionOffset(value: number, contentLength: number) {
   if (!Number.isFinite(value)) {
@@ -345,282 +712,47 @@ function normalizeSelectionRange(content: string, selectionStart: number, select
   }
 }
 
-function deriveCursorState(content: string, selectionStart: number, selectionEnd: number) {
-  const normalizedSelection = normalizeSelectionRange(content, selectionStart, selectionEnd)
-  const leadingContent = content.slice(0, normalizedSelection.selectionStart)
-  const lines = leadingContent.split(/\r?\n/)
-  const activeLine = lines[lines.length - 1] ?? ''
-
-  return {
-    line: lines.length,
-    column: activeLine.length + 1,
-    selectionLength: normalizedSelection.selectionEnd - normalizedSelection.selectionStart,
+function applySelectionToEditor(selectionStart: number, selectionEnd: number) {
+  const editor = editorRef.value
+  const model = editor?.getModel()
+  if (!editor || !model) {
+    return
   }
+
+  const normalizedSelection = normalizeSelectionRange(model.getValue(), selectionStart, selectionEnd)
+  const startPosition = model.getPositionAt(normalizedSelection.selectionStart)
+  const endPosition = model.getPositionAt(normalizedSelection.selectionEnd)
+
+  selectionSyncMuted = true
+  editor.setSelection({
+    startLineNumber: startPosition.lineNumber,
+    startColumn: startPosition.column,
+    endLineNumber: endPosition.lineNumber,
+    endColumn: endPosition.column,
+  })
+  selectionSyncMuted = false
 }
 
-function collectMatches(content: string, rawQuery: string, caseSensitive: boolean) {
-  if (rawQuery.length === 0) {
-    return [] as SearchMatch[]
+async function runEditorAction(actionId: string) {
+  const editor = editorRef.value
+  if (!editor) {
+    return
   }
 
-  const query = rawQuery
-  const source = caseSensitive ? content : content.toLocaleLowerCase()
-  const needle = caseSensitive ? query : query.toLocaleLowerCase()
-  const matchesList: SearchMatch[] = []
-
-  let searchFrom = 0
-  while (searchFrom <= source.length - needle.length) {
-    const matchIndex = source.indexOf(needle, searchFrom)
-    if (matchIndex === -1) {
-      break
-    }
-
-    matchesList.push({
-      start: matchIndex,
-      end: matchIndex + query.length,
-    })
-
-    searchFrom = matchIndex + Math.max(query.length, 1)
-  }
-
-  return matchesList
+  await editor.getAction(actionId)?.run()
+  editor.focus()
 }
 
-function resolveCurrentMatchIndex(selectionStart: number, selectionEnd: number, matchesList: SearchMatch[]) {
-  if (matchesList.length === 0) {
-    return -1
-  }
-
-  const exactMatchIndex = matchesList.findIndex(match => match.start === selectionStart && match.end === selectionEnd)
-  if (exactMatchIndex >= 0) {
-    return exactMatchIndex
-  }
-
-  if (selectionStart === selectionEnd) {
-    return matchesList.findIndex(match => match.start <= selectionStart && match.end > selectionStart)
-  }
-
-  return -1
+async function retryEditorInitialization() {
+  editorInitError.value = ''
+  editorRef.value?.dispose()
+  editorRef.value = null
+  await initializeMonacoEditor()
 }
 
 function fileName(filePath: string) {
   const normalized = filePath.replace(/\\/g, '/')
   return normalized.split('/').filter(Boolean).pop() || filePath
-}
-
-function syncGutterScroll() {
-  if (!textareaRef.value || !gutterRef.value) {
-    return
-  }
-
-  gutterRef.value.scrollTop = textareaRef.value.scrollTop
-}
-
-function emitSelectionFromTextarea(target: HTMLTextAreaElement | null) {
-  if (!target) {
-    return
-  }
-
-  const normalizedSelection = normalizeSelectionRange(
-    target.value,
-    target.selectionStart,
-    target.selectionEnd,
-  )
-  emit('update-selection', normalizedSelection)
-}
-
-function applySelectionToTextarea(
-  selectionStart: number,
-  selectionEnd: number,
-  options?: { focus?: boolean; emitSelection?: boolean },
-) {
-  const textarea = textareaRef.value
-  const currentTab = activeTab.value
-  if (!textarea || !currentTab) {
-    return
-  }
-
-  const normalizedSelection = normalizeSelectionRange(currentTab.content, selectionStart, selectionEnd)
-  textarea.setSelectionRange(normalizedSelection.selectionStart, normalizedSelection.selectionEnd)
-  if (options?.focus ?? false) {
-    textarea.focus()
-  }
-  if (options?.emitSelection ?? true) {
-    emit('update-selection', normalizedSelection)
-  }
-}
-
-function focusSearchField() {
-  void nextTick(() => {
-    searchInputRef.value?.focus()
-    searchInputRef.value?.select()
-  })
-}
-
-function openSearch(mode: 'find' | 'replace') {
-  showSearchPanel.value = true
-  replaceMode.value = mode === 'replace'
-  focusSearchField()
-}
-
-function closeSearch() {
-  showSearchPanel.value = false
-  replaceMode.value = false
-  textareaRef.value?.focus()
-}
-
-function getTargetMatchIndex(direction: 1 | -1) {
-  if (matches.value.length === 0) {
-    return -1
-  }
-
-  if (currentMatchIndex.value >= 0) {
-    return (currentMatchIndex.value + direction + matches.value.length) % matches.value.length
-  }
-
-  if (direction > 0) {
-    const nextMatchIndex = matches.value.findIndex(match => match.start >= selectionRange.value.selectionEnd)
-    return nextMatchIndex >= 0 ? nextMatchIndex : 0
-  }
-
-  for (let index = matches.value.length - 1; index >= 0; index -= 1) {
-    if (matches.value[index].end <= selectionRange.value.selectionStart) {
-      return index
-    }
-  }
-
-  return matches.value.length - 1
-}
-
-function navigateMatches(direction: 1 | -1, options?: { focus?: boolean }) {
-  const nextMatchIndex = getTargetMatchIndex(direction)
-  if (nextMatchIndex < 0) {
-    return
-  }
-
-  const nextMatch = matches.value[nextMatchIndex]
-  applySelectionToTextarea(nextMatch.start, nextMatch.end, { focus: options?.focus ?? false })
-}
-
-function handleInput(event: Event) {
-  const target = event.target as HTMLTextAreaElement | null
-  emit('update-content', target?.value || '')
-  emitSelectionFromTextarea(target)
-}
-
-function handleSelectionChange(event: Event) {
-  emitSelectionFromTextarea(event.target as HTMLTextAreaElement | null)
-}
-
-function replaceCurrentMatch() {
-  if (!activeTab.value || matches.value.length === 0) {
-    return
-  }
-
-  const nextMatchIndex = currentMatchIndex.value >= 0 ? currentMatchIndex.value : getTargetMatchIndex(1)
-  if (nextMatchIndex < 0) {
-    return
-  }
-
-  const targetMatch = matches.value[nextMatchIndex]
-  const nextContent = `${activeTab.value.content.slice(0, targetMatch.start)}${replaceQuery.value}${activeTab.value.content.slice(targetMatch.end)}`
-  const nextSelectionStart = targetMatch.start
-  const nextSelectionEnd = targetMatch.start + replaceQuery.value.length
-
-  emit('update-content', nextContent)
-  emit('update-selection', {
-    selectionStart: nextSelectionStart,
-    selectionEnd: nextSelectionEnd,
-  })
-
-  void nextTick(() => {
-    applySelectionToTextarea(nextSelectionStart, nextSelectionEnd, { emitSelection: false, focus: false })
-  })
-}
-
-function replaceAllMatches() {
-  if (!activeTab.value || matches.value.length === 0) {
-    return
-  }
-
-  const nextContentParts: string[] = []
-  let lastIndex = 0
-  for (const match of matches.value) {
-    nextContentParts.push(activeTab.value.content.slice(lastIndex, match.start))
-    nextContentParts.push(replaceQuery.value)
-    lastIndex = match.end
-  }
-  nextContentParts.push(activeTab.value.content.slice(lastIndex))
-
-  const nextSelectionStart = matches.value[0]?.start ?? 0
-  const nextSelectionEnd = nextSelectionStart + replaceQuery.value.length
-
-  emit('update-content', nextContentParts.join(''))
-  emit('update-selection', {
-    selectionStart: nextSelectionStart,
-    selectionEnd: nextSelectionEnd,
-  })
-
-  void nextTick(() => {
-    applySelectionToTextarea(nextSelectionStart, nextSelectionEnd, { emitSelection: false, focus: false })
-  })
-}
-
-function handleEditorKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-    event.preventDefault()
-    emit('save')
-    return
-  }
-
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-    event.preventDefault()
-    openSearch('find')
-    return
-  }
-
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
-    event.preventDefault()
-    openSearch('replace')
-    return
-  }
-
-  if (event.key === 'F3') {
-    event.preventDefault()
-    navigateMatches(event.shiftKey ? -1 : 1, { focus: false })
-    return
-  }
-
-  if (event.key === 'Escape' && showSearchPanel.value) {
-    event.preventDefault()
-    closeSearch()
-  }
-}
-
-function handleSearchInputKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    navigateMatches(event.shiftKey ? -1 : 1, { focus: false })
-    return
-  }
-
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeSearch()
-  }
-}
-
-function handleReplaceInputKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault()
-    replaceCurrentMatch()
-    return
-  }
-
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeSearch()
-  }
 }
 </script>
 
@@ -635,12 +767,12 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
 .editor-tabs {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 38px;
-  padding: 6px 8px;
+  gap: 1px;
+  min-height: 34px;
+  padding: 0 8px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: linear-gradient(180deg, rgba(233, 238, 245, 0.98), rgba(225, 232, 241, 0.98));
 }
 
 .editor-tab {
@@ -649,16 +781,19 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   gap: 6px;
   min-width: 0;
   max-width: 220px;
-  padding: 7px 9px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-secondary);
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: rgba(15, 23, 42, 0.04);
+  color: #64748b;
   cursor: pointer;
-  transition: background $transition-fast, color $transition-fast;
+  transition: background $transition-fast, color $transition-fast, border-color $transition-fast, box-shadow $transition-fast;
 
   &.is-active {
-    background: rgba(59, 130, 246, 0.12);
+    background: rgba(255, 255, 255, 0.99);
+    border-color: rgba(148, 163, 184, 0.14);
+    box-shadow: inset 0 2px 0 #3b82f6;
     color: var(--text-primary);
   }
 }
@@ -690,6 +825,10 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
   background: transparent;
   color: inherit;
   cursor: pointer;
+
+  &:hover {
+    background: rgba(148, 163, 184, 0.14);
+  }
 }
 
 .editor-tab-placeholder {
@@ -702,7 +841,7 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
 .editor-footer {
   display: flex;
   align-items: center;
-  gap: $spacing-sm;
+  gap: 8px;
   padding: 8px 10px;
   color: var(--text-muted);
   font-size: $font-xs;
@@ -710,188 +849,177 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
 
 .editor-toolbar {
   justify-content: space-between;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(242, 246, 250, 0.92));
+}
+
+.editor-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.editor-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: rgba(226, 232, 240, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  color: #516274;
+  white-space: nowrap;
+}
+
+.editor-meta-pill.is-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #9a3412;
 }
 
 .editor-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: $spacing-sm;
-}
-
-.editor-actions .btn.is-active {
-  background: rgba(var(--primary-rgb, 232 120 154), 0.12);
-  color: var(--primary);
-}
-
-.editor-search-panel {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-  padding: 8px 10px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.42);
-}
-
-.editor-search-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: $spacing-sm;
-}
-
-.editor-search-field {
-  display: flex;
-  flex: 1;
-  align-items: center;
   gap: 8px;
-  min-width: 220px;
-  padding: 0 12px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--text-secondary);
 }
 
-.editor-search-input {
-  width: 100%;
-  min-width: 0;
-  height: 36px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  outline: none;
-  font-size: $font-sm;
-}
-
-.editor-search-chip,
-.editor-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 36px;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.editor-search-chip.is-active {
-  border-color: rgba(var(--primary-rgb, 232 120 154), 0.22);
-  background: rgba(var(--primary-rgb, 232 120 154), 0.12);
-  color: var(--primary);
-}
-
-.editor-icon-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.editor-search-summary {
-  min-width: 72px;
-  font-size: $font-xs;
-  font-weight: 600;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+.editor-surface,
+.editor-empty,
+.editor-state {
+  flex: 1;
+  min-height: 0;
 }
 
 .editor-surface {
+  position: relative;
   display: flex;
+  padding: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(249, 251, 253, 1)),
+    rgba(15, 23, 42, 0.01);
+
+  &.is-blocked .editor-host {
+    opacity: 0.16;
+  }
+}
+
+.editor-host {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
-    rgba(15, 23, 42, 0.02);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 1));
 }
 
-.editor-gutter {
+.editor-state-overlay {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  align-items: flex-end;
-  gap: 0;
-  min-width: 54px;
-  padding: 12px 10px 12px 12px;
-  overflow: hidden;
-  border-right: 1px solid rgba(0, 0, 0, 0.05);
-  background: rgba(14, 25, 42, 0.04);
-  color: var(--text-muted);
-  font-family: 'Cascadia Code', 'Consolas', 'SFMono-Regular', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  user-select: none;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: linear-gradient(180deg, rgba(251, 253, 255, 0.86), rgba(251, 253, 255, 0.68));
+  backdrop-filter: blur(8px);
 }
 
-.editor-gutter-line {
-  display: block;
-  width: 100%;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.editor-gutter-line.is-active {
-  color: var(--primary);
-  font-weight: 700;
-}
-
-.editor-textarea {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  padding: 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-family: 'Cascadia Code', 'Consolas', 'SFMono-Regular', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  resize: none;
-  outline: none;
-  tab-size: 2;
+.editor-state--initializing {
+  pointer-events: none;
 }
 
 .editor-empty,
-.editor-error,
-.editor-loading {
+.editor-state {
   display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  gap: $spacing-sm;
-  padding: $spacing-xl;
+  padding: 28px;
+}
+
+.editor-empty-card,
+.editor-state-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 560px);
+  padding: 18px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.58));
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
   color: var(--text-secondary);
 }
 
+.editor-state--error .editor-state-card {
+  border-color: rgba(248, 113, 113, 0.22);
+  background: linear-gradient(180deg, rgba(255, 245, 245, 0.94), rgba(255, 255, 255, 0.76));
+}
+
+.editor-empty-card strong,
+.editor-state-card strong {
+  color: var(--text-primary);
+}
+
+.editor-state-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.editor-loading-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
 .editor-loading-bar {
-  width: 160px;
-  height: 8px;
+  width: min(100%, 360px);
+  height: 10px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.28), var(--primary-bg), rgba(255, 255, 255, 0.28));
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.16), rgba(var(--primary-rgb, 232 120 154), 0.14), rgba(255, 255, 255, 0.16));
   animation: pulse 1.2s ease-in-out infinite;
+}
+
+.editor-loading-bar.is-primary {
+  width: min(100%, 420px);
+}
+
+.editor-loading-bar.is-short {
+  width: min(100%, 240px);
 }
 
 .editor-footer {
   flex-wrap: wrap;
   border-top: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  background: linear-gradient(180deg, rgba(236, 242, 249, 0.94), rgba(228, 236, 246, 0.98));
 }
 
-.editor-search-footer {
-  color: var(--primary);
+.editor-runtime {
+  margin-left: auto;
+  color: #516274;
   font-weight: 700;
 }
 
 .editor-unsaved {
-  margin-left: auto;
   color: var(--warning);
   font-weight: 700;
+}
+
+:deep(.monaco-editor),
+:deep(.monaco-editor-background),
+:deep(.monaco-editor .margin) {
+  background: transparent !important;
+}
+
+:deep(.monaco-editor .overflow-guard) {
+  border-radius: 0 0 10px 10px;
 }
 
 @media (max-width: 960px) {
@@ -902,15 +1030,6 @@ function handleReplaceInputKeydown(event: KeyboardEvent) {
 
   .editor-actions {
     justify-content: flex-start;
-  }
-
-  .editor-search-summary {
-    width: 100%;
-  }
-
-  .editor-gutter {
-    min-width: 48px;
-    padding-left: 10px;
   }
 }
 

@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
+import { copyFile, mkdir, readdir, stat } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
@@ -47,16 +48,16 @@ const bundledTTSAssets = [
 function copyRendererRuntimeAssetsPlugin() {
   return {
     name: 'copy-renderer-runtime-assets',
-    closeBundle() {
+    async closeBundle() {
       const targetDir = resolve(projectRoot, 'dist', 'assets')
-      mkdirSync(targetDir, { recursive: true })
+      await mkdir(targetDir, { recursive: true })
 
       for (const asset of rendererRuntimeAssets) {
         if (!existsSync(asset.source)) {
           continue
         }
 
-        copyFileSync(asset.source, resolve(targetDir, asset.target))
+        await copyFileWithRetry(asset.source, resolve(targetDir, asset.target))
       }
 
       for (const asset of bundledTTSAssets) {
@@ -64,28 +65,48 @@ function copyRendererRuntimeAssetsPlugin() {
           continue
         }
 
-        copyDirectorySync(asset.source, asset.target)
+        await copyDirectory(asset.source, asset.target)
       }
     }
   }
 }
 
-function copyDirectorySync(sourceDir: string, targetDir: string) {
-  mkdirSync(targetDir, { recursive: true })
+async function copyDirectory(sourceDir: string, targetDir: string) {
+  await mkdir(targetDir, { recursive: true })
 
-  for (const entry of readdirSync(sourceDir)) {
+  for (const entry of await readdir(sourceDir)) {
     const sourcePath = resolve(sourceDir, entry)
     const targetPath = resolve(targetDir, entry)
-    const entryStat = statSync(sourcePath)
+    const entryStat = await stat(sourcePath)
 
     if (entryStat.isDirectory()) {
-      copyDirectorySync(sourcePath, targetPath)
+      await copyDirectory(sourcePath, targetPath)
       continue
     }
 
-    mkdirSync(resolve(targetPath, '..'), { recursive: true })
-    copyFileSync(sourcePath, targetPath)
+    await mkdir(resolve(targetPath, '..'), { recursive: true })
+    await copyFileWithRetry(sourcePath, targetPath)
   }
+}
+
+async function copyFileWithRetry(sourcePath: string, targetPath: string, maxAttempts = 6) {
+  let lastError: unknown = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await copyFile(sourcePath, targetPath)
+      return
+    } catch (error) {
+      lastError = error
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code || '') : ''
+      if (!['EBUSY', 'EPERM', 'ENOENT'].includes(code) || attempt >= maxAttempts) {
+        throw error
+      }
+
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 80 * attempt))
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`Failed to copy asset: ${sourcePath}`)
 }
 
 function createManualChunks(id: string) {
@@ -112,6 +133,10 @@ function createManualChunks(id: string) {
     normalizedId.includes('/@xterm/addon-fit/')
   ) {
     return 'terminal-vendor'
+  }
+
+  if (normalizedId.includes('/monaco-editor/')) {
+    return 'monaco-vendor'
   }
 
   if (

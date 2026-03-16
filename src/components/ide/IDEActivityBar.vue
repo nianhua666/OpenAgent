@@ -74,6 +74,12 @@ defineEmits<{
   width: 64px;
   min-width: 64px;
   padding: 8px 6px;
+  border-color: rgba(30, 41, 59, 0.22);
+  background:
+    linear-gradient(180deg, rgba(29, 37, 49, 0.98), rgba(22, 29, 40, 0.98));
+  box-shadow:
+    inset -1px 0 0 rgba(255, 255, 255, 0.04),
+    0 12px 26px rgba(15, 23, 42, 0.12);
 }
 
 .activity-btn {
@@ -86,19 +92,20 @@ defineEmits<{
   border: 1px solid transparent;
   border-radius: $border-radius-md;
   background: transparent;
-  color: var(--text-secondary);
+  color: rgba(226, 232, 240, 0.72);
   cursor: pointer;
-  transition: background $transition-fast, color $transition-fast, transform $transition-fast;
+  transition: background $transition-fast, color $transition-fast, transform $transition-fast, border-color $transition-fast;
 
   &:hover {
-    background: var(--primary-bg);
-    color: var(--primary);
+    background: rgba(148, 163, 184, 0.14);
+    border-color: rgba(148, 163, 184, 0.2);
+    color: #f8fafc;
     transform: translateY(-1px);
   }
 
   &:disabled {
     opacity: 0.72;
-    color: var(--text-muted);
+    color: rgba(148, 163, 184, 0.42);
     cursor: not-allowed;
   }
 
@@ -108,10 +115,10 @@ defineEmits<{
   }
 
   &.is-active:not(.is-primary) {
-    background: color-mix(in srgb, var(--primary) 22%, rgba(255, 255, 255, 0.05));
-    border-color: color-mix(in srgb, var(--primary) 26%, rgba(148, 163, 184, 0.18));
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-    color: var(--primary);
+    background: rgba(59, 130, 246, 0.18);
+    border-color: rgba(96, 165, 250, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    color: #dbeafe;
   }
 
   &.is-active:not(.is-primary)::after {
@@ -145,7 +152,7 @@ defineEmits<{
   width: 22px;
   height: 1px;
   margin: 2px 0;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(148, 163, 184, 0.18);
 }
 
 .activity-spacer {

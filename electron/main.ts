@@ -3,6 +3,7 @@ import type { FileFilter, MenuItemConstructorOptions, OpenDialogOptions } from '
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { readFile, stat, writeFile } from 'fs/promises'
 import { createRequire } from 'module'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
 import { registerAzureTTSHandlers } from './azureSpeech'
@@ -626,6 +627,10 @@ function appendTTSDebugLog(scope: string, message: string) {
 
 function attachWindowDiagnostics(win: BrowserWindow, scope: string) {
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (MAIN_WINDOW_CAPTURE_CONFIG && scope === 'main') {
+      console.log(`[renderer:${scope}] level=${level} ${message} (${sourceId}:${line})`)
+    }
+
     if (/live2d|oml2d|pixi|cubism|model/i.test(message) || scope === 'overlay') {
       appendLive2DDebugLog(scope, `console[level=${level}] ${message} (${sourceId}:${line})`)
     }
@@ -1634,6 +1639,26 @@ function scheduleMainWindowCapture(win: BrowserWindow) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) {
         throw new Error('Main window closed before capture completed.')
       }
+
+      const rendererSnapshot = await win.webContents.executeJavaScript(`
+        (() => {
+          const editorHost = document.querySelector('.editor-host')
+          const runtimeLabel = document.querySelector('.editor-runtime')?.textContent?.trim() || ''
+          const stateCards = Array.from(document.querySelectorAll('.editor-state-card')).map(node => node.textContent?.trim() || '')
+          const tabLabels = Array.from(document.querySelectorAll('.editor-tab-name')).map(node => node.textContent?.trim() || '')
+          const ideEditorDebug = window.__OPENAGENT_IDE_EDITOR_DEBUG__ || null
+          return {
+            runtimeLabel,
+            tabLabels,
+            editorHostExists: Boolean(editorHost),
+            editorHostChildCount: editorHost ? editorHost.childElementCount : 0,
+            editorHostHtmlSample: editorHost ? editorHost.innerHTML.slice(0, 240) : '',
+            stateCards,
+            ideEditorDebug,
+          }
+        })()
+      `)
+      console.log(`[ui-capture] renderer snapshot ${JSON.stringify(rendererSnapshot)}`)
 
       ensureDirectoryExists(dirname(outputPath))
       const image = await win.capturePage()
@@ -3103,26 +3128,26 @@ app.whenReady().then(() => {
     return p
   }
 
-  ipcMain.handle('ide:readFile', (_event, filePath: unknown, encoding: unknown) => {
+  ipcMain.handle('ide:readFile', async (_event, filePath: unknown, encoding: unknown) => {
     const p = sanitizeIdePath(filePath)
     if (!p || !existsSync(p)) return null
     try {
-      const fileStat = statSync(p)
+      const fileStat = await stat(p)
       if (!fileStat.isFile() || fileStat.size > 10 * 1024 * 1024) return null
-      return readFileSync(p, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
+      return await readFile(p, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
     } catch {
       return null
     }
   })
 
-  ipcMain.handle('ide:writeFile', (_event, filePath: unknown, content: unknown, encoding: unknown) => {
+  ipcMain.handle('ide:writeFile', async (_event, filePath: unknown, content: unknown, encoding: unknown) => {
     const p = sanitizeIdePath(filePath)
     if (!p || typeof content !== 'string') return false
     // 写入大小限制 50MB
     if (content.length > 50 * 1024 * 1024) return false
     try {
       ensureDirectoryExists(dirname(p))
-      writeFileSync(p, content, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
+      await writeFile(p, content, (typeof encoding === 'string' ? encoding : 'utf-8') as BufferEncoding)
       return true
     } catch {
       return false

@@ -209,8 +209,8 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .attachment-pill {
   align-items: center;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 247, 251, 0.94));
+  border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 10px;
   display: flex;
   gap: 8px;
@@ -272,21 +272,23 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 .step-btn,
 .remove-btn {
   align-items: center;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
+  background: rgba(241, 245, 249, 0.96);
+  color: #475569;
   display: inline-flex;
   gap: 6px;
   justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 .composer-shell {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 6px;
+  padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 247, 251, 0.98));
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
 }
 
 .composer-main,
@@ -313,7 +315,7 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .send-btn {
   background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 92%, white 8%), #ff9f1c);
-  color: #111;
+  color: #1f2937;
   font-weight: 700;
 }
 
@@ -337,8 +339,8 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
 
 .message-input,
 .control-select {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 14px;
   color: var(--text-primary);
 }
@@ -397,9 +399,10 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   min-height: 28px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-secondary);
+  background: rgba(241, 245, 249, 0.98);
+  color: #475569;
   font-size: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 .control-select {

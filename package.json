@@ -1,6 +1,6 @@
 {
   "name": "openagent",
-  "version": "3.0.7",
+  "version": "3.0.8",
   "description": "OpenAgent - 支持 AI 对话、账号管理、托管 MCP / Skills 与 Live2D 桌面协作的桌面应用",
   "author": "年华",
   "license": "MIT",
@@ -49,6 +49,7 @@
     "echarts": "^5.5.0",
     "fuse.js": "^7.0.0",
     "kokoro-js-zh": "^2.1.7",
+    "monaco-editor": "^0.52.2",
     "msedge-tts": "^2.0.4",
     "node-pty": "^1.1.0",
     "oh-my-live2d": "^0.19.3",

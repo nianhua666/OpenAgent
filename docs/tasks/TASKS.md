@@ -103,6 +103,8 @@
 | 9.13 | 继续压缩 Agent 顶部重复信息与底部输入区密度，统一工作台信息层级与底部 composer 交互 | 已完成 | `src/views/AgentView.vue`, `src/components/agent/AgentInputBar.vue`, `CHANGELOG.md`, `README.md` |
 | 9.14 | 落地情绪型 Agent 心情带与 IDE 长任务循环节律：让 Prompt、自治执行状态、TTS 与运行文档统一遵循可持续长任务协议 | 已完成 | `src/utils/agentMood.ts`, `src/stores/ai.ts`, `src/utils/aiPrompts.ts`, `src/utils/aiAutonomyScheduler.ts`, `src/utils/aiPlanEngine.ts`, `src/components/AIChatDialog.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/components/ide/IDEPlanPanel.vue`, `src/types/index.ts` |
 | 9.15 | 收口情绪链路最后一批入口：经典 `/ai` 语音播报改为沿用角色心情带，角色编辑页补上心情带预览与执行倾向提示 | 已完成 | `src/views/AIAssistant.vue`, `src/components/agent/AgentProfileManager.vue`, `README.md`, `CHANGELOG.md` |
+| 9.16 | 修复 IDE 编辑器“文件实际已读完但界面仍停在正在读取”的响应式失效链路，并压实编辑器空态 / 失败态 / 加载态展示 | 已完成 | `src/views/IDEView.vue`, `src/components/ide/IDEEditor.vue`, `CHANGELOG.md` |
+| 9.17 | 收口 Monaco 挂载、工作台去重与 IDE 真实桌面感：确认 Monaco 在 Electron 真渲染下稳定挂载，补上文件读取超时兜底，继续压缩顶部重复事实条、右侧 Inspector 密度与过度玻璃化样式 | 已完成 | `src/components/ide/IDEEditor.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/views/IDEView.vue`, `src/utils/ideMonaco.ts`, `vite.config.mts`, `CHANGELOG.md` |
 
 ---
 
@@ -119,6 +121,7 @@
 - IDE 长任务自治执行这轮也从“有调度状态”继续收口到了“有稳定循环节律”：运行时 Prompt、`RUN.md`、监督提示词和自治状态机现在统一采用 `Observe -> Choose Lane -> Execute -> Verify -> Record -> Continue` 的循环协议，并把当前循环阶段、焦点摘要、验证清单与继续规则落盘，明显更接近 Opencode 一类长任务代理的持续推进方式。剩余工作主要是继续观察真实长任务下的多轮阻塞处理、后台 worker 连续运行与更细的权限/资源治理，而不是循环协议仍然缺位。
 - 情绪链路这一轮又补齐了两个容易遗漏的入口：经典 `/ai` 页面现在也会按当前角色心情带播放 TTS，不会再和 Agent / IDE / 悬浮窗出现不同的情绪播报手感；角色编辑页也新增了“当前心情带 + 语气摘要 + 执行倾向”即时预览，调节情绪型角色时不再只面对抽象滑杆。剩余工作主要是继续观察不同模型在真实陪伴对话中的语气稳定性，以及是否还需要更细的心情恢复/冷却机制。
 - IDE 终端与上下文压缩这轮继续做了“长时间运行防卡死”收口：命令会话现在会持久化运行快照并支持 renderer 轮询兜底，即使退出事件丢失也能按快照收口；对于重复循环输出、长时间无输出、交互式提示和超时都会给出系统心跳或自动停机说明，命令若正常结束但无标准输出也会显式回传“已结束、无输出”，避免模型把“安静结束”误判成“仍在卡住”。上下文压缩则改为输出结构化 handoff 摘要，快照会记录消息锚点、最近工具、来源和已覆盖消息数，减少因只按创建时间增量切片而漏掉新消息的问题。当前剩余风险主要集中在真实 Electron 终端下 `vim` / `top` / watch 类命令的长时间人工回归，以及更深层的前后台自治调度协同。
+- IDE 编辑器这轮确认并修复了一类真实的响应式坑：`IDEView.vue` 过去会先把普通 `nextTab` 对象 push 进 `editorTabs`，再在 `await readWorkspaceFile()` 返回后继续直接改这个原始对象；当 Vue 没有继续跟踪这条原始引用时，界面就会出现“标签已打开、底栏还在，但编辑区永远停在正在读取文件...”的假死状态。当前版本已改成统一通过 `patchEditorTab()` 做响应式回写，并为同一路径的并发读取增加请求序号保护；`IDEEditor.vue` 也把空态 / 失败态 / 加载态改成了更紧凑清晰的状态卡，便于后续继续做人眼回归。
 - IDE 模式现在已经支持多工作区并行管理：每个工作区在创建时都会先选择项目根目录，再选择独立的基础产物目录；工作区会持久化自己的数据目录、产物目录、最近打开时间、编辑会话与计划链路，切换工作区时也会独立恢复对应的编辑现场。当前剩余工作主要集中在继续补强“跨工作区复制 / 迁移提示、工作区级终端与计划资源占用观测、长时间后台连续运行”这类深水区体验，而不是基础多工作区骨架缺失。
 - Agent 模式现在已补齐“按角色覆盖运行参数”的主链路：每个角色都可以独立设定默认模型、温度与默认产物目录，主窗口 `/ai`、兼容入口 `/ai/classic` 与悬浮对话窗都会按当前角色的有效模型运行；角色切换模型后也会联动重新计算推荐自动步数。当前剩余工作主要是继续补“角色级温度 / 模型参数的更细粒度可视化、角色长期记忆管理面板、真正的一体化图片生成产物流”，而不是运行参数仍停留在全局配置。
 - Agent / IDE 两条主链路现在都已补齐特殊文本识别：网页链接、绝对路径、工作区相对路径、脚本路径和 Markdown 文档路径会在对话消息中被自动识别为可激活目标，并优先按工作区根目录或本地路径解析；Prompt 也同步强调了 URL、脚本入口、文档路径和结构化资源线索的识别规则。当前剩余工作主要是继续观察更复杂路径模式、带行号跳转和更多富文本格式的兼容表现。
@@ -142,6 +145,10 @@
 
 | 时间 | 类型 | 内容 |
 |------|------|------|
+| 2026-03-16 | fix | Phase 9 Monaco 挂载链路收口：`IDEEditor.vue` 增加初始化诊断状态、稳定的宿主挂载链和调试快照，`electron/main.ts` 也把 IDE 编辑器运行态接进 Electron 截图诊断；经 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ide --delay-ms=9000` 复核，Monaco 已在真实 Electron 渲染下稳定创建，`Python / JSON` 文件可正常显示语法高亮和不同颜色字体。 |
+| 2026-03-16 | fix | Phase 9 IDE 文件读取兜底：`IDEView.vue` 为工作区文件读取补上超时保护与更明确的错误提示，避免本地磁盘 / 网络盘 / IPC 异常时界面无限停在“正在读取文件...”。 |
+| 2026-03-16 | code | Phase 9 VSCode 化继续收口：`IDEView.vue` 调整默认右栏宽度、底部终端高度和事实条去重；`IDEEditor.vue` 收紧标签、工具条和底栏；`IDEAssistantPanel.vue` 压缩运行条、输入区与会话选择控件密度，继续降低当前 IDE 的发白发粉与卡片堆叠感。 |
+| 2026-03-16 | build | Phase 9 构建链补强：`vite.config.mts` 的 TTS 资源复制改为带重试的异步复制，降低 Windows 下 `EBUSY / EPERM` 造成的重复构建失败概率；本轮 `npm.cmd run build` 已通过。 |
 | 2026-03-13 01:10 | plan | 完成架构分析，生成 `REFACTOR-GUIDE.md` 和 `TASKS.md` |
 | 2026-03-13 | types | Phase 1.1: `types/index.ts` 新增 SubAgent / IDE / Plan / Context 类型定义 |
 | 2026-03-13 | code | Phase 1.2: 创建 `aiPrompts.ts`，落地主 Agent / IDE / 子代理 Prompt 与动态构建函数 |

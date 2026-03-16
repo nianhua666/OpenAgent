@@ -20,10 +20,9 @@
 
     <div class="runtime-strip">
       <span class="runtime-pill" :class="`is-${runtimeStatusTone}`">{{ runtimeStatusText }}</span>
-      <span class="runtime-pill">{{ currentAgent?.name || '未选择角色' }}</span>
+      <span class="runtime-pill">主Agent</span>
       <span class="runtime-pill">{{ currentModelLabel }}</span>
       <span class="runtime-pill">{{ contextSummary }}</span>
-      <span class="runtime-pill">{{ sessions.length }} 会话</span>
       <span v-for="badge in compactModelBadges" :key="badge" class="runtime-pill">{{ badge }}</span>
       <span v-if="modelLoadError" class="runtime-pill is-error">{{ modelLoadError }}</span>
     </div>
@@ -39,7 +38,7 @@
       :playing-message-id="playingMessageId"
       :starter-prompts="starterPrompts"
       :show-voice-actions="showVoiceActions"
-      :assistant-label="currentAgent?.name || 'Agent'"
+      assistant-label="主Agent"
       @apply-prompt="applyStarterPrompt"
       @play-message="playAssistantMessage"
     />
@@ -424,7 +423,7 @@ function openIdeWorkbench() {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
-  padding: 10px;
+  padding: 8px;
 }
 
 .panel-head,
@@ -455,7 +454,7 @@ function openIdeWorkbench() {
 
 .panel-copy h3 {
   margin: 0;
-  font-size: $font-lg;
+  font-size: 16px;
 }
 
 .panel-actions,
@@ -469,19 +468,19 @@ function openIdeWorkbench() {
 }
 
 .runtime-strip {
-  max-height: 58px;
+  max-height: 46px;
   overflow: auto;
   scrollbar-width: thin;
 }
 
 .session-select {
   min-width: 0;
-  max-width: 168px;
-  min-height: 30px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.04);
+  max-width: 188px;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 7px;
+  background: rgba(244, 247, 250, 0.96);
   color: var(--text-primary);
   font: inherit;
   overflow: hidden;
@@ -490,10 +489,10 @@ function openIdeWorkbench() {
 }
 
 .runtime-pill {
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.05);
-  color: var(--text-secondary);
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: rgba(226, 232, 240, 0.92);
+  color: #516274;
   font-size: $font-xs;
 }
 
@@ -527,6 +526,7 @@ function openIdeWorkbench() {
   background: transparent;
   border: 0;
   box-shadow: none;
+  min-height: 0;
 }
 
 :deep(.agent-input-bar) {
@@ -534,8 +534,8 @@ function openIdeWorkbench() {
   background: transparent;
   border: 0;
   box-shadow: none;
-  max-height: min(38vh, 220px);
-  overflow: auto;
+  max-height: min(34vh, 210px);
+  overflow: visible;
 }
 
 :deep(.agent-input-bar .composer-main),
@@ -543,6 +543,19 @@ function openIdeWorkbench() {
 :deep(.agent-input-bar .controls-row) {
   align-items: stretch;
   flex-direction: column;
+}
+
+:deep(.agent-input-bar .composer-shell) {
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.99), rgba(241, 245, 250, 0.99));
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+:deep(.agent-input-bar .message-input) {
+  min-height: 60px;
+  background: rgba(255, 255, 255, 0.94);
 }
 
 :deep(.agent-input-bar .composer-send-btn),
