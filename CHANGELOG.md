@@ -1,5 +1,15 @@
 # 更新日志
 
+## 3.0.9 - 2026-03-18
+
+- 升级 `.codex-local-skills/fullstack-autopilot-dev/SKILL.md` 为项目级长时间循环优化 skill：新增 OpenAgent 专属的模式边界、必读文件、验证矩阵、子代理协作、长时间自治循环、前端工作台检查表与发布纪律，后续在本仓库持续开发默认按该 skill 执行。
+- IDE 文件打开链继续提速：`IDEView.vue` 新增工作区文件读取任务去重缓存，并让已处于加载中的标签不再重复发起同一路径读取；关闭标签时也会同步清理该路径的读取缓存，减少连续点击同一文件时的重复 IPC 与体感卡顿。
+- IDE 右侧 Inspector 继续减负：`IDEAssistantPanel.vue` 切成更紧凑的窄栏布局，`AgentInputBar.vue` 新增 `compact` composer 模式，IDE 右栏不再把输入区、步数控制和模型选择堆成长块；同时关闭 IDE 语音播放按钮，把右栏重新让位给代码与终端。
+- Agent / IDE 会话区继续压缩密度：`AgentMessageList.vue` 在 IDE 域下收紧空会话卡片、启动提示和活动卡片圆角/间距，`AgentSessionList.vue` 也同步压缩会话卡高度与摘要行数，减少左栏和右栏被少量内容占满的情况。
+- 工作台视觉继续向桌面 IDE 收口：`IDEView.vue`、`IDEEditor.vue`、`AgentView.vue` 与 `src/utils/ideMonaco.ts` 调整了工作台背景、顶部事实条、编辑器标签与 Monaco 主题配色，继续降低“粉白玻璃卡片页”感，提升中心编辑区与主会话区的权重。
+- IDE 左侧与底栏进一步收口成更接近桌面工作台的密度：`IDEActivityBar.vue`、`IDEExplorer.vue` 与 `IDEStatusBar.vue` 调整了活动栏按钮尺寸、资源树行高、批量操作条和状态条 pill 形态，减少左栏与底栏对编辑区的视觉干扰。
+- 本轮验证已再次覆盖构建、路由与真实 Electron 渲染：执行了 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ide --route=/ai --delay-ms=9000`，确认 Monaco、工作台布局和 Agent/IDE 主界面仍保持稳定。
+
 ## 3.0.8 - 2026-03-16
 
 - IDE 文件读取卡死修复：`IDEView.vue` 的 `openFile()` 不再在 `await` 之后直接回写被推入响应式数组前的原始 tab 对象，改为通过稳定的 reactive patch 更新标签状态，并为文件读取补上请求序号保护，避免编辑器实际已读完文件却一直停在“正在读取文件...”。

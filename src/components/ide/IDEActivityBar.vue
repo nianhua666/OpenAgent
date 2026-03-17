@@ -71,9 +71,9 @@ defineEmits<{
   flex-direction: column;
   align-items: center;
   gap: $spacing-sm;
-  width: 64px;
-  min-width: 64px;
-  padding: 8px 6px;
+  width: 56px;
+  min-width: 56px;
+  padding: 7px 5px;
   border-color: rgba(30, 41, 59, 0.22);
   background:
     linear-gradient(180deg, rgba(29, 37, 49, 0.98), rgba(22, 29, 40, 0.98));
@@ -87,10 +87,10 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border: 1px solid transparent;
-  border-radius: $border-radius-md;
+  border-radius: 8px;
   background: transparent;
   color: rgba(226, 232, 240, 0.72);
   cursor: pointer;
@@ -124,10 +124,10 @@ defineEmits<{
   &.is-active:not(.is-primary)::after {
     content: '';
     position: absolute;
-    left: -4px;
-    top: 9px;
+    left: -3px;
+    top: 8px;
     width: 3px;
-    height: 18px;
+    height: 16px;
     border-radius: 999px;
     background: linear-gradient(180deg, var(--primary), var(--primary-dark));
   }

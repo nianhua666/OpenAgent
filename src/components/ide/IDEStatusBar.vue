@@ -32,13 +32,13 @@ defineProps<{
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: $border-radius-sm;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
   background:
-    linear-gradient(180deg, rgba(21, 30, 48, 0.96), rgba(15, 23, 42, 0.98)),
-    radial-gradient(circle at top right, rgba(96, 165, 250, 0.14), transparent 36%);
+    linear-gradient(180deg, rgba(22, 30, 44, 0.98), rgba(17, 24, 39, 0.98)),
+    radial-gradient(circle at top right, rgba(96, 165, 250, 0.12), transparent 32%);
   color: #e2e8f0;
   font-size: $font-xs;
   font-weight: 600;
@@ -49,9 +49,9 @@ defineProps<{
   display: inline-flex;
   align-items: center;
   min-height: 19px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }

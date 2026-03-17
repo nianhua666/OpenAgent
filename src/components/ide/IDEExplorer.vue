@@ -1117,9 +1117,9 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.78), rgba(241, 245, 249, 0.42));
 }
 
 .explorer-eyebrow {
@@ -1154,15 +1154,15 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 }
 
 .explorer-action {
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
 
   &:hover {
-    background: var(--primary-bg);
-    color: var(--primary);
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--text-primary);
   }
 
   &.is-danger:hover:not(:disabled) {
@@ -1177,7 +1177,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   align-items: center;
   justify-content: space-between;
   gap: $spacing-sm;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
 }
 
@@ -1207,7 +1207,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 }
 
 .selection-bar {
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(241, 245, 249, 0.72);
 }
 
 .selection-copy {
@@ -1230,9 +1230,9 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 }
 
 .selection-action {
-  min-height: 30px;
-  padding: 0 12px;
-  border-radius: 999px;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.72);
   color: var(--text-secondary);
   font-size: $font-xs;
@@ -1378,7 +1378,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
 .explorer-tree {
   flex: 1;
   overflow: auto;
-  padding: $spacing-sm 0;
+  padding: 6px 0;
 }
 
 .tree-row {
@@ -1386,7 +1386,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   align-items: center;
   gap: $spacing-sm;
   width: 100%;
-  min-height: 30px;
+  min-height: 26px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -1396,7 +1396,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   transition: background $transition-fast, color $transition-fast, transform $transition-fast;
 
   &:hover {
-    background: var(--primary-bg);
+    background: rgba(59, 130, 246, 0.08);
     color: var(--text-primary);
   }
 
@@ -1411,12 +1411,12 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   }
 
   &.is-selected:not(.is-active) {
-    background: rgba(58, 96, 255, 0.11);
+    background: rgba(58, 96, 255, 0.09);
     color: var(--text-primary);
   }
 
   &.is-active {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), var(--primary-bg));
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(219, 234, 254, 0.94));
     color: var(--primary);
   }
 
@@ -1449,7 +1449,7 @@ function remapExpandedDirectories(fromPath: string, toPath: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: $font-xs;
+  font-size: 12px;
 }
 
 .tree-badge,

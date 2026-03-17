@@ -1,5 +1,10 @@
 <template>
-  <section ref="scrollRef" class="agent-message-list glass-panel" @click="handleRichTextClick">
+  <section
+    ref="scrollRef"
+    class="agent-message-list glass-panel"
+    :class="{ 'is-ide-scope': resolvedScopeHint === 'ide', 'is-compact': density === 'compact' }"
+    @click="handleRichTextClick"
+  >
     <div v-if="!session" class="empty-state">
       <p class="empty-eyebrow">Ready</p>
       <h3>{{ emptyStateTitle }}</h3>
@@ -160,6 +165,7 @@ const props = defineProps<{
   showVoiceActions: boolean
   assistantLabel?: string
   scopeHint?: AIConversationScope
+  density?: 'default' | 'compact'
 }>()
 
 defineEmits<{
@@ -272,6 +278,11 @@ function handleRichTextClick(event: MouseEvent) {
   scroll-padding-bottom: 12px;
 }
 
+.agent-message-list.is-compact {
+  gap: 8px;
+  padding: 6px;
+}
+
 .empty-state,
 .message-head,
 .message-stream,
@@ -354,6 +365,89 @@ p {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.agent-message-list.is-ide-scope {
+  gap: 8px;
+}
+
+.agent-message-list.is-ide-scope .message-head {
+  margin-bottom: -2px;
+}
+
+.agent-message-list.is-ide-scope .session-empty {
+  gap: 8px;
+  min-height: auto;
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.agent-message-list.is-ide-scope .session-empty-copy h3 {
+  font-size: 14px;
+}
+
+.agent-message-list.is-ide-scope .empty-copy {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-message-list.is-ide-scope .starter-list {
+  gap: 4px;
+}
+
+.agent-message-list.is-ide-scope .starter-btn {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+.agent-message-list.is-ide-scope .message-card,
+.agent-message-list.is-ide-scope .session-summary {
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.agent-message-list.is-compact .message-head {
+  margin-bottom: -2px;
+}
+
+.agent-message-list.is-compact .session-empty {
+  gap: 8px;
+  min-height: auto;
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.agent-message-list.is-compact .session-empty-copy h3 {
+  font-size: 14px;
+}
+
+.agent-message-list.is-compact .empty-copy,
+.agent-message-list.is-compact .session-summary p,
+.agent-message-list.is-compact .tool-summary,
+.agent-message-list.is-compact .activity-summary {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-message-list.is-compact .empty-fact {
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+.agent-message-list.is-compact .starter-list {
+  gap: 4px;
+}
+
+.agent-message-list.is-compact .starter-btn {
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+.agent-message-list.is-compact .message-card,
+.agent-message-list.is-compact .session-summary {
+  border-radius: 10px;
+  padding: 8px;
 }
 
 .starter-btn,

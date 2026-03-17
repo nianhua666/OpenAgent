@@ -146,7 +146,7 @@ h3 {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   overflow: auto;
 }
 
@@ -161,7 +161,7 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px;
+  padding: 8px;
   text-align: left;
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -237,8 +237,8 @@ h3 {
 
 .session-summary {
   display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

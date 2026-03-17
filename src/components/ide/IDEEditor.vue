@@ -772,7 +772,7 @@ function fileName(filePath: string) {
   padding: 0 8px;
   overflow-x: auto;
   border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  background: linear-gradient(180deg, rgba(233, 238, 245, 0.98), rgba(225, 232, 241, 0.98));
+  background: linear-gradient(180deg, rgba(233, 239, 246, 0.99), rgba(226, 233, 242, 0.99));
 }
 
 .editor-tab {
@@ -785,7 +785,7 @@ function fileName(filePath: string) {
   padding: 0 11px;
   border: 1px solid transparent;
   border-radius: 6px 6px 0 0;
-  background: rgba(15, 23, 42, 0.04);
+  background: rgba(15, 23, 42, 0.045);
   color: #64748b;
   cursor: pointer;
   transition: background $transition-fast, color $transition-fast, border-color $transition-fast, box-shadow $transition-fast;
@@ -793,7 +793,7 @@ function fileName(filePath: string) {
   &.is-active {
     background: rgba(255, 255, 255, 0.99);
     border-color: rgba(148, 163, 184, 0.14);
-    box-shadow: inset 0 2px 0 #3b82f6;
+    box-shadow: inset 0 2px 0 #3b82f6, 0 -1px 0 rgba(255, 255, 255, 0.7);
     color: var(--text-primary);
   }
 }
@@ -850,7 +850,7 @@ function fileName(filePath: string) {
 .editor-toolbar {
   justify-content: space-between;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(242, 246, 250, 0.92));
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(244, 247, 251, 0.94));
 }
 
 .editor-meta {
@@ -870,7 +870,7 @@ function fileName(filePath: string) {
   align-items: center;
   min-height: 20px;
   padding: 0 8px;
-  border-radius: 7px;
+  border-radius: 6px;
   background: rgba(226, 232, 240, 0.94);
   border: 1px solid rgba(148, 163, 184, 0.14);
   color: #516274;
@@ -901,7 +901,7 @@ function fileName(filePath: string) {
   display: flex;
   padding: 0;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(249, 251, 253, 1)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.995), rgba(249, 251, 253, 1)),
     rgba(15, 23, 42, 0.01);
 
   &.is-blocked .editor-host {
@@ -948,9 +948,9 @@ function fileName(filePath: string) {
   width: min(100%, 560px);
   padding: 18px 20px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.58));
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.72));
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
   color: var(--text-secondary);
 }
 
@@ -998,7 +998,7 @@ function fileName(filePath: string) {
 .editor-footer {
   flex-wrap: wrap;
   border-top: 1px solid rgba(148, 163, 184, 0.12);
-  background: linear-gradient(180deg, rgba(236, 242, 249, 0.94), rgba(228, 236, 246, 0.98));
+  background: linear-gradient(180deg, rgba(237, 242, 248, 0.96), rgba(229, 236, 245, 0.99));
 }
 
 .editor-runtime {

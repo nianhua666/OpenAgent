@@ -1,5 +1,5 @@
 <template>
-  <section class="agent-input-bar glass-panel">
+  <section class="agent-input-bar glass-panel" :class="`is-${layoutMode}`">
     <input ref="fileInputRef" type="file" multiple class="hidden-file-input" @change="handleFileSelection" />
 
     <div v-if="attachments.length" class="attachment-pending-list">
@@ -83,6 +83,7 @@ const props = defineProps<{
   maxAutoSteps: number
   recommendedAutoSteps: number
   capturingScreenshot: boolean
+  layoutMode?: 'default' | 'compact'
 }>()
 
 const emit = defineEmits<{
@@ -103,6 +104,7 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const MIN_INPUT_HEIGHT = 44
 const MAX_INPUT_HEIGHT = 96
 const textareaHeight = ref(MIN_INPUT_HEIGHT)
+const layoutMode = computed(() => props.layoutMode || 'default')
 
 const effectiveSendDisabled = computed(() => (props.streaming ? false : props.sendDisabled))
 
@@ -409,6 +411,75 @@ function formatAttachmentMeta(attachment: AIChatAttachment) {
   min-width: 180px;
   flex: 1 1 220px;
   max-width: min(300px, 46vw);
+}
+
+.agent-input-bar.is-compact {
+  gap: 4px;
+}
+
+.agent-input-bar.is-compact .attachment-pending-list {
+  gap: 6px;
+}
+
+.agent-input-bar.is-compact .attachment-pill {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.agent-input-bar.is-compact .composer-shell {
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.agent-input-bar.is-compact .composer-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.agent-input-bar.is-compact .composer-send-btn {
+  min-width: 62px;
+  min-height: 36px;
+}
+
+.agent-input-bar.is-compact .message-input {
+  min-height: 54px;
+  max-height: 128px;
+  padding: 8px 10px;
+}
+
+.agent-input-bar.is-compact .composer-footer {
+  display: grid;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.agent-input-bar.is-compact .composer-primary-actions {
+  gap: 6px;
+}
+
+.agent-input-bar.is-compact .controls-row {
+  display: grid;
+  gap: 6px;
+  justify-content: stretch;
+}
+
+.agent-input-bar.is-compact .model-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.agent-input-bar.is-compact .step-row {
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.agent-input-bar.is-compact .control-select {
+  min-width: 0;
+  max-width: none;
 }
 
 @media (max-width: 960px) {

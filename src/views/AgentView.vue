@@ -23,7 +23,7 @@
       <div class="workbench-bar-copy">
         <span class="workbench-pill is-mode">{{ currentScopeLabel }}</span>
         <span class="workbench-pill">{{ compactSessionLabel }}</span>
-        <span class="workbench-pill">{{ currentSessionAgent?.name || currentAgent?.name || '默认角色' }}</span>
+        <span class="workbench-pill">{{ currentModelLabel }}</span>
         <span class="workbench-pill">{{ currentSession ? `${currentSession.messages.length} 条消息` : `${scopedSessionCount} 会话` }}</span>
         <span v-if="currentContextMetrics" class="workbench-pill">
           上下文 {{ formatCompactTokens(currentContextMetrics.estimatedInputTokens) }} / {{ formatCompactTokens(currentContextMetrics.modelMaxContextTokens) }}
@@ -487,7 +487,7 @@ const currentModelLabel = computed(() => currentModelMeta.value?.label || runtim
 const currentAgentTypeLabel = computed(() => currentAgent.value?.personaType === 'emotional' ? '情绪型 Agent' : '功能型 Agent')
 const compactSessionLabel = computed(() => {
   if (!currentSession.value) {
-    return '等待会话'
+    return '未开始会话'
   }
 
   const raw = currentSession.value.title.trim()
@@ -499,10 +499,10 @@ const compactSessionLabel = computed(() => {
 })
 const heroSummary = computed(() => {
   if (!currentSession.value) {
-    return `${currentScopeLabel.value} 已就绪，输入后会自动创建会话并固定停靠底部输入区。`
+    return `${currentScopeLabel.value} 已就绪。输入区固定贴底，首条消息会自动创建并绑定当前角色会话。`
   }
 
-  return `${currentScopeLabel.value} 正在运行，消息区和侧栏均为独立滚动，不会再挤压输入区。`
+  return `${currentScopeLabel.value} 正在运行。消息区与左侧栏独立滚动，角色和会话信息不会再重复铺满顶部。`
 })
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
 const sendButtonDisabled = computed(() => {
@@ -1123,10 +1123,10 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 
 .agent-view :deep(.glass-panel) {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.97));
-  border-color: rgba(100, 116, 139, 0.22);
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(16px);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(244, 247, 251, 0.98));
+  border-color: rgba(100, 116, 139, 0.18);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
 }
 
 .agent-hero,
@@ -1149,13 +1149,13 @@ async function playAssistantMessage(message: { id: string; content: string }) {
 .agent-hero {
   align-items: center;
   background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--agent-accent) 22%, transparent), transparent 26%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(237, 243, 249, 0.92));
+    radial-gradient(circle at top right, color-mix(in srgb, var(--agent-accent) 18%, transparent), transparent 24%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.97), rgba(241, 245, 249, 0.95));
   display: flex;
   gap: 8px;
   justify-content: space-between;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
-  min-height: 64px;
+  min-height: 58px;
 }
 
 .hero-eyebrow {
@@ -1273,11 +1273,11 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 5px 6px;
+  gap: 6px;
+  padding: 4px 6px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 243, 248, 0.9));
-  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.05);
+    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 244, 248, 0.94));
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
 }
 
 .workbench-bar-copy,
@@ -1303,10 +1303,10 @@ h1 {
 .workbench-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 18px;
+  min-height: 20px;
   max-width: 180px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 7px;
   background: rgba(226, 232, 240, 0.74);
   border: 1px solid rgba(148, 163, 184, 0.16);
   color: #334155;
@@ -1322,10 +1322,10 @@ h1 {
 }
 
 .workbench-toggle {
-  min-height: 22px;
+  min-height: 24px;
   padding: 0 7px;
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
+  border-radius: 7px;
   background: rgba(255, 255, 255, 0.72);
   color: #475569;
   font-size: 9px;
@@ -1390,7 +1390,7 @@ h1 {
   gap: 5px;
   padding: 5px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 243, 248, 0.94));
+    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(239, 244, 248, 0.95));
 }
 
 .sidebar-tab {
@@ -1584,7 +1584,7 @@ h1 {
 :deep(.agent-toolbar),
 :deep(.agent-message-list),
 :deep(.agent-input-bar) {
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 :deep(.agent-message-list),
@@ -1600,9 +1600,9 @@ h1 {
 :deep(.agent-task-board),
 :deep(.agent-message-list),
 :deep(.agent-input-bar) {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.95));
-  border: 1px solid rgba(100, 116, 139, 0.18);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(245, 248, 251, 0.97));
+  border: 1px solid rgba(100, 116, 139, 0.16);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
 }
 
 :deep(.agent-session-list),

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Fullstack Autopilot Dev"
+  short_description: "Sustained full-stack development, optimization, testing, and release ownership"
+  default_prompt: "Use $fullstack-autopilot-dev to continue high-quality full-stack development, optimization, testing, packaging, and release work with strong ownership."
+
+policy:
+  allow_implicit_invocation: true

@@ -2,8 +2,8 @@
   <section class="ide-assistant-panel glass-panel">
     <div class="panel-head">
       <div class="panel-copy">
-        <p class="panel-eyebrow">Assistant</p>
-        <h3>主Agent</h3>
+        <p class="panel-eyebrow">IDE Assistant</p>
+        <h3>IDE 主Agent</h3>
       </div>
 
       <div class="panel-actions">
@@ -31,6 +31,7 @@
       ref="messageListRef"
       class="assistant-messages"
       :scope-hint="IDE_SCOPE"
+      density="compact"
       :session="currentSession"
       :streaming="aiStore.streaming"
       :streaming-content="streamingContent"
@@ -57,6 +58,7 @@
       :max-auto-steps="aiStore.preferences.maxAutoSteps"
       :recommended-auto-steps="recommendedAutoSteps"
       :capturing-screenshot="capturingScreenshot"
+      layout-mode="compact"
       @update:model-value="inputText = $event"
       @send="sendMessage"
       @stop="stopCurrentRun"
@@ -151,7 +153,7 @@ const currentModelBadges = computed(() => {
 const compactModelBadges = computed(() => currentModelBadges.value.slice(0, 2))
 const runtimeModelLabel = computed(() => currentModelMeta.value?.label || runtimeAiConfig.value.model || 'Unconfigured')
 const recommendedAutoSteps = computed(() => getRecommendedAutoSteps(runtimeAiConfig.value))
-const showVoiceActions = computed(() => Boolean(settingsStore.settings.ttsShowMainReplyButton || currentAgent.value?.tts.autoPlayReplies))
+const showVoiceActions = computed(() => false)
 const runtimeConfigReady = computed(() => {
   if (!runtimeAiConfig.value.baseUrl.trim()) {
     return false
@@ -419,11 +421,11 @@ function openIdeWorkbench() {
 <style scoped lang="scss">
 .ide-assistant-panel {
   display: grid;
-  gap: $spacing-sm;
+  gap: 6px;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
-  padding: 8px;
+  padding: 7px;
 }
 
 .panel-head,
@@ -454,13 +456,13 @@ function openIdeWorkbench() {
 
 .panel-copy h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .panel-actions,
 .runtime-strip {
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .panel-actions {
@@ -468,18 +470,19 @@ function openIdeWorkbench() {
 }
 
 .runtime-strip {
-  max-height: 46px;
+  max-height: 38px;
   overflow: auto;
   scrollbar-width: thin;
+  padding-bottom: 2px;
 }
 
 .session-select {
   min-width: 0;
-  max-width: 188px;
-  min-height: 28px;
-  padding: 5px 10px;
+  max-width: 160px;
+  min-height: 26px;
+  padding: 4px 8px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 7px;
+  border-radius: 8px;
   background: rgba(244, 247, 250, 0.96);
   color: var(--text-primary);
   font: inherit;
@@ -489,11 +492,11 @@ function openIdeWorkbench() {
 }
 
 .runtime-pill {
-  padding: 2px 7px;
-  border-radius: 7px;
+  padding: 2px 6px;
+  border-radius: 6px;
   background: rgba(226, 232, 240, 0.92);
   color: #516274;
-  font-size: $font-xs;
+  font-size: 10px;
 }
 
 .runtime-pill.is-error {
@@ -534,39 +537,20 @@ function openIdeWorkbench() {
   background: transparent;
   border: 0;
   box-shadow: none;
-  max-height: min(34vh, 210px);
+  max-height: min(32vh, 184px);
   overflow: visible;
 }
 
-:deep(.agent-input-bar .composer-main),
-:deep(.agent-input-bar .composer-footer),
-:deep(.agent-input-bar .controls-row) {
-  align-items: stretch;
-  flex-direction: column;
-}
-
 :deep(.agent-input-bar .composer-shell) {
-  gap: 6px;
-  padding: 8px;
+  gap: 5px;
+  padding: 6px;
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.99), rgba(241, 245, 250, 0.99));
   border: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 :deep(.agent-input-bar .message-input) {
-  min-height: 60px;
+  min-height: 46px;
   background: rgba(255, 255, 255, 0.94);
-}
-
-:deep(.agent-input-bar .composer-send-btn),
-:deep(.agent-input-bar .model-row),
-:deep(.agent-input-bar .step-row),
-:deep(.agent-input-bar .control-select) {
-  width: 100%;
-  max-width: none;
-}
-
-:deep(.agent-input-bar .step-row) {
-  justify-content: space-between;
 }
 </style>

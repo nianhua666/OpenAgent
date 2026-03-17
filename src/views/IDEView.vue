@@ -441,10 +441,10 @@ type IdeWorkbenchLayoutState = {
 }
 
 const DEFAULT_IDE_WORKBENCH_LAYOUT: IdeWorkbenchLayoutState = {
-  leftWidth: 244,
-  rightWidth: 428,
-  bottomHeight: 220,
-  mcpHeight: 156,
+  leftWidth: 236,
+  rightWidth: 392,
+  bottomHeight: 198,
+  mcpHeight: 148,
   leftCollapsed: false,
   rightCollapsed: false,
   bottomCollapsed: false,
@@ -473,6 +473,7 @@ let selectedPlanDriftTimer: ReturnType<typeof setTimeout> | null = null
 let syncingEditorSession = false
 let removeIdeResizeListeners: (() => void) | null = null
 const editorLoadRequestTokens = new Map<string, number>()
+const editorFileReadTasks = new Map<string, Promise<string | null>>()
 
 const workspace = computed(() => aiStore.ideWorkspace)
 const workspaceList = computed(() => aiStore.getIDEWorkspaces())
@@ -559,45 +560,54 @@ const activeFileLabel = computed(() => activeFilePath.value ? compactWorkbenchPa
 const workbenchFacts = computed(() => {
   const stackSummary = [workspace.value?.language, workspace.value?.framework]
     .filter(label => label && !label.startsWith('未识别'))
-    .join(' · ') || '语言 / 框架待识别'
+    .join(' · ')
 
-  const facts = [
-    {
+  const facts: Array<{
+    key: string
+    label: string
+    title: string
+    className: string
+  }> = []
+
+  if (stackSummary) {
+    facts.push({
       key: 'stack',
       label: stackSummary,
       title: stackSummary,
       className: '',
-    },
-    {
-      key: 'artifact',
-      label: `产物 ${artifactRootLabel.value}`,
-      title: workspace.value?.artifactRootPath || '',
-      className: '',
-    },
-    {
-      key: 'active-file',
-      label: activeFileLabel.value,
-      title: activeFilePath.value || '',
-      className: 'is-file',
-    },
-    {
-      key: 'editor-state',
-      label: `${editorTabs.value.length} 标签 · ${dirtyFileCount.value} 待保存`,
-      title: dirtyFileCount.value > 0
-        ? `当前共打开 ${editorTabs.value.length} 个标签，另有 ${dirtyFileCount.value} 个文件未保存`
-        : `当前共打开 ${editorTabs.value.length} 个标签，当前没有未保存文件`,
-      className: dirtyFileCount.value > 0 ? 'is-warning' : '',
-    },
-  ]
+    })
+  }
 
   if (artifactRootLabel.value && artifactRootLabel.value !== '未设置') {
-    facts.splice(1, 0, {
+    facts.push({
       key: 'artifact',
       label: `产物 ${artifactRootLabel.value}`,
       title: workspace.value?.artifactRootPath || '',
       className: '',
     })
   }
+
+  if (activeFilePath.value) {
+    facts.push({
+      key: 'active-file',
+      label: activeFileLabel.value,
+      title: activeFilePath.value || '',
+      className: 'is-file',
+    })
+  }
+
+  facts.push({
+    key: 'editor-state',
+    label: editorTabs.value.length > 0
+      ? `${editorTabs.value.length} 标签 · ${dirtyFileCount.value} 待保存`
+      : '编辑区待命',
+    title: dirtyFileCount.value > 0
+      ? `当前共打开 ${editorTabs.value.length} 个标签，另有 ${dirtyFileCount.value} 个文件未保存`
+      : editorTabs.value.length > 0
+        ? `当前共打开 ${editorTabs.value.length} 个标签，当前没有未保存文件`
+        : '当前还没有打开文件',
+    className: dirtyFileCount.value > 0 ? 'is-warning' : '',
+  })
 
   return facts
 })
@@ -919,7 +929,7 @@ function loadIdeWorkbenchLayout() {
     const parsed = JSON.parse(raw) as Partial<typeof ideWorkbenchLayout.value>
     ideWorkbenchLayout.value = {
       leftWidth: clampWorkbenchSize(parsed.leftWidth, 220, 380, DEFAULT_IDE_WORKBENCH_LAYOUT.leftWidth),
-      rightWidth: clampWorkbenchSize(parsed.rightWidth, 360, 560, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
+      rightWidth: clampWorkbenchSize(parsed.rightWidth, 340, 560, DEFAULT_IDE_WORKBENCH_LAYOUT.rightWidth),
       bottomHeight: clampWorkbenchSize(parsed.bottomHeight, 168, 340, DEFAULT_IDE_WORKBENCH_LAYOUT.bottomHeight),
       mcpHeight: clampWorkbenchSize(parsed.mcpHeight, 112, 240, DEFAULT_IDE_WORKBENCH_LAYOUT.mcpHeight),
       leftCollapsed: parsed.leftCollapsed === true,
@@ -1035,7 +1045,7 @@ function startIdeResize(target: 'left' | 'right' | 'bottom' | 'mcp', event: Poin
 
     if (target === 'right') {
       ideWorkbenchLayout.value.rightCollapsed = false
-      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 360, 560, startLayout.rightWidth)
+      ideWorkbenchLayout.value.rightWidth = clampWorkbenchSize(startLayout.rightWidth - (moveEvent.clientX - startX), 340, 560, startLayout.rightWidth)
       return
     }
 
@@ -1296,7 +1306,7 @@ async function openFile(path: string, options?: { forceReload?: boolean; activat
     if (shouldActivate) {
       activeFilePath.value = path
     }
-    if (!options?.forceReload && !existingTab.error && !existingTab.loading) {
+    if (!options?.forceReload && !existingTab.error) {
       return
     }
   }
@@ -1366,12 +1376,23 @@ async function openFile(path: string, options?: { forceReload?: boolean; activat
 }
 
 async function readWorkspaceFileWithTimeout(currentWorkspace: IDEWorkspace, relativePath: string) {
-  return await Promise.race([
+  const cacheKey = `${currentWorkspace.id}:${relativePath}`
+  const existingTask = editorFileReadTasks.get(cacheKey)
+  if (existingTask) {
+    return await existingTask
+  }
+
+  const nextTask = Promise.race([
     readWorkspaceFile(currentWorkspace, relativePath),
     new Promise<null>(resolve => {
       window.setTimeout(() => resolve(null), IDE_FILE_READ_TIMEOUT_MS)
     }),
-  ])
+  ]).finally(() => {
+    editorFileReadTasks.delete(cacheKey)
+  })
+
+  editorFileReadTasks.set(cacheKey, nextTask)
+  return await nextTask
 }
 
 function beginEditorTabLoad(path: string) {
@@ -1424,6 +1445,9 @@ function closeTab(path: string) {
   const currentIndex = editorTabs.value.findIndex(item => item.path === path)
   editorTabs.value = editorTabs.value.filter(item => item.path !== path)
   editorLoadRequestTokens.delete(path)
+  if (workspace.value) {
+    editorFileReadTasks.delete(`${workspace.value.id}:${path}`)
+  }
 
   if (activeFilePath.value === path) {
     const fallback = editorTabs.value[currentIndex] || editorTabs.value[currentIndex - 1] || editorTabs.value[0] || null
@@ -2462,16 +2486,16 @@ async function handleReplanPlan(planId: string) {
 .ide-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   padding: 4px;
-  border-radius: 14px;
+  border-radius: 10px;
   border: 1px solid rgba(30, 41, 59, 0.18);
   background:
-    linear-gradient(180deg, rgba(229, 235, 243, 0.99), rgba(213, 222, 234, 0.99));
+    linear-gradient(180deg, rgba(223, 231, 241, 0.995), rgba(210, 220, 233, 0.995));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.48),
     0 10px 24px rgba(15, 23, 42, 0.1);
@@ -2479,10 +2503,10 @@ async function handleReplanPlan(planId: string) {
 
 .ide-view :deep(.glass-panel) {
   background:
-    linear-gradient(180deg, rgba(251, 252, 253, 0.99), rgba(244, 247, 251, 0.99));
-  border-color: rgba(100, 116, 139, 0.16);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
-  backdrop-filter: blur(6px);
+    linear-gradient(180deg, rgba(251, 252, 253, 0.985), rgba(243, 247, 251, 0.985));
+  border-color: rgba(100, 116, 139, 0.14);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(4px);
 }
 
 .ide-header,
@@ -2502,17 +2526,17 @@ async function handleReplanPlan(planId: string) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 6px 9px;
   border: 1px solid rgba(100, 116, 139, 0.14);
   background:
-    linear-gradient(180deg, rgba(247, 249, 252, 0.99), rgba(238, 243, 249, 0.96));
+    linear-gradient(180deg, rgba(245, 248, 252, 0.995), rgba(236, 242, 248, 0.97));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
 }
 
 .header-copy {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 
   > p {
     color: var(--text-secondary);
@@ -2534,7 +2558,7 @@ async function handleReplanPlan(planId: string) {
 }
 
 .header-copy h1 {
-  font-size: 19px;
+  font-size: 18px;
   line-height: 1.05;
 }
 
@@ -2546,7 +2570,7 @@ async function handleReplanPlan(planId: string) {
 
 .header-path {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   max-width: 680px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2563,20 +2587,20 @@ async function handleReplanPlan(planId: string) {
 
 .workspace-select {
   min-width: 144px;
-  min-height: 28px;
-  padding: 4px 9px;
+  min-height: 30px;
+  padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
   color: var(--text-primary);
   font: inherit;
 }
 
 .mode-pill {
-  min-height: 26px;
+  min-height: 28px;
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
@@ -2877,10 +2901,10 @@ async function handleReplanPlan(planId: string) {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 5px 7px;
+  padding: 4px 7px;
   border: 1px solid rgba(100, 116, 139, 0.14);
-  background: linear-gradient(180deg, rgba(244, 247, 251, 0.98), rgba(233, 239, 246, 0.94));
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+  background: linear-gradient(180deg, rgba(243, 246, 250, 0.99), rgba(235, 240, 247, 0.96));
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
 }
 
 .workbench-toolbar-copy,
@@ -2904,13 +2928,13 @@ async function handleReplanPlan(planId: string) {
 .toolbar-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  max-width: 220px;
-  padding: 0 8px;
-  border-radius: 7px;
-  background: rgba(226, 232, 240, 0.94);
+  min-height: 20px;
+  max-width: 196px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgba(226, 232, 240, 0.76);
   border: 1px solid rgba(148, 163, 184, 0.16);
-  color: #334155;
+  color: #475569;
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2918,8 +2942,8 @@ async function handleReplanPlan(planId: string) {
 }
 
 .toolbar-pill.is-mode {
-  background: color-mix(in srgb, var(--primary) 18%, rgba(255, 255, 255, 0.82));
-  color: var(--text-primary);
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
 }
 
 .toolbar-pill.is-path {
@@ -2936,10 +2960,10 @@ async function handleReplanPlan(planId: string) {
 }
 
 .toolbar-toggle {
-  min-height: 24px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 7px;
+  border-radius: 6px;
   background: rgba(248, 250, 252, 0.92);
   color: #475569;
   font-size: 11px;
@@ -2948,8 +2972,8 @@ async function handleReplanPlan(planId: string) {
   transition: background $transition-fast, color $transition-fast, border-color $transition-fast;
 
   &.active {
-    background: color-mix(in srgb, var(--primary) 14%, rgba(255, 255, 255, 0.96));
-    border-color: color-mix(in srgb, var(--primary) 38%, rgba(148, 163, 184, 0.2));
+    background: color-mix(in srgb, var(--primary) 12%, rgba(255, 255, 255, 0.96));
+    border-color: color-mix(in srgb, var(--primary) 34%, rgba(148, 163, 184, 0.2));
     color: #1f2937;
   }
 
@@ -2973,7 +2997,7 @@ async function handleReplanPlan(planId: string) {
 .ide-shell {
   display: grid;
   grid-template-columns: 56px var(--ide-left-width) var(--ide-left-splitter) minmax(0, 1fr) var(--ide-right-splitter) var(--ide-right-width);
-  gap: 5px;
+  gap: 4px;
   flex: 1;
   min-height: 0;
 }
@@ -2983,7 +3007,7 @@ async function handleReplanPlan(planId: string) {
 .ide-sidebar {
   display: grid;
   min-height: 0;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   overflow: hidden;
 }
@@ -3084,7 +3108,7 @@ async function handleReplanPlan(planId: string) {
     position: absolute;
     inset: 0;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(148, 163, 184, 0.12);
     opacity: 0;
     transition: opacity 0.18s ease, background 0.18s ease;
   }
@@ -3120,11 +3144,11 @@ async function handleReplanPlan(planId: string) {
 
 .inspector-toolbar {
   display: grid;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 5px;
+  padding: 6px 8px;
   border: 1px solid rgba(100, 116, 139, 0.16);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(237, 242, 248, 0.94));
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+  background: linear-gradient(180deg, rgba(245, 248, 252, 0.99), rgba(236, 241, 247, 0.95));
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
 }
 
 .inspector-copy {
@@ -3137,13 +3161,13 @@ async function handleReplanPlan(planId: string) {
 }
 
 .inspector-tab {
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 22px;
+  padding: 0 7px;
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.6);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.78);
   color: #475569;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -3161,9 +3185,9 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-plan-panel),
 :deep(.ide-dev-log),
 :deep(.ide-assistant-panel) {
-  background: linear-gradient(180deg, rgba(252, 253, 254, 0.99), rgba(246, 248, 251, 0.99));
+  background: linear-gradient(180deg, rgba(252, 253, 254, 0.995), rgba(247, 249, 252, 0.992));
   border: 1px solid rgba(100, 116, 139, 0.14);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
 :deep(.ide-activity-bar) {
@@ -3191,7 +3215,7 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-plan-panel),
 :deep(.ide-dev-log),
 :deep(.ide-assistant-panel) {
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 :deep(.ide-explorer),
@@ -3235,7 +3259,7 @@ async function handleReplanPlan(planId: string) {
 
 :deep(.ide-explorer .tree-row) {
   min-height: 26px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 :deep(.ide-editor .editor-tabs) {
@@ -3246,7 +3270,7 @@ async function handleReplanPlan(planId: string) {
 :deep(.ide-editor .editor-tab) {
   min-height: 32px;
   padding: 0 10px;
-  border-radius: 8px 8px 0 0;
+  border-radius: 6px 6px 0 0;
 }
 
 :deep(.ide-editor .editor-toolbar),
@@ -3264,7 +3288,7 @@ async function handleReplanPlan(planId: string) {
 
 :deep(.ide-terminal .terminal-tab) {
   min-height: 32px;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 5px 9px;
 }
 
@@ -3298,8 +3322,8 @@ async function handleReplanPlan(planId: string) {
 }
 
 :deep(.ide-assistant-panel .assistant-messages) {
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(247, 250, 253, 0.92), rgba(242, 246, 251, 0.9));
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(244, 247, 251, 0.92));
 }
 
 :deep(.ide-assistant-panel .assistant-input) {

@@ -105,6 +105,8 @@
 | 9.15 | 收口情绪链路最后一批入口：经典 `/ai` 语音播报改为沿用角色心情带，角色编辑页补上心情带预览与执行倾向提示 | 已完成 | `src/views/AIAssistant.vue`, `src/components/agent/AgentProfileManager.vue`, `README.md`, `CHANGELOG.md` |
 | 9.16 | 修复 IDE 编辑器“文件实际已读完但界面仍停在正在读取”的响应式失效链路，并压实编辑器空态 / 失败态 / 加载态展示 | 已完成 | `src/views/IDEView.vue`, `src/components/ide/IDEEditor.vue`, `CHANGELOG.md` |
 | 9.17 | 收口 Monaco 挂载、工作台去重与 IDE 真实桌面感：确认 Monaco 在 Electron 真渲染下稳定挂载，补上文件读取超时兜底，继续压缩顶部重复事实条、右侧 Inspector 密度与过度玻璃化样式 | 已完成 | `src/components/ide/IDEEditor.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/views/IDEView.vue`, `src/utils/ideMonaco.ts`, `vite.config.mts`, `CHANGELOG.md` |
+| 9.18 | 升级项目级全栈循环优化 skill，并继续收口 Agent / IDE 工作台结构：补 IDE 文件读取并发去重、窄栏紧凑 composer、会话空态与顶部信息减法，让界面更接近可持续使用的桌面工作台 | 已完成 | `.codex-local-skills/fullstack-autopilot-dev/SKILL.md`, `src/views/IDEView.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/components/ide/IDEEditor.vue`, `src/components/agent/AgentInputBar.vue`, `src/components/agent/AgentMessageList.vue`, `src/components/agent/AgentSessionList.vue`, `src/views/AgentView.vue`, `src/utils/ideMonaco.ts` |
+| 9.19 | 继续向桌面 IDE / Agent 工作台收口：压缩 IDE 活动栏、资源树、状态栏与编辑器标签密度，统一窄栏对话区布局，并将 Agent 顶部运行态进一步去重 | 已完成 | `src/components/ide/IDEActivityBar.vue`, `src/components/ide/IDEExplorer.vue`, `src/components/ide/IDEStatusBar.vue`, `src/components/agent/AgentMessageList.vue`, `src/components/agent/AgentSessionList.vue`, `src/components/agent/AgentInputBar.vue`, `src/views/AgentView.vue`, `src/views/IDEView.vue` |
 
 ---
 
@@ -192,6 +194,15 @@
 | 2026-03-14 | code | Phase 9 前端精修第六轮：新增 `AgentResourcesPanel.vue`，把托管 MCP / Skill 状态、角色授权边界、已启用资源与异常资源摘要接入 Agent 页内侧栏；`AgentView.vue` 新增“资源”工作台标签，让 `9.6` 中要求的“角色配置 / 记忆 / MCP / Skill”抽屉不再缺失 MCP / Skill 这一块。 |
 | 2026-03-14 | build | Phase 9 精修验证：新增 Agent 资源面板后再次执行 `npm.cmd run build`，确认 `AgentView` 侧栏标签扩展与 `AgentResourcesPanel.vue` 引入未破坏类型检查与打包。 |
 | 2026-03-14 | risk | Phase 9 MCP 浏览器复核：本轮按 `playwright-interactive` 工作流再次拉起本地静态预览并尝试用 MCP 浏览器访问 `/ai`，Chrome 仍在启动阶段退出并返回 `exit code 13`；这说明前端 UI 自动化缺口依旧来自本机浏览器环境，而不是页面代码或本地预览服务。 |
+| 2026-03-17 | code | Phase 9/Skill：升级 `.codex-local-skills/fullstack-autopilot-dev/SKILL.md` 为项目级“长时间自动全量前后端测评并自行优化”规范，补齐 OpenAgent 模式边界、必读文件、验证矩阵、子代理协作、长循环优化与发布纪律，后续在本仓库持续开发默认按该 skill 执行。 |
+| 2026-03-17 | code | Phase 9 IDE 提速：`IDEView.vue` 新增工作区文件读取任务去重缓存，并让已处于加载中的标签不再重复发起同一路径读取；同时在关闭标签时清理路径级缓存，减少连续点击同一文件造成的重复 IPC 与体感延迟。 |
+| 2026-03-17 | code | Phase 9 IDE/Agent 紧凑化：`IDEAssistantPanel.vue` 改为真正的窄栏 composer，关闭 IDE 语音按钮、压缩会话选择与运行条；`AgentInputBar.vue` 新增 `compact` 布局模式，`AgentMessageList.vue` 与 `AgentSessionList.vue` 同步收紧空态卡片和会话卡密度，减少侧栏与 Inspector 的堆叠感。 |
+| 2026-03-17 | code | Phase 9 视觉层级继续收口：`IDEView.vue`、`IDEEditor.vue`、`AgentView.vue`、`ideMonaco.ts` 调整工作台背景、页头、事实条、编辑器标签与 Monaco 主题，让 IDE 更接近桌面工作台而不是浅色玻璃卡片页，同时继续去掉 Agent 顶部重复角色信息。 |
+| 2026-03-17 | test | Phase 9 本轮已再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ide --route=/ai --delay-ms=9000`；Monaco 在 Electron 真渲染下继续稳定挂载，`/ide` 与 `/ai` 工作台截图已用于人工复核。 |
+| 2026-03-18 | ui | Phase 9 工作台继续收口：`IDEActivityBar.vue`、`IDEExplorer.vue`、`IDEStatusBar.vue` 压缩按钮、树节点、状态 pill 与暗色底栏密度，继续向 VS Code 式左栏 / 状态栏节奏靠拢；`IDEView.vue` 也同步收紧工作台外壳和 Inspector 面板圆角、间距与阴影。 |
+| 2026-03-18 | ui | Phase 9 Agent / IDE 对话区继续减负：`AgentInputBar.vue` 的 `compact` composer 正式接入 IDE 右栏，`AgentMessageList.vue` 追加 compact 模式并继续压缩 IDE 域空会话卡片；`AgentView.vue` 进一步去掉顶部重复角色信息，让主会话区更稳定地占据中心。 |
+| 2026-03-18 | perf | Phase 9 文件打开效率继续收口：`IDEView.vue` 已对同一路径读取做工作区级去重缓存，避免标签处于 loading 时被重复点击再次触发多次 IPC 读取；关闭标签时会同步回收路径缓存。 |
+| 2026-03-18 | build | Phase 9 本轮再次通过 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/ide --route=/ai --delay-ms=9000`，确认工作台继续减密后 Monaco 渲染与主路由仍稳定。 |
 | 2026-03-14 | code | Phase 9 真实 Electron 回归补强：`electron/main.ts` 新增 `--main-route`、`--capture-main-window`、`--capture-delay-ms`、`--capture-quit` 启动参数，`scripts/check-electron-ui.cjs` 可直接导出 `/ai` 与 `/ide` 的真实 Electron PNG 截图，用于在 Chrome 阻塞时继续做人眼回归。 |
 | 2026-03-14 | code | Phase 9 空态工作台精修：`IDEView.vue` 在未绑定工作区时新增 Explorer / MCP / Editor / Runtime / Inspector 空工作台骨架，避免 Electron 截图只剩大片空白；`AgentMessageList.vue` 在“已有会话但尚未发送消息”时新增 session-ready 状态卡，把提示词、会话事实和下一步入口集中到消息区首屏。 |
 | 2026-03-14 | build | Phase 9 Electron 截图验证：执行 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 成功导出 `/ai` 与 `/ide` 的真实 Electron 视图截图；`npm.cmd run build` 与 `npm.cmd run smoke:routes` 继续通过，说明空态精修未破坏主路由与桌面渲染链。 |
