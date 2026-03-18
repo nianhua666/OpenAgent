@@ -102,8 +102,9 @@ function getReleaseNotes(repositoryRoot, version) {
   }
 
   const lines = fs.readFileSync(changelogPath, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)
-  const heading = `## ${version}`
-  const startIndex = lines.findIndex(line => line.trim() === heading)
+  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const headingMatcher = new RegExp(`^##\\s+${escapedVersion}(?:\\s+-\\s+.*)?$`)
+  const startIndex = lines.findIndex(line => headingMatcher.test(line.trim()))
   if (startIndex === -1) {
     return `OpenAgent v${version}`
   }

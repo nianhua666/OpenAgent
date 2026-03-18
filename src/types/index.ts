@@ -213,6 +213,9 @@ export interface Sub2ApiDesktopRuntimeConfig {
   port: number
   runMode: Sub2ApiDesktopRunMode
   binaryPath: string
+  sourceDir: string
+  sourceRepoUrl: string
+  preferSourceBuild: boolean
   dataDir: string
   configPath: string
   logLevel: 'debug' | 'info' | 'warn' | 'error'
@@ -239,6 +242,17 @@ export interface Sub2ApiRuntimeState {
   resolvedBinaryPath: string
   binaryExists: boolean
   usingBundledBinary: boolean
+  sourceDir: string
+  sourceRepoUrl: string
+  sourceDetected: boolean
+  sourceBackendExists: boolean
+  sourceFrontendExists: boolean
+  sourceBinaryPath: string
+  sourceBinaryExists: boolean
+  preferSourceBuild: boolean
+  gitAvailable: boolean
+  goAvailable: boolean
+  pnpmAvailable: boolean
   resolvedDataDir: string
   resolvedConfigPath: string
   configExists: boolean

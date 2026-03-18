@@ -1,13 +1,20 @@
 Sub2API 桌面运行时目录
 
-建议目录结构：
+这里现在只作为 **内嵌兜底运行时目录**，不再建议把它当成主要维护方式。
 
-- bin/sub2api.exe
+当前推荐顺序：
+
+1. 在 OpenAgent 的 Sub2API 页面配置 **源码目录**
+2. 拉取官方源码仓库 `https://github.com/Wei-Shaw/sub2api.git`
+3. 在本机构建源码产物
+4. 让 OpenAgent 优先使用源码构建出来的 `sub2api.exe`
+
+如果源码模式不可用，OpenAgent 才会回退到这里：
+
+- `bin/sub2api.exe`
 - 其他运行时依赖文件
 
-OpenAgent 开发态会优先从 build/sub2api-runtime/bin/sub2api.exe 查找本地网关二进制。
-打包后，electron-builder 会把整个目录复制到 resources/sub2api-runtime。
+开发态下，OpenAgent 会把这里当作兜底二进制路径。
+打包后，electron-builder 会把整个目录复制到 `resources/sub2api-runtime`，作为发布包内的备用运行时。
 
-当前桌面版只使用内嵌二进制运行时，不依赖 Docker 或 Compose。
-
-运行时数据不建议放在这里，而是放到应用数据目录下的 sub2api-runtime，以避免覆盖用户配置、日志和 setup 结果。
+运行时数据不要放在这里，而是放到应用数据目录下的 `sub2api-runtime`，避免覆盖用户配置、日志和 setup 结果。

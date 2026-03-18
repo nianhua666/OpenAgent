@@ -320,6 +320,40 @@
             </label>
 
             <label class="config-field config-field-span">
+              <span>源码目录</span>
+              <div class="path-input-row">
+                <input
+                  class="setting-input"
+                  :value="desktopSourceDir"
+                  placeholder="留空则使用应用数据目录/sub2api-runtime/source/sub2api"
+                  @input="desktopSourceDir = ($event.target as HTMLInputElement).value"
+                />
+                <button class="btn btn-secondary btn-sm" @click="chooseDesktopSourceDir">浏览</button>
+              </div>
+              <small>推荐使用官方源码工作树。OpenAgent 会识别 backend / frontend 目录，并在构建完成后优先托管源码产物。</small>
+            </label>
+
+            <label class="config-field config-field-span">
+              <span>源码仓库地址</span>
+              <input
+                class="setting-input"
+                :value="desktopSourceRepoUrl"
+                placeholder="https://github.com/Wei-Shaw/sub2api.git"
+                @input="desktopSourceRepoUrl = ($event.target as HTMLInputElement).value"
+              />
+              <small>点击“同步源码”时会按这个地址 clone 或 pull。默认使用官方仓库。</small>
+            </label>
+
+            <label class="config-field config-field-span checkbox-field">
+              <span>源码优先</span>
+              <label class="checkbox-row">
+                <input type="checkbox" :checked="desktopPreferSourceBuild" @change="desktopPreferSourceBuild = ($event.target as HTMLInputElement).checked" />
+                <span>优先使用源码构建产物，而不是内嵌 exe</span>
+              </label>
+              <small>如果已检测到源码构建产物，OpenAgent 会优先启动源码编译生成的 `sub2api.exe`。</small>
+            </label>
+
+            <label class="config-field config-field-span">
               <span>数据目录</span>
               <div class="path-input-row">
                 <input
@@ -345,14 +379,26 @@
             </label>
           </div>
 
+          <div class="status-strip">
+            <span class="status-chip">源码状态：{{ sourceWorkflowStatusLabel }}</span>
+            <span class="status-chip">工具链：{{ sourceToolchainSummary }}</span>
+            <span class="status-chip">目标产物：{{ sourceBuildTargetLabel }}</span>
+          </div>
+
+          <div class="hero-actions">
+            <button class="btn btn-secondary btn-sm" @click="syncDesktopSource">同步源码</button>
+            <button class="btn btn-secondary btn-sm" @click="buildDesktopSource">源码构建</button>
+            <button class="btn btn-secondary btn-sm" @click="openDesktopSourceDir">打开源码目录</button>
+          </div>
+
           <div class="runtime-note-grid">
             <div class="runtime-note-card">
-              <strong>内置依赖目录</strong>
-              <p>建议把 Sub2API 可执行文件和相关依赖统一放进项目内的 build/sub2api-runtime 目录，打包时会自动复制到桌面版 resources/sub2api-runtime。</p>
+              <strong>源码优先建议</strong>
+              <p>当前更推荐使用源码工作树而不是单独 exe。内嵌二进制只保留为兜底路径，日常维护建议走“同步源码 -> 构建 -> 启动”。</p>
             </div>
             <div class="runtime-note-card">
               <strong>首次启动路径</strong>
-              <p>如果当前数据目录还没有 config.yaml 和 .installed，Sub2API 会优先进入 setup 向导。这时点击「打开后台」即可在本机完成初始化。</p>
+              <p>如果当前数据目录还没有 config.yaml 和 .installed，Sub2API 会优先进入 setup 向导。这时点击「打开后台」即可在本机完成初始化；若源码已同步但未构建，页面会明确提示当前缺少的工具链或构建产物。</p>
             </div>
           </div>
         </details>
@@ -775,6 +821,24 @@ const desktopBinaryPath = computed({
     void sub2ApiStore.setDesktopRuntime({ binaryPath: value })
   }
 })
+const desktopSourceDir = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.sourceDir,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ sourceDir: value })
+  }
+})
+const desktopSourceRepoUrl = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.sourceRepoUrl,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ sourceRepoUrl: value })
+  }
+})
+const desktopPreferSourceBuild = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.preferSourceBuild,
+  set: (value: boolean) => {
+    void sub2ApiStore.setDesktopRuntime({ preferSourceBuild: value })
+  }
+})
 const desktopDataDir = computed({
   get: () => sub2ApiStore.config.desktopRuntime.dataDir,
   set: (value: string) => {
@@ -943,7 +1007,30 @@ const runtimeHealthLabel = computed(() => {
 })
 const runtimeLogPreviewText = computed(() => runtimeState.value.logs.slice(-12).join('\n'))
 const canStopRuntime = computed(() => runtimeState.value.status === 'running' || runtimeState.value.status === 'starting')
-const startRuntimeLabel = computed(() => runtimeState.value.status === 'missing-binary' ? '补齐二进制后启动' : '启动本地网关')
+const startRuntimeLabel = computed(() => {
+  if (runtimeState.value.status !== 'missing-binary') {
+    return '启动本地网关'
+  }
+
+  return desktopPreferSourceBuild.value ? '先构建源码后启动' : '补齐运行产物后启动'
+})
+const sourceToolchainSummary = computed(() => [
+  runtimeState.value.gitAvailable ? 'Git' : 'Git 缺失',
+  runtimeState.value.pnpmAvailable ? 'pnpm' : 'pnpm 缺失',
+  runtimeState.value.goAvailable ? 'Go' : 'Go 缺失'
+].join(' / '))
+const sourceWorkflowStatusLabel = computed(() => {
+  if (!runtimeState.value.sourceDetected) {
+    return '未检测到源码工作树'
+  }
+
+  if (!runtimeState.value.sourceBinaryExists) {
+    return '已检测到源码，但尚未构建'
+  }
+
+  return desktopPreferSourceBuild.value ? '源码构建产物已就绪' : '源码已就绪，但当前未设为优先'
+})
+const sourceBuildTargetLabel = computed(() => runtimeState.value.sourceBinaryPath || '等待解析源码构建产物路径')
 const setupStatusLabel = computed(() => {
   if (!setupDiagnostics.value.checkedAt) {
     return '未检查'
@@ -1089,8 +1176,12 @@ const runtimeUptimeLabel = computed(() => {
   return formatDuration(Date.now() - runtimeState.value.startedAt)
 })
 const desktopFlowSummary = computed(() => {
+  if (desktopPreferSourceBuild.value && runtimeState.value.sourceDetected && !runtimeState.value.sourceBinaryExists) {
+    return `当前已切到源码优先模式，但源码产物还没有生成。建议先同步源码并构建；当前工具链状态：${sourceToolchainSummary.value}。`
+  }
+
   if (runtimeState.value.status === 'missing-binary') {
-    return '当前只差可执行文件。补齐内置二进制或重新指定路径后，就能继续本地网关初始化。'
+    return '当前没有可运行的本地网关。优先建议切到源码工作树模式：拉取 Sub2API 源码、构建后端产物，再由 OpenAgent 直接托管。'
   }
 
   if (runtimeState.value.status === 'running' && sub2ApiStore.config.apiKey.trim()) {
@@ -1268,6 +1359,53 @@ async function chooseDesktopDataDir() {
 
   await sub2ApiStore.setDesktopRuntime({ dataDir: selectedPath })
   showToast('success', '已更新 Sub2API 数据目录')
+}
+
+async function chooseDesktopSourceDir() {
+  if (!window.electronAPI?.chooseDirectory) {
+    showToast('error', '当前环境不支持目录选择')
+    return
+  }
+
+  const selectedPath = await window.electronAPI.chooseDirectory('选择 Sub2API 源码目录', desktopSourceDir.value || runtimeState.value.sourceDir || undefined)
+  if (!selectedPath) {
+    return
+  }
+
+  await sub2ApiStore.setDesktopRuntime({ sourceDir: selectedPath })
+  await sub2ApiStore.refreshRuntimeState()
+  showToast('success', '已更新 Sub2API 源码目录')
+}
+
+async function syncDesktopSource() {
+  try {
+    const result = await sub2ApiStore.syncDesktopSource()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '拉取 Sub2API 源码失败')
+  }
+}
+
+async function buildDesktopSource() {
+  try {
+    const result = await sub2ApiStore.buildDesktopSource()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '构建 Sub2API 源码失败')
+  }
+}
+
+async function openDesktopSourceDir() {
+  const targetPath = desktopSourceDir.value || runtimeState.value.sourceDir
+  if (!targetPath) {
+    showToast('error', '当前还没有配置源码目录')
+    return
+  }
+
+  const opened = await window.electronAPI?.openPath?.(targetPath)
+  if (!opened) {
+    showToast('error', '打开源码目录失败')
+  }
 }
 
 async function toggleDesktopAutoStart() {

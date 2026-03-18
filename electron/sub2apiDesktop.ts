@@ -418,6 +418,20 @@ export function createSub2ApiDesktopManager(options: Sub2ApiDesktopManagerOption
     }
   }
 
+  async function syncSource(runtimeConfig?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) {
+    syncManagedConfig(managedConfig)
+    const result = await binaryManager.syncSource(runtimeConfig)
+    await getRuntimeState(runtimeConfig, managedConfig)
+    return result
+  }
+
+  async function buildSource(runtimeConfig?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) {
+    syncManagedConfig(managedConfig)
+    const result = await binaryManager.buildSource(runtimeConfig)
+    await getRuntimeState(runtimeConfig, managedConfig)
+    return result
+  }
+
   async function shutdown() {
     await binaryManager.shutdown()
   }
@@ -431,6 +445,8 @@ export function createSub2ApiDesktopManager(options: Sub2ApiDesktopManagerOption
     testSetupDatabase,
     testSetupRedis,
     installSetup,
+    syncSource,
+    buildSource,
     ensureDesktopAccess,
     shutdown
   }

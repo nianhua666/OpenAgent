@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sub2ApiStopRuntime: () => ipcRenderer.invoke('sub2api:stopRuntime'),
   sub2ApiRestartRuntime: (config?: unknown, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:restartRuntime', config, managedConfig),
   sub2ApiInspectSetup: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:inspectSetup', config, managedConfig),
+  sub2ApiSyncSource: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:syncSource', config, managedConfig),
+  sub2ApiBuildSource: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:buildSource', config, managedConfig),
   sub2ApiTestSetupDatabase: (payload: Sub2ApiSetupDatabaseConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => ipcRenderer.invoke('sub2api:testSetupDatabase', payload, config),
   sub2ApiTestSetupRedis: (payload: Sub2ApiSetupRedisConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => ipcRenderer.invoke('sub2api:testSetupRedis', payload, config),
   sub2ApiInstallSetup: (payload: Sub2ApiDesktopSetupProfile, config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => ipcRenderer.invoke('sub2api:installSetup', payload, config, managedConfig),

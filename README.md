@@ -75,17 +75,36 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
 
 ## 本地开发
 
-### Sub2API 桌面运行时目录
+### Sub2API 本地网关模式
 
-如果你要让 OpenAgent 本机直接作为 Sub2API 网关，请把桌面运行时依赖放在项目内的以下目录。当前方案是 OpenAgent 内嵌二进制运行时，不依赖 Docker 或 Compose：
+如果你要让 OpenAgent 本机直接作为 Sub2API 网关，当前更推荐走**源码工作树模式**，而不是只往项目里塞一个 `sub2api.exe`。
 
-- build/sub2api-runtime/bin/：放 Sub2API 可执行文件，默认文件名建议为 sub2api.exe
-- build/sub2api-runtime/：放打包时需要一起带走的其他运行时资源
-- 应用数据目录/sub2api-runtime/：运行时生成的 DATA_DIR、.installed、launcher 日志与本地 config.yaml
+推荐结构分成两层：
 
-开发态下，OpenAgent 会优先从 build/sub2api-runtime/bin/sub2api.exe 查找本地网关二进制；打包后会自动复制到 resources/sub2api-runtime/bin/。
+- 应用数据目录 `sub2api-runtime/`：运行时生成的 `DATA_DIR`、`.installed`、`launcher` 日志与本地 `config.yaml`
+- 源码工作树：默认建议放到 `应用数据目录/sub2api-runtime/source/sub2api`，也可以在 Sub2API 页面里改成你自己的目录
 
-如果当前数据目录还没有 config.yaml，首次启动本地网关时会优先进入 Sub2API setup 向导。你可以在应用里的 Sub2API 页面点击“打开后台”完成初始化，后续管理员登录和 OpenAgent 专属 API Key 会继续由桌面端自动接入。
+当前 OpenAgent 已支持三条本地网关路径：
+
+1. **源码优先模式**
+   - 拉取官方源码仓库 `https://github.com/Wei-Shaw/sub2api.git`
+   - 检测 `frontend` / `backend` 结构
+   - 构建后优先启动源码产物
+2. **手动二进制模式**
+   - 直接指定自备的 `sub2api.exe`
+3. **内嵌兜底模式**
+   - 开发态回退到 `build/sub2api-runtime/bin/sub2api.exe`
+   - 打包后回退到 `resources/sub2api-runtime/bin/sub2api.exe`
+
+源码模式的实际前置条件：
+
+- `git`
+- `corepack pnpm`
+- `go`
+
+其中前端资源构建走 `corepack pnpm`，后端二进制构建走 `go build -tags embed -o backend/sub2api.exe ./cmd/server`。如果工具链不完整，Sub2API 页面会明确告诉你当前缺的是源码、构建产物，还是 `Go / pnpm`。
+
+如果当前数据目录还没有 `config.yaml`，首次启动本地网关时会优先进入 Sub2API setup 向导。你可以在应用里的 Sub2API 页面点击“打开后台”完成初始化，后续管理员登录和 OpenAgent 专属 API Key 会继续由桌面端自动接入。
 
 ### 环境要求
 
@@ -117,7 +136,7 @@ npm run build
 npm run electron:build:clean
 ```
 
-该命令会把 build/sub2api-runtime 目录一并打进桌面包体，供本地 Sub2API 网关模式直接使用。
+该命令会把 `build/sub2api-runtime` 一并打进桌面包体，作为本地网关的兜底运行时；如果你已经配置源码工作树，桌面版会优先尝试使用源码构建产物。
 
 安装版升级时，NSIS 安装器会优先读取上一版本记录的安装目录，并默认沿用原目录；只有用户在安装界面手动切换时才会改变。
 

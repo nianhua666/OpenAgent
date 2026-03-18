@@ -1,5 +1,12 @@
 # 更新日志
 
+## 3.0.10 - 2026-03-19
+
+- Sub2API 本地网关改为源码工作树优先：`Sub2ApiSettings.vue` 现已支持配置源码目录、源码仓库地址、源码优先开关，并新增“同步源码 / 源码构建 / 打开源码目录”入口；主进程运行时也会优先识别 `backend` / `frontend` 结构与源码构建产物，不再只围绕内嵌 `sub2api.exe` 运转。
+- Sub2API 本地源码链新增工具链探测：当前会直接识别 `git / corepack pnpm / go` 是否存在；如果源码已同步但缺少 Go 或 pnpm，页面和运行时状态会明确告诉你缺的是构建前置条件，而不是继续只报“缺少二进制”。
+- 文档口径切到源码优先：`README.md` 与 `build/sub2api-runtime/README.md` 已改为“源码工作树优先、内嵌二进制只作为兜底路径”的说明，降低后续继续维护单个 exe 运行时的误导。
+- Release 元数据同步脚本补强：`scripts/publish-release.cjs` 现在能正确解析 `## 3.0.9 - 2026-03-18` 这种带日期的 changelog 标题，历史 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文已回补为真实更新日志，不再停留在空的版本标题。
+
 ## 3.0.9 - 2026-03-18
 
 - 升级 `.codex-local-skills/fullstack-autopilot-dev/SKILL.md` 为项目级长时间循环优化 skill：新增 OpenAgent 专属的模式边界、必读文件、验证矩阵、子代理协作、长时间自治循环、前端工作台检查表与发布纪律，后续在本仓库持续开发默认按该 skill 执行。

@@ -56,6 +56,8 @@ interface ElectronAPI {
   sub2ApiStopRuntime: () => Promise<Sub2ApiRuntimeState>
   sub2ApiRestartRuntime: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiRuntimeState>
   sub2ApiInspectSetup: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupDiagnostics>
+  sub2ApiSyncSource: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupActionResult>
+  sub2ApiBuildSource: (config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupActionResult>
   sub2ApiTestSetupDatabase: (payload: Sub2ApiSetupDatabaseConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => Promise<Sub2ApiSetupActionResult>
   sub2ApiTestSetupRedis: (payload: Sub2ApiSetupRedisConfig, config?: Partial<Sub2ApiDesktopRuntimeConfig>) => Promise<Sub2ApiSetupActionResult>
   sub2ApiInstallSetup: (payload: Sub2ApiDesktopSetupProfile, config?: Partial<Sub2ApiDesktopRuntimeConfig>, managedConfig?: Partial<Sub2ApiDesktopManagedConfig>) => Promise<Sub2ApiSetupActionResult>

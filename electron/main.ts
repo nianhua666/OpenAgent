@@ -3619,6 +3619,12 @@ app.whenReady().then(() => {
   ipcMain.handle('sub2api:inspectSetup', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
     return sub2ApiRuntimeManager.inspectSetup(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
   })
+  ipcMain.handle('sub2api:syncSource', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.syncSource(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:buildSource', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.buildSource(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
   ipcMain.handle('sub2api:testSetupDatabase', (_event, payload?: Partial<Sub2ApiSetupDatabaseConfig>, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>) => {
     const sanitizedPayload = sanitizeSub2ApiSetupDatabasePayload(payload)
     if (!sanitizedPayload) {

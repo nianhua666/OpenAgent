@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { request as httpRequest } from 'http'
 import { app } from 'electron'
@@ -21,6 +21,17 @@ type Sub2ApiRuntimeManagerOptions = {
 type ResolvedRuntimeContext = {
   config: Sub2ApiDesktopRuntimeConfig
   dependencyRoot: string
+  sourceDir: string
+  sourceRepoUrl: string
+  sourceDetected: boolean
+  sourceBackendExists: boolean
+  sourceFrontendExists: boolean
+  sourceBinaryPath: string
+  sourceBinaryExists: boolean
+  preferSourceBuild: boolean
+  gitAvailable: boolean
+  goAvailable: boolean
+  pnpmAvailable: boolean
   bundledBinaryPath: string
   resolvedBinaryPath: string
   usingBundledBinary: boolean
@@ -36,6 +47,7 @@ type ResolvedRuntimeContext = {
 
 const SUB2API_RUNTIME_DIR_NAME = 'sub2api-runtime'
 const SUB2API_BINARY_NAME = process.platform === 'win32' ? 'sub2api.exe' : 'sub2api'
+const SUB2API_SOURCE_REPO_URL = 'https://github.com/Wei-Shaw/sub2api.git'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 38080
 const MAX_LOG_LINES = 160
@@ -62,6 +74,12 @@ type SetupHttpResult<T = unknown> = {
   message: string
   data: T | null
   rawText: string
+}
+
+type Sub2ApiToolchainState = {
+  gitAvailable: boolean
+  goAvailable: boolean
+  pnpmAvailable: boolean
 }
 
 function normalizePath(value: string | null | undefined) {
@@ -98,6 +116,43 @@ function resolveClientHost(host: string) {
   return normalizedHost
 }
 
+function detectToolchain(): Sub2ApiToolchainState {
+  const gitAvailable = spawnSync('git', ['--version'], { windowsHide: true, encoding: 'utf-8' }).status === 0
+  const goAvailable = spawnSync('go', ['version'], { windowsHide: true, encoding: 'utf-8' }).status === 0
+  const pnpmAvailable = spawnSync('corepack', ['pnpm', '-v'], { windowsHide: true, encoding: 'utf-8' }).status === 0
+
+  return {
+    gitAvailable,
+    goAvailable,
+    pnpmAvailable
+  }
+}
+
+function resolveDefaultSourceDir(getDataDir: () => string) {
+  const documentsDir = normalizePath(app.getPath('documents'))
+  if (process.platform === 'win32' && /^[D-Z]:\\/i.test(documentsDir)) {
+    return join(documentsDir, 'OpenAgent-data', SUB2API_RUNTIME_DIR_NAME, 'source', 'sub2api')
+  }
+
+  return join(getDataDir(), SUB2API_RUNTIME_DIR_NAME, 'source', 'sub2api')
+}
+
+function resolveSourceBinaryPath(sourceDir: string) {
+  const candidates = [
+    join(sourceDir, 'backend', SUB2API_BINARY_NAME),
+    join(sourceDir, SUB2API_BINARY_NAME),
+    join(sourceDir, 'build', SUB2API_BINARY_NAME),
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return candidates[0]
+}
+
 function normalizeRuntimeConfig(saved?: Partial<Sub2ApiDesktopRuntimeConfig> | null): Sub2ApiDesktopRuntimeConfig {
   return {
     autoStart: Boolean(saved?.autoStart),
@@ -105,6 +160,9 @@ function normalizeRuntimeConfig(saved?: Partial<Sub2ApiDesktopRuntimeConfig> | n
     port: normalizePort(saved?.port),
     runMode: saved?.runMode === 'standard' ? 'standard' : 'simple',
     binaryPath: normalizePath(saved?.binaryPath),
+    sourceDir: normalizePath(saved?.sourceDir),
+    sourceRepoUrl: typeof saved?.sourceRepoUrl === 'string' && saved.sourceRepoUrl.trim() ? saved.sourceRepoUrl.trim() : SUB2API_SOURCE_REPO_URL,
+    preferSourceBuild: typeof saved?.preferSourceBuild === 'boolean' ? saved.preferSourceBuild : true,
     dataDir: normalizePath(saved?.dataDir),
     configPath: normalizePath(saved?.configPath),
     logLevel: saved?.logLevel === 'debug' || saved?.logLevel === 'warn' || saved?.logLevel === 'error' ? saved.logLevel : 'info'
@@ -185,7 +243,23 @@ function buildLaunchPendingMessage(context: ResolvedRuntimeContext) {
 }
 
 function buildMissingBinaryMessage(context: ResolvedRuntimeContext) {
-  return `未找到 Sub2API 可执行文件。当前解析路径为 ${context.resolvedBinaryPath}；请把二进制放到 ${context.bundledBinaryPath}，或在界面中手动指定 binaryPath。`
+  if (context.preferSourceBuild && context.sourceDetected && !context.sourceBinaryExists) {
+    const missingTools: string[] = []
+    if (!context.goAvailable) {
+      missingTools.push('Go')
+    }
+    if (!context.pnpmAvailable) {
+      missingTools.push('pnpm')
+    }
+
+    const toolchainHint = missingTools.length > 0
+      ? `当前缺少 ${missingTools.join(' / ')}，源码暂时无法构建。`
+      : '源码工作树已找到，但还没有生成后端二进制。'
+
+    return `当前已切到源码优先模式，但未找到可运行的源码构建产物。源码目录：${context.sourceDir}；预期二进制：${context.sourceBinaryPath}。${toolchainHint}`
+  }
+
+  return `未找到 Sub2API 可执行文件。当前解析路径为 ${context.resolvedBinaryPath}；请优先配置源码目录并构建产物，或在界面中手动指定 binaryPath。内置二进制期望路径为 ${context.bundledBinaryPath}。`
 }
 
 function buildSetupStatusEndpoint(context: ResolvedRuntimeContext) {
@@ -359,6 +433,62 @@ async function requestSetupJson<T>(endpoint: string, method: 'GET' | 'POST', bod
   })
 }
 
+async function runCommand(command: string, args: string[], cwd: string, timeout = 15 * 60 * 1000) {
+  return await new Promise<{ success: boolean; code: number; output: string }>(resolve => {
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: true,
+      shell: false,
+      env: {
+        ...process.env,
+        CI: '1'
+      }
+    })
+
+    let output = ''
+    const append = (chunk: string) => {
+      output += chunk
+      if (output.length > 24_000) {
+        output = output.slice(-24_000)
+      }
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // ignore
+      }
+      resolve({
+        success: false,
+        code: 124,
+        output: `${output}\n命令执行超时：${command} ${args.join(' ')}`
+      })
+    }, timeout)
+
+    child.stdout?.setEncoding('utf8')
+    child.stderr?.setEncoding('utf8')
+    child.stdout?.on('data', chunk => append(String(chunk)))
+    child.stderr?.on('data', chunk => append(String(chunk)))
+    child.on('error', error => {
+      clearTimeout(timer)
+      resolve({
+        success: false,
+        code: 1,
+        output: `${output}\n${error instanceof Error ? error.message : String(error)}`
+      })
+    })
+    child.on('exit', code => {
+      clearTimeout(timer)
+      resolve({
+        success: code === 0,
+        code: typeof code === 'number' ? code : 1,
+        output: output.trim()
+      })
+    })
+  })
+}
+
 export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOptions) {
   let desiredConfig = normalizeRuntimeConfig()
   let runtimeProcess: ReturnType<typeof spawn> | null = null
@@ -377,9 +507,19 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       ? join(process.resourcesPath, SUB2API_RUNTIME_DIR_NAME)
       : join(process.cwd(), 'build', SUB2API_RUNTIME_DIR_NAME)
 
+    const sourceDir = desiredConfig.sourceDir || resolveDefaultSourceDir(options.getDataDir)
+    const sourceRepoUrl = desiredConfig.sourceRepoUrl || SUB2API_SOURCE_REPO_URL
+    const sourceBackendExists = existsSync(join(sourceDir, 'backend', 'go.mod'))
+    const sourceFrontendExists = existsSync(join(sourceDir, 'frontend', 'package.json'))
+    const sourceDetected = sourceBackendExists && sourceFrontendExists
+    const sourceBinaryPath = resolveSourceBinaryPath(sourceDir)
+    const sourceBinaryExists = existsSync(sourceBinaryPath)
+    const toolchain = detectToolchain()
     const bundledBinaryPath = join(dependencyRoot, 'bin', SUB2API_BINARY_NAME)
-    const resolvedBinaryPath = desiredConfig.binaryPath || bundledBinaryPath
-    const usingBundledBinary = !desiredConfig.binaryPath
+    const resolvedBinaryPath = desiredConfig.binaryPath
+      || (desiredConfig.preferSourceBuild && sourceDetected ? sourceBinaryPath : '')
+      || bundledBinaryPath
+    const usingBundledBinary = !desiredConfig.binaryPath && (!desiredConfig.preferSourceBuild || !sourceDetected || resolvedBinaryPath === bundledBinaryPath)
 
     let resolvedDataDir = desiredConfig.dataDir || join(options.getDataDir(), SUB2API_RUNTIME_DIR_NAME)
     let resolvedConfigPath = desiredConfig.configPath || join(resolvedDataDir, 'config.yaml')
@@ -398,6 +538,17 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     return {
       config: desiredConfig,
       dependencyRoot,
+      sourceDir,
+      sourceRepoUrl,
+      sourceDetected,
+      sourceBackendExists,
+      sourceFrontendExists,
+      sourceBinaryPath,
+      sourceBinaryExists,
+      preferSourceBuild: desiredConfig.preferSourceBuild,
+      gitAvailable: toolchain.gitAvailable,
+      goAvailable: toolchain.goAvailable,
+      pnpmAvailable: toolchain.pnpmAvailable,
       bundledBinaryPath,
       resolvedBinaryPath,
       usingBundledBinary,
@@ -429,6 +580,17 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       resolvedBinaryPath: context.resolvedBinaryPath,
       binaryExists: context.binaryExists,
       usingBundledBinary: context.usingBundledBinary,
+      sourceDir: context.sourceDir,
+      sourceRepoUrl: context.sourceRepoUrl,
+      sourceDetected: context.sourceDetected,
+      sourceBackendExists: context.sourceBackendExists,
+      sourceFrontendExists: context.sourceFrontendExists,
+      sourceBinaryPath: context.sourceBinaryPath,
+      sourceBinaryExists: context.sourceBinaryExists,
+      preferSourceBuild: context.preferSourceBuild,
+      gitAvailable: context.gitAvailable,
+      goAvailable: context.goAvailable,
+      pnpmAvailable: context.pnpmAvailable,
       resolvedDataDir: context.resolvedDataDir,
       resolvedConfigPath: context.resolvedConfigPath,
       configExists: context.configExists,
@@ -455,6 +617,17 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       resolvedBinaryPath: context.resolvedBinaryPath,
       binaryExists: context.binaryExists,
       usingBundledBinary: context.usingBundledBinary,
+      sourceDir: context.sourceDir,
+      sourceRepoUrl: context.sourceRepoUrl,
+      sourceDetected: context.sourceDetected,
+      sourceBackendExists: context.sourceBackendExists,
+      sourceFrontendExists: context.sourceFrontendExists,
+      sourceBinaryPath: context.sourceBinaryPath,
+      sourceBinaryExists: context.sourceBinaryExists,
+      preferSourceBuild: context.preferSourceBuild,
+      gitAvailable: context.gitAvailable,
+      goAvailable: context.goAvailable,
+      pnpmAvailable: context.pnpmAvailable,
       resolvedDataDir: context.resolvedDataDir,
       resolvedConfigPath: context.resolvedConfigPath,
       configExists: context.configExists,
@@ -948,6 +1121,139 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     return startRuntime(partial)
   }
 
+  async function syncSource(partial?: Partial<Sub2ApiDesktopRuntimeConfig>): Promise<Sub2ApiSetupActionResult> {
+    const context = resolveRuntimeContext(partial)
+    if (!context.gitAvailable) {
+      return {
+        success: false,
+        code: 1,
+        message: '当前系统缺少 Git，无法拉取或更新 Sub2API 源码',
+        details: '请先安装 Git，或手动把源码仓库放到已配置的源码目录中。'
+      }
+    }
+
+    const sourceDir = context.sourceDir
+    const sourceParentDir = dirname(sourceDir)
+    ensureDirectoryExists(sourceParentDir)
+
+    const hasGitRepo = existsSync(join(sourceDir, '.git'))
+    if (!existsSync(sourceDir) || !hasGitRepo) {
+      const cloneResult = await runCommand('git', ['clone', '--depth', '1', context.sourceRepoUrl, sourceDir], sourceParentDir, 10 * 60 * 1000)
+      if (!cloneResult.success) {
+        return {
+          success: false,
+          code: cloneResult.code,
+          message: '拉取 Sub2API 源码失败',
+          details: cloneResult.output || `git clone ${context.sourceRepoUrl} ${sourceDir}`
+        }
+      }
+    } else {
+      const resetResult = await runCommand('git', ['-C', sourceDir, 'reset', '--hard', 'HEAD'], sourceDir, 2 * 60 * 1000)
+      if (!resetResult.success) {
+        return {
+          success: false,
+          code: resetResult.code,
+          message: '重置本地 Sub2API 源码失败',
+          details: resetResult.output || 'git reset --hard HEAD'
+        }
+      }
+      const pullResult = await runCommand('git', ['-C', sourceDir, 'pull', '--ff-only'], sourceDir, 5 * 60 * 1000)
+      if (!pullResult.success) {
+        return {
+          success: false,
+          code: pullResult.code,
+          message: '更新 Sub2API 源码失败',
+          details: pullResult.output || 'git pull --ff-only'
+        }
+      }
+    }
+
+    emitState({}, resolveRuntimeContext({
+      ...context.config,
+      sourceDir,
+      sourceRepoUrl: context.sourceRepoUrl
+    }))
+    return {
+      success: true,
+      code: 0,
+      message: 'Sub2API 源码已同步',
+      details: `源码目录：${sourceDir}`
+    }
+  }
+
+  async function buildSource(partial?: Partial<Sub2ApiDesktopRuntimeConfig>): Promise<Sub2ApiSetupActionResult> {
+    const context = resolveRuntimeContext(partial)
+    if (!context.sourceDetected) {
+      return {
+        success: false,
+        code: 1,
+        message: '当前还没有可用的 Sub2API 源码工作树',
+        details: `请先同步源码到 ${context.sourceDir}`
+      }
+    }
+
+    if (!context.pnpmAvailable || !context.goAvailable) {
+      const missing = [
+        !context.pnpmAvailable ? 'pnpm' : '',
+        !context.goAvailable ? 'Go' : ''
+      ].filter(Boolean).join(' / ')
+
+      return {
+        success: false,
+        code: 1,
+        message: `源码构建前置条件不足：缺少 ${missing}`,
+        details: `当前源码目录：${context.sourceDir}。前端需要 corepack pnpm，后端需要 Go 才能生成 ${context.sourceBinaryPath}。`
+      }
+    }
+
+    const frontendDir = join(context.sourceDir, 'frontend')
+    const backendDir = join(context.sourceDir, 'backend')
+    ensureDirectoryExists(dirname(context.sourceBinaryPath))
+
+    const installResult = await runCommand('corepack', ['pnpm', 'install', '--frozen-lockfile'], frontendDir, 10 * 60 * 1000)
+    if (!installResult.success) {
+      return {
+        success: false,
+        code: installResult.code,
+        message: 'Sub2API 前端依赖安装失败',
+        details: installResult.output || 'corepack pnpm install --frozen-lockfile'
+      }
+    }
+
+    const frontendBuildResult = await runCommand('corepack', ['pnpm', 'build'], frontendDir, 10 * 60 * 1000)
+    if (!frontendBuildResult.success) {
+      return {
+        success: false,
+        code: frontendBuildResult.code,
+        message: 'Sub2API 前端构建失败',
+        details: frontendBuildResult.output || 'corepack pnpm build'
+      }
+    }
+
+    const backendBuildResult = await runCommand('go', ['build', '-tags', 'embed', '-o', context.sourceBinaryPath, './cmd/server'], backendDir, 10 * 60 * 1000)
+    if (!backendBuildResult.success) {
+      return {
+        success: false,
+        code: backendBuildResult.code,
+        message: 'Sub2API 后端构建失败',
+        details: backendBuildResult.output || `go build -tags embed -o ${context.sourceBinaryPath} ./cmd/server`
+      }
+    }
+
+    emitState({}, resolveRuntimeContext({
+      ...context.config,
+      sourceDir: context.sourceDir,
+      sourceRepoUrl: context.sourceRepoUrl,
+      preferSourceBuild: true
+    }))
+    return {
+      success: true,
+      code: 0,
+      message: 'Sub2API 源码构建完成',
+      details: `已生成源码构建产物：${context.sourceBinaryPath}`
+    }
+  }
+
   async function shutdown() {
     try {
       await stopRuntime()
@@ -966,6 +1272,8 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     testSetupDatabase,
     testSetupRedis,
     installSetup,
+    syncSource,
+    buildSource,
     shutdown
   }
 }

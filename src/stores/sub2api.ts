@@ -499,6 +499,26 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     return window.electronAPI.sub2ApiChooseBinary(defaultPath || config.value.desktopRuntime.binaryPath || runtimeState.value.resolvedBinaryPath)
   }
 
+  async function syncDesktopSource() {
+    if (!window.electronAPI?.sub2ApiSyncSource) {
+      throw new Error('源码同步仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiSyncSource(toRuntimePayload(), toManagedPayload())
+    await refreshRuntimeState(config.value.desktopRuntime)
+    return result
+  }
+
+  async function buildDesktopSource() {
+    if (!window.electronAPI?.sub2ApiBuildSource) {
+      throw new Error('源码构建仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiBuildSource(toRuntimePayload(), toManagedPayload())
+    await refreshRuntimeState(config.value.desktopRuntime)
+    return result
+  }
+
   async function ensureDesktopSetupRuntime() {
     if (!window.electronAPI?.sub2ApiInspectSetup) {
       throw new Error('桌面初始化向导仅在 Electron 桌面环境中可用')
@@ -702,6 +722,8 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     stopDesktopRuntime,
     restartDesktopRuntime,
     chooseBinary,
+    syncDesktopSource,
+    buildDesktopSource,
     inspectDesktopSetup,
     testDesktopSetupDatabase,
     testDesktopSetupRedis,

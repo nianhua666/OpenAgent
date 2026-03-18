@@ -68,6 +68,7 @@ export const SUB2API_SETUP_DEFAULT_TIMEZONE = 'Asia/Shanghai'
 export const SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL = 'admin@openagent.local'
 export const SUB2API_DESKTOP_DEFAULT_API_KEY_NAME = 'OpenAgent Desktop'
 export const SUB2API_DESKTOP_SHARED_PASSWORD = 'OpenAgentnh'
+export const SUB2API_DESKTOP_DEFAULT_SOURCE_REPO = 'https://github.com/Wei-Shaw/sub2api.git'
 
 export const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
   claude: {
@@ -179,6 +180,9 @@ export function createDefaultSub2ApiDesktopRuntimeConfig(): Sub2ApiDesktopRuntim
     port: SUB2API_DESKTOP_DEFAULT_PORT,
     runMode: 'standard',
     binaryPath: '',
+    sourceDir: '',
+    sourceRepoUrl: SUB2API_DESKTOP_DEFAULT_SOURCE_REPO,
+    preferSourceBuild: true,
     dataDir: '',
     configPath: '',
     logLevel: 'info'
@@ -267,6 +271,9 @@ export function normalizeSub2ApiDesktopRuntimeConfig(saved: Partial<Sub2ApiDeskt
     port: normalizeSub2ApiDesktopPort(saved?.port),
     runMode: saved?.runMode === 'simple' || saved?.runMode === 'standard' ? saved.runMode : defaults.runMode,
     binaryPath: typeof saved?.binaryPath === 'string' ? saved.binaryPath.trim() : defaults.binaryPath,
+    sourceDir: typeof saved?.sourceDir === 'string' ? saved.sourceDir.trim() : defaults.sourceDir,
+    sourceRepoUrl: typeof saved?.sourceRepoUrl === 'string' && saved.sourceRepoUrl.trim() ? saved.sourceRepoUrl.trim() : defaults.sourceRepoUrl,
+    preferSourceBuild: typeof saved?.preferSourceBuild === 'boolean' ? saved.preferSourceBuild : defaults.preferSourceBuild,
     dataDir: typeof saved?.dataDir === 'string' ? saved.dataDir.trim() : defaults.dataDir,
     configPath: typeof saved?.configPath === 'string' ? saved.configPath.trim() : defaults.configPath,
     logLevel: saved?.logLevel === 'debug' || saved?.logLevel === 'warn' || saved?.logLevel === 'error' ? saved.logLevel : defaults.logLevel
@@ -295,6 +302,17 @@ export function createDefaultSub2ApiRuntimeState(): Sub2ApiRuntimeState {
     resolvedBinaryPath: '',
     binaryExists: false,
     usingBundledBinary: false,
+    sourceDir: '',
+    sourceRepoUrl: SUB2API_DESKTOP_DEFAULT_SOURCE_REPO,
+    sourceDetected: false,
+    sourceBackendExists: false,
+    sourceFrontendExists: false,
+    sourceBinaryPath: '',
+    sourceBinaryExists: false,
+    preferSourceBuild: true,
+    gitAvailable: false,
+    goAvailable: false,
+    pnpmAvailable: false,
     resolvedDataDir: '',
     resolvedConfigPath: '',
     configExists: false,
@@ -335,6 +353,17 @@ export function normalizeSub2ApiRuntimeState(saved: Partial<Sub2ApiRuntimeState>
     resolvedBinaryPath: typeof saved?.resolvedBinaryPath === 'string' ? saved.resolvedBinaryPath.trim() : defaults.resolvedBinaryPath,
     binaryExists: typeof saved?.binaryExists === 'boolean' ? saved.binaryExists : defaults.binaryExists,
     usingBundledBinary: typeof saved?.usingBundledBinary === 'boolean' ? saved.usingBundledBinary : defaults.usingBundledBinary,
+    sourceDir: typeof saved?.sourceDir === 'string' ? saved.sourceDir.trim() : defaults.sourceDir,
+    sourceRepoUrl: typeof saved?.sourceRepoUrl === 'string' && saved.sourceRepoUrl.trim() ? saved.sourceRepoUrl.trim() : defaults.sourceRepoUrl,
+    sourceDetected: typeof saved?.sourceDetected === 'boolean' ? saved.sourceDetected : defaults.sourceDetected,
+    sourceBackendExists: typeof saved?.sourceBackendExists === 'boolean' ? saved.sourceBackendExists : defaults.sourceBackendExists,
+    sourceFrontendExists: typeof saved?.sourceFrontendExists === 'boolean' ? saved.sourceFrontendExists : defaults.sourceFrontendExists,
+    sourceBinaryPath: typeof saved?.sourceBinaryPath === 'string' ? saved.sourceBinaryPath.trim() : defaults.sourceBinaryPath,
+    sourceBinaryExists: typeof saved?.sourceBinaryExists === 'boolean' ? saved.sourceBinaryExists : defaults.sourceBinaryExists,
+    preferSourceBuild: typeof saved?.preferSourceBuild === 'boolean' ? saved.preferSourceBuild : defaults.preferSourceBuild,
+    gitAvailable: typeof saved?.gitAvailable === 'boolean' ? saved.gitAvailable : defaults.gitAvailable,
+    goAvailable: typeof saved?.goAvailable === 'boolean' ? saved.goAvailable : defaults.goAvailable,
+    pnpmAvailable: typeof saved?.pnpmAvailable === 'boolean' ? saved.pnpmAvailable : defaults.pnpmAvailable,
     resolvedDataDir: typeof saved?.resolvedDataDir === 'string' ? saved.resolvedDataDir.trim() : defaults.resolvedDataDir,
     resolvedConfigPath: typeof saved?.resolvedConfigPath === 'string' ? saved.resolvedConfigPath.trim() : defaults.resolvedConfigPath,
     configExists: typeof saved?.configExists === 'boolean' ? saved.configExists : defaults.configExists,
