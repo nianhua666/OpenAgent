@@ -109,6 +109,7 @@
 | 9.19 | 继续向桌面 IDE / Agent 工作台收口：压缩 IDE 活动栏、资源树、状态栏与编辑器标签密度，统一窄栏对话区布局，并将 Agent 顶部运行态进一步去重 | 已完成 | `src/components/ide/IDEActivityBar.vue`, `src/components/ide/IDEExplorer.vue`, `src/components/ide/IDEStatusBar.vue`, `src/components/agent/AgentMessageList.vue`, `src/components/agent/AgentSessionList.vue`, `src/components/agent/AgentInputBar.vue`, `src/views/AgentView.vue`, `src/views/IDEView.vue` |
 | 9.20 | 将 Sub2API 本地网关从“内嵌 exe 优先”升级为“源码工作树优先”：补源码目录、源码仓库、源码同步 / 构建按钮、工具链探测与源码产物优先运行策略 | 已完成 | `electron/sub2apiRuntime.ts`, `electron/sub2apiDesktop.ts`, `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/types/index.ts`, `src/utils/sub2api.ts`, `src/stores/sub2api.ts`, `src/views/Sub2ApiSettings.vue`, `README.md`, `build/sub2api-runtime/README.md` |
 | 9.21 | 修复 release 元数据同步缺口，并补历史版本日志：让发布脚本支持带日期的 changelog 标题，回补 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文 | 已完成 | `scripts/publish-release.cjs`, `CHANGELOG.md` |
+| 9.22 | 为 Sub2API 本地依赖补齐容器化模式：引入 Docker Compose 级的 PostgreSQL / Redis 编排、隔离数据目录、依赖状态探测与桌面模式自动拉起链路 | 已完成 | `electron/sub2apiRuntime.ts`, `electron/sub2apiDesktop.ts`, `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/types/index.ts`, `src/utils/sub2api.ts`, `src/stores/sub2api.ts`, `src/views/Sub2ApiSettings.vue`, `README.md`, `docs/tasks/TASKS.md`, `CHANGELOG.md` |
 
 ---
 
@@ -211,6 +212,8 @@
 | 2026-03-19 | test | Phase 9 / Sub2API 回归：本轮再次执行 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/sub2api --delay-ms=9000`，确认源码优先链路接入后 `/sub2api` 页面与主路由仍可正常构建和渲染。 |
 | 2026-03-19 | env | Phase 9 / 本机工具链补齐：已将 Go 1.25.7 安装到 `D:\\dev-tools\\go`，并在本机把 Sub2API 官方源码工作树同步到 `D:\\AllDocument\\Documents\\OpenAgent-data\\sub2api-runtime\\source\\sub2api`；前端 `corepack pnpm build` 与后端 `go build -tags embed -o backend/sub2api.exe ./cmd/server` 已实际完成，证明源码优先链路在当前机器可行。 |
 | 2026-03-19 | release | Phase 9 / Release 元数据回补：修复 `publish-release.cjs` 对带日期 changelog 标题的解析后，已通过 `--metadata-only` 回补 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文，避免历史版本继续显示空白版本标题。 |
+| 2026-03-19 | code | Phase 9 / Sub2API 容器化依赖：桌面运行时新增 `dependencyMode=docker`、Compose 项目名、Compose 目录、Docker / Compose 可用性、容器依赖状态与隔离卷路径；`Sub2ApiSettings.vue` 新增容器依赖模式切换、Compose 目录与项目名编辑，以及“启动容器依赖 / 停止容器依赖”入口。 |
+| 2026-03-19 | test | Phase 9 / Sub2API 容器化回归：再次执行 `npm.cmd run build` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/sub2api --delay-ms=9000`，确认 Docker 依赖字段接入后页面仍可渲染；当前机器尚未安装 Docker，因此容器依赖启动链会明确回报缺少 Docker / Compose，而不会再沉默失败。 |
 | 2026-03-14 | code | Phase 9 真实 Electron 回归补强：`electron/main.ts` 新增 `--main-route`、`--capture-main-window`、`--capture-delay-ms`、`--capture-quit` 启动参数，`scripts/check-electron-ui.cjs` 可直接导出 `/ai` 与 `/ide` 的真实 Electron PNG 截图，用于在 Chrome 阻塞时继续做人眼回归。 |
 | 2026-03-14 | code | Phase 9 空态工作台精修：`IDEView.vue` 在未绑定工作区时新增 Explorer / MCP / Editor / Runtime / Inspector 空工作台骨架，避免 Electron 截图只剩大片空白；`AgentMessageList.vue` 在“已有会话但尚未发送消息”时新增 session-ready 状态卡，把提示词、会话事实和下一步入口集中到消息区首屏。 |
 | 2026-03-14 | build | Phase 9 Electron 截图验证：执行 `npm.cmd run check:electron-ui -- --out-dir %TEMP%\\openagent-electron-ui` 成功导出 `/ai` 与 `/ide` 的真实 Electron 视图截图；`npm.cmd run build` 与 `npm.cmd run smoke:routes` 继续通过，说明空态精修未破坏主路由与桌面渲染链。 |

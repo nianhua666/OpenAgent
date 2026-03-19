@@ -96,6 +96,13 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
    - 开发态回退到 `build/sub2api-runtime/bin/sub2api.exe`
    - 打包后回退到 `resources/sub2api-runtime/bin/sub2api.exe`
 
+如果你希望本地依赖也完全隔离，桌面模式现在还支持：
+
+4. **容器化依赖模式**
+   - 使用 Docker Compose 拉起 PostgreSQL / Redis
+   - Compose 文件与数据卷都落在 `应用数据目录/sub2api-runtime/dependencies`
+   - 避免和系统已有 PostgreSQL / Redis 实例混库混端口
+
 源码模式的实际前置条件：
 
 - `git`

@@ -440,6 +440,13 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
         desktopRuntime: nextRuntime
       })
 
+      if (nextRuntime.dependencyMode === 'docker') {
+        const dependencyResult = await startDesktopDependencies()
+        if (!dependencyResult.success) {
+          throw new Error(dependencyResult.details || dependencyResult.message)
+        }
+      }
+
       if (!window.electronAPI?.sub2ApiStartRuntime) {
         throw new Error('桌面运行时仅在 Electron 桌面环境中可用')
       }
@@ -480,6 +487,13 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
         desktopRuntime: nextRuntime
       })
 
+      if (nextRuntime.dependencyMode === 'docker') {
+        const dependencyResult = await startDesktopDependencies()
+        if (!dependencyResult.success) {
+          throw new Error(dependencyResult.details || dependencyResult.message)
+        }
+      }
+
       if (!window.electronAPI?.sub2ApiRestartRuntime) {
         throw new Error('桌面运行时仅在 Electron 桌面环境中可用')
       }
@@ -515,6 +529,26 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     }
 
     const result = await window.electronAPI.sub2ApiBuildSource(toRuntimePayload(), toManagedPayload())
+    await refreshRuntimeState(config.value.desktopRuntime)
+    return result
+  }
+
+  async function startDesktopDependencies() {
+    if (!window.electronAPI?.sub2ApiStartDependencies) {
+      throw new Error('容器化依赖启动仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiStartDependencies(toSetupProfilePayload(), toRuntimePayload(), toManagedPayload())
+    await refreshRuntimeState(config.value.desktopRuntime)
+    return result
+  }
+
+  async function stopDesktopDependencies() {
+    if (!window.electronAPI?.sub2ApiStopDependencies) {
+      throw new Error('容器化依赖停止仅在 Electron 桌面环境中可用')
+    }
+
+    const result = await window.electronAPI.sub2ApiStopDependencies(toRuntimePayload(), toManagedPayload())
     await refreshRuntimeState(config.value.desktopRuntime)
     return result
   }
@@ -724,6 +758,8 @@ export const useSub2ApiStore = defineStore('sub2api', () => {
     chooseBinary,
     syncDesktopSource,
     buildDesktopSource,
+    startDesktopDependencies,
+    stopDesktopDependencies,
     inspectDesktopSetup,
     testDesktopSetupDatabase,
     testDesktopSetupRedis,

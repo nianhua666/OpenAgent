@@ -14,6 +14,8 @@ Sub2API 桌面运行时目录
 - `bin/sub2api.exe`
 - 其他运行时依赖文件
 
+数据库与 Redis 不建议继续手工装在宿主机里。当前更推荐在 OpenAgent 的 Sub2API 页面里启用容器化依赖模式，让 PostgreSQL / Redis 通过 Docker Compose 在应用数据目录下独立运行和持久化。
+
 开发态下，OpenAgent 会把这里当作兜底二进制路径。
 打包后，electron-builder 会把整个目录复制到 `resources/sub2api-runtime`，作为发布包内的备用运行时。
 

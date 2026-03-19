@@ -69,6 +69,7 @@ export const SUB2API_DESKTOP_DEFAULT_ADMIN_EMAIL = 'admin@openagent.local'
 export const SUB2API_DESKTOP_DEFAULT_API_KEY_NAME = 'OpenAgent Desktop'
 export const SUB2API_DESKTOP_SHARED_PASSWORD = 'OpenAgentnh'
 export const SUB2API_DESKTOP_DEFAULT_SOURCE_REPO = 'https://github.com/Wei-Shaw/sub2api.git'
+export const SUB2API_DESKTOP_DEFAULT_DOCKER_PROJECT = 'openagent-sub2api'
 
 export const SUB2API_MODE_PRESETS: Record<Sub2ApiMode, Sub2ApiModePreset> = {
   claude: {
@@ -179,6 +180,9 @@ export function createDefaultSub2ApiDesktopRuntimeConfig(): Sub2ApiDesktopRuntim
     host: SUB2API_DESKTOP_DEFAULT_HOST,
     port: SUB2API_DESKTOP_DEFAULT_PORT,
     runMode: 'standard',
+    dependencyMode: 'docker',
+    dockerProjectName: SUB2API_DESKTOP_DEFAULT_DOCKER_PROJECT,
+    dockerComposeDir: '',
     binaryPath: '',
     sourceDir: '',
     sourceRepoUrl: SUB2API_DESKTOP_DEFAULT_SOURCE_REPO,
@@ -270,6 +274,9 @@ export function normalizeSub2ApiDesktopRuntimeConfig(saved: Partial<Sub2ApiDeskt
     host: normalizeSub2ApiDesktopHost(saved?.host),
     port: normalizeSub2ApiDesktopPort(saved?.port),
     runMode: saved?.runMode === 'simple' || saved?.runMode === 'standard' ? saved.runMode : defaults.runMode,
+    dependencyMode: saved?.dependencyMode === 'external' ? 'external' : defaults.dependencyMode,
+    dockerProjectName: typeof saved?.dockerProjectName === 'string' && saved.dockerProjectName.trim() ? saved.dockerProjectName.trim() : defaults.dockerProjectName,
+    dockerComposeDir: typeof saved?.dockerComposeDir === 'string' ? saved.dockerComposeDir.trim() : defaults.dockerComposeDir,
     binaryPath: typeof saved?.binaryPath === 'string' ? saved.binaryPath.trim() : defaults.binaryPath,
     sourceDir: typeof saved?.sourceDir === 'string' ? saved.sourceDir.trim() : defaults.sourceDir,
     sourceRepoUrl: typeof saved?.sourceRepoUrl === 'string' && saved.sourceRepoUrl.trim() ? saved.sourceRepoUrl.trim() : defaults.sourceRepoUrl,
@@ -313,6 +320,15 @@ export function createDefaultSub2ApiRuntimeState(): Sub2ApiRuntimeState {
     gitAvailable: false,
     goAvailable: false,
     pnpmAvailable: false,
+    dockerAvailable: false,
+    dockerComposeAvailable: false,
+    dependencyMode: 'docker',
+    dependencyStatus: 'unknown',
+    dependencyMessage: '尚未检查容器化依赖',
+    dependencyComposePath: '',
+    dependencyProjectName: SUB2API_DESKTOP_DEFAULT_DOCKER_PROJECT,
+    dependencyPostgresReady: false,
+    dependencyRedisReady: false,
     resolvedDataDir: '',
     resolvedConfigPath: '',
     configExists: false,
@@ -364,6 +380,17 @@ export function normalizeSub2ApiRuntimeState(saved: Partial<Sub2ApiRuntimeState>
     gitAvailable: typeof saved?.gitAvailable === 'boolean' ? saved.gitAvailable : defaults.gitAvailable,
     goAvailable: typeof saved?.goAvailable === 'boolean' ? saved.goAvailable : defaults.goAvailable,
     pnpmAvailable: typeof saved?.pnpmAvailable === 'boolean' ? saved.pnpmAvailable : defaults.pnpmAvailable,
+    dockerAvailable: typeof saved?.dockerAvailable === 'boolean' ? saved.dockerAvailable : defaults.dockerAvailable,
+    dockerComposeAvailable: typeof saved?.dockerComposeAvailable === 'boolean' ? saved.dockerComposeAvailable : defaults.dockerComposeAvailable,
+    dependencyMode: saved?.dependencyMode === 'external' ? 'external' : defaults.dependencyMode,
+    dependencyStatus: saved?.dependencyStatus === 'ready' || saved?.dependencyStatus === 'partial' || saved?.dependencyStatus === 'stopped' || saved?.dependencyStatus === 'unavailable'
+      ? saved.dependencyStatus
+      : defaults.dependencyStatus,
+    dependencyMessage: typeof saved?.dependencyMessage === 'string' ? saved.dependencyMessage : defaults.dependencyMessage,
+    dependencyComposePath: typeof saved?.dependencyComposePath === 'string' ? saved.dependencyComposePath.trim() : defaults.dependencyComposePath,
+    dependencyProjectName: typeof saved?.dependencyProjectName === 'string' && saved.dependencyProjectName.trim() ? saved.dependencyProjectName.trim() : defaults.dependencyProjectName,
+    dependencyPostgresReady: typeof saved?.dependencyPostgresReady === 'boolean' ? saved.dependencyPostgresReady : defaults.dependencyPostgresReady,
+    dependencyRedisReady: typeof saved?.dependencyRedisReady === 'boolean' ? saved.dependencyRedisReady : defaults.dependencyRedisReady,
     resolvedDataDir: typeof saved?.resolvedDataDir === 'string' ? saved.resolvedDataDir.trim() : defaults.resolvedDataDir,
     resolvedConfigPath: typeof saved?.resolvedConfigPath === 'string' ? saved.resolvedConfigPath.trim() : defaults.resolvedConfigPath,
     configExists: typeof saved?.configExists === 'boolean' ? saved.configExists : defaults.configExists,

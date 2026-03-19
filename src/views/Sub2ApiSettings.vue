@@ -295,6 +295,15 @@
             </label>
 
             <label class="config-field">
+              <span>依赖模式</span>
+              <select class="setting-input" :value="desktopDependencyMode" @change="desktopDependencyMode = ($event.target as HTMLSelectElement).value as 'external' | 'docker'">
+                <option value="docker">Docker 容器依赖</option>
+                <option value="external">外部 PostgreSQL / Redis</option>
+              </select>
+              <small>推荐使用 Docker 容器隔离 PostgreSQL / Redis；这样 setup、日志和数据都能跟本地网关一起隔离。</small>
+            </label>
+
+            <label class="config-field">
               <span>日志级别</span>
               <select class="setting-input" :value="desktopLogLevel" @change="desktopLogLevel = ($event.target as HTMLSelectElement).value as 'debug' | 'info' | 'warn' | 'error'">
                 <option value="debug">debug</option>
@@ -383,6 +392,7 @@
             <span class="status-chip">源码状态：{{ sourceWorkflowStatusLabel }}</span>
             <span class="status-chip">工具链：{{ sourceToolchainSummary }}</span>
             <span class="status-chip">目标产物：{{ sourceBuildTargetLabel }}</span>
+            <span class="status-chip">依赖状态：{{ dependencyStatusLabel }}</span>
           </div>
 
           <div class="hero-actions">
@@ -391,14 +401,53 @@
             <button class="btn btn-secondary btn-sm" @click="openDesktopSourceDir">打开源码目录</button>
           </div>
 
+          <template v-if="desktopDependencyMode === 'docker'">
+            <div class="config-grid">
+              <label class="config-field">
+                <span>Docker 项目名</span>
+                <input
+                  class="setting-input"
+                  :value="desktopDockerProjectName"
+                  placeholder="openagent-sub2api"
+                  @input="desktopDockerProjectName = ($event.target as HTMLInputElement).value"
+                />
+                <small>用于隔离当前本地网关对应的容器、网络和卷命名。</small>
+              </label>
+
+              <label class="config-field config-field-span">
+                <span>Docker Compose 目录</span>
+                <div class="path-input-row">
+                  <input
+                    class="setting-input"
+                    :value="desktopDockerComposeDir"
+                    placeholder="留空则使用 应用数据目录/sub2api-runtime/dependencies/docker"
+                    @input="desktopDockerComposeDir = ($event.target as HTMLInputElement).value"
+                  />
+                  <button class="btn btn-secondary btn-sm" @click="chooseDesktopComposeDir">浏览</button>
+                </div>
+                <small>OpenAgent 会在这里自动生成 `docker-compose.yml`，并把 PostgreSQL / Redis 的数据卷绑定到隔离目录。</small>
+              </label>
+            </div>
+
+            <div class="status-strip">
+              <span class="status-chip">Docker：{{ dockerToolchainSummary }}</span>
+              <span class="status-chip">Compose 文件：{{ runtimeState.dependencyComposePath || '等待生成' }}</span>
+            </div>
+
+            <div class="hero-actions">
+              <button class="btn btn-secondary btn-sm" @click="startDesktopDependencies">启动容器依赖</button>
+              <button class="btn btn-secondary btn-sm" @click="stopDesktopDependencies">停止容器依赖</button>
+            </div>
+          </template>
+
           <div class="runtime-note-grid">
             <div class="runtime-note-card">
               <strong>源码优先建议</strong>
               <p>当前更推荐使用源码工作树而不是单独 exe。内嵌二进制只保留为兜底路径，日常维护建议走“同步源码 -> 构建 -> 启动”。</p>
             </div>
             <div class="runtime-note-card">
-              <strong>首次启动路径</strong>
-              <p>如果当前数据目录还没有 config.yaml 和 .installed，Sub2API 会优先进入 setup 向导。这时点击「打开后台」即可在本机完成初始化；若源码已同步但未构建，页面会明确提示当前缺少的工具链或构建产物。</p>
+              <strong>依赖隔离建议</strong>
+              <p>如果切到 Docker 容器依赖模式，OpenAgent 会用独立 Compose 项目启动 PostgreSQL / Redis，并把数据绑定到当前运行数据目录下，避免和系统已有数据库实例混用。</p>
             </div>
           </div>
         </details>
@@ -809,6 +858,24 @@ const desktopRunMode = computed({
     void sub2ApiStore.setDesktopRuntime({ runMode: value })
   }
 })
+const desktopDependencyMode = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.dependencyMode,
+  set: (value: 'external' | 'docker') => {
+    void sub2ApiStore.setDesktopRuntime({ dependencyMode: value })
+  }
+})
+const desktopDockerProjectName = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.dockerProjectName,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ dockerProjectName: value })
+  }
+})
+const desktopDockerComposeDir = computed({
+  get: () => sub2ApiStore.config.desktopRuntime.dockerComposeDir,
+  set: (value: string) => {
+    void sub2ApiStore.setDesktopRuntime({ dockerComposeDir: value })
+  }
+})
 const desktopLogLevel = computed({
   get: () => sub2ApiStore.config.desktopRuntime.logLevel,
   set: (value: 'debug' | 'info' | 'warn' | 'error') => {
@@ -1019,6 +1086,10 @@ const sourceToolchainSummary = computed(() => [
   runtimeState.value.pnpmAvailable ? 'pnpm' : 'pnpm 缺失',
   runtimeState.value.goAvailable ? 'Go' : 'Go 缺失'
 ].join(' / '))
+const dockerToolchainSummary = computed(() => [
+  runtimeState.value.dockerAvailable ? 'Docker' : 'Docker 缺失',
+  runtimeState.value.dockerComposeAvailable ? 'Compose' : 'Compose 缺失'
+].join(' / '))
 const sourceWorkflowStatusLabel = computed(() => {
   if (!runtimeState.value.sourceDetected) {
     return '未检测到源码工作树'
@@ -1031,6 +1102,29 @@ const sourceWorkflowStatusLabel = computed(() => {
   return desktopPreferSourceBuild.value ? '源码构建产物已就绪' : '源码已就绪，但当前未设为优先'
 })
 const sourceBuildTargetLabel = computed(() => runtimeState.value.sourceBinaryPath || '等待解析源码构建产物路径')
+const dependencyStatusLabel = computed(() => {
+  if (runtimeState.value.dependencyMode !== 'docker') {
+    return '外部依赖'
+  }
+
+  if (runtimeState.value.dependencyStatus === 'ready') {
+    return '容器依赖已就绪'
+  }
+
+  if (runtimeState.value.dependencyStatus === 'partial') {
+    return '容器依赖部分就绪'
+  }
+
+  if (runtimeState.value.dependencyStatus === 'stopped') {
+    return '容器依赖未启动'
+  }
+
+  if (runtimeState.value.dependencyStatus === 'unavailable') {
+    return 'Docker 不可用'
+  }
+
+  return '尚未检查'
+})
 const setupStatusLabel = computed(() => {
   if (!setupDiagnostics.value.checkedAt) {
     return '未检查'
@@ -1405,6 +1499,40 @@ async function openDesktopSourceDir() {
   const opened = await window.electronAPI?.openPath?.(targetPath)
   if (!opened) {
     showToast('error', '打开源码目录失败')
+  }
+}
+
+async function chooseDesktopComposeDir() {
+  if (!window.electronAPI?.chooseDirectory) {
+    showToast('error', '当前环境不支持目录选择')
+    return
+  }
+
+  const selectedPath = await window.electronAPI.chooseDirectory('选择 Docker Compose 目录', desktopDockerComposeDir.value || runtimeState.value.dependencyComposePath || undefined)
+  if (!selectedPath) {
+    return
+  }
+
+  await sub2ApiStore.setDesktopRuntime({ dockerComposeDir: selectedPath })
+  await sub2ApiStore.refreshRuntimeState()
+  showToast('success', '已更新容器依赖目录')
+}
+
+async function startDesktopDependencies() {
+  try {
+    const result = await sub2ApiStore.startDesktopDependencies()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '启动容器依赖失败')
+  }
+}
+
+async function stopDesktopDependencies() {
+  try {
+    const result = await sub2ApiStore.stopDesktopDependencies()
+    showToast(result.success ? 'success' : 'error', result.details || result.message)
+  } catch (error) {
+    showToast('error', error instanceof Error ? error.message : '停止容器依赖失败')
   }
 }
 

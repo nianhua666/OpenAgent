@@ -204,6 +204,8 @@ export type AIGatewayTemplate = 'standard' | 'sub2api-openai' | 'sub2api-claude'
 export type Sub2ApiGatewayMode = 'external' | 'desktop'
 
 export type Sub2ApiDesktopRunMode = 'simple' | 'standard'
+export type Sub2ApiDependencyMode = 'external' | 'docker'
+export type Sub2ApiDependencyStatus = 'unknown' | 'ready' | 'partial' | 'stopped' | 'unavailable'
 
 export type Sub2ApiRuntimeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'missing-binary' | 'unavailable'
 
@@ -212,6 +214,9 @@ export interface Sub2ApiDesktopRuntimeConfig {
   host: string
   port: number
   runMode: Sub2ApiDesktopRunMode
+  dependencyMode: Sub2ApiDependencyMode
+  dockerProjectName: string
+  dockerComposeDir: string
   binaryPath: string
   sourceDir: string
   sourceRepoUrl: string
@@ -253,6 +258,15 @@ export interface Sub2ApiRuntimeState {
   gitAvailable: boolean
   goAvailable: boolean
   pnpmAvailable: boolean
+  dockerAvailable: boolean
+  dockerComposeAvailable: boolean
+  dependencyMode: Sub2ApiDependencyMode
+  dependencyStatus: Sub2ApiDependencyStatus
+  dependencyMessage: string
+  dependencyComposePath: string
+  dependencyProjectName: string
+  dependencyPostgresReady: boolean
+  dependencyRedisReady: boolean
   resolvedDataDir: string
   resolvedConfigPath: string
   configExists: boolean

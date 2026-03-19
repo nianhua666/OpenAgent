@@ -1,5 +1,12 @@
 # 更新日志
 
+## 3.0.11 - 2026-03-19
+
+- Sub2API 本地依赖新增容器化模式：桌面运行时现在支持 `Docker` 依赖编排，可为 PostgreSQL / Redis 生成隔离的 `docker-compose.yml`，并将数据卷绑定到应用数据目录下的 `sub2api-runtime/dependencies`，减少与系统现有数据库实例混用的风险。
+- Sub2API 桌面模式现在支持源码工作树 + 容器依赖协同：当依赖模式为 `docker` 时，OpenAgent 会优先拉起容器化 PostgreSQL / Redis，再启动源码构建产物或回退运行时；页面也会直接显示 Docker / Compose、源码工具链、源码构建产物与依赖状态。
+- 本机开发环境已补齐 Go 到 `D:\dev-tools\go`，并在 `D:\AllDocument\Documents\OpenAgent-data\sub2api-runtime\source\sub2api` 实际完成官方前后端构建，证明源码优先链路在当前机器真实可行。
+- Release 元数据同步脚本已修复对带日期 changelog 标题的解析问题，并已回补 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文，不再只有空的版本标题。
+
 ## 3.0.10 - 2026-03-19
 
 - Sub2API 本地网关改为源码工作树优先：`Sub2ApiSettings.vue` 现已支持配置源码目录、源码仓库地址、源码优先开关，并新增“同步源码 / 源码构建 / 打开源码目录”入口；主进程运行时也会优先识别 `backend` / `frontend` 结构与源码构建产物，不再只围绕内嵌 `sub2api.exe` 运转。

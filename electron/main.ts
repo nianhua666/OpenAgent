@@ -3619,6 +3619,17 @@ app.whenReady().then(() => {
   ipcMain.handle('sub2api:inspectSetup', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
     return sub2ApiRuntimeManager.inspectSetup(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
   })
+  ipcMain.handle('sub2api:startDependencies', (_event, payload?: Partial<Sub2ApiDesktopSetupProfile>, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    const sanitizedPayload = sanitizeSub2ApiSetupProfilePayload(payload)
+    if (!sanitizedPayload) {
+      throw new Error('Sub2API 容器依赖参数无效')
+    }
+
+    return sub2ApiRuntimeManager.startDependencies(sanitizedPayload, sanitizeSub2ApiRuntimePayload(runtimePayload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
+  ipcMain.handle('sub2api:stopDependencies', (_event, runtimePayload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
+    return sub2ApiRuntimeManager.stopDependencies(sanitizeSub2ApiRuntimePayload(runtimePayload), sanitizeSub2ApiManagedPayload(managedPayload))
+  })
   ipcMain.handle('sub2api:syncSource', (_event, payload?: Partial<Sub2ApiDesktopRuntimeConfig>, managedPayload?: Partial<Sub2ApiDesktopManagedConfig>) => {
     return sub2ApiRuntimeManager.syncSource(sanitizeSub2ApiRuntimePayload(payload), sanitizeSub2ApiManagedPayload(managedPayload))
   })

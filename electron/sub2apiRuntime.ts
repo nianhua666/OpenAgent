@@ -32,6 +32,15 @@ type ResolvedRuntimeContext = {
   gitAvailable: boolean
   goAvailable: boolean
   pnpmAvailable: boolean
+  dockerAvailable: boolean
+  dockerComposeAvailable: boolean
+  dependencyMode: Sub2ApiRuntimeState['dependencyMode']
+  dependencyStatus: Sub2ApiRuntimeState['dependencyStatus']
+  dependencyMessage: string
+  dependencyComposePath: string
+  dependencyProjectName: string
+  dependencyPostgresReady: boolean
+  dependencyRedisReady: boolean
   bundledBinaryPath: string
   resolvedBinaryPath: string
   usingBundledBinary: boolean
@@ -82,6 +91,11 @@ type Sub2ApiToolchainState = {
   pnpmAvailable: boolean
 }
 
+type Sub2ApiDockerState = {
+  dockerAvailable: boolean
+  dockerComposeAvailable: boolean
+}
+
 function normalizePath(value: string | null | undefined) {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed ? normalize(trimmed) : ''
@@ -128,6 +142,16 @@ function detectToolchain(): Sub2ApiToolchainState {
   }
 }
 
+function detectDockerToolchain(): Sub2ApiDockerState {
+  const dockerAvailable = spawnSync('docker', ['--version'], { windowsHide: true, encoding: 'utf-8' }).status === 0
+  const dockerComposeAvailable = dockerAvailable && spawnSync('docker', ['compose', 'version'], { windowsHide: true, encoding: 'utf-8' }).status === 0
+
+  return {
+    dockerAvailable,
+    dockerComposeAvailable
+  }
+}
+
 function resolveDefaultSourceDir(getDataDir: () => string) {
   const documentsDir = normalizePath(app.getPath('documents'))
   if (process.platform === 'win32' && /^[D-Z]:\\/i.test(documentsDir)) {
@@ -153,12 +177,27 @@ function resolveSourceBinaryPath(sourceDir: string) {
   return candidates[0]
 }
 
+function resolveDockerComposeDir(runtimeConfig: Sub2ApiDesktopRuntimeConfig, resolvedDataDir: string) {
+  return normalizePath(runtimeConfig.dockerComposeDir) || join(resolvedDataDir, 'dependencies', 'docker')
+}
+
+function resolveDockerProjectName(runtimeConfig: Sub2ApiDesktopRuntimeConfig) {
+  return runtimeConfig.dockerProjectName?.trim() || 'openagent-sub2api'
+}
+
+function normalizeComposePath(targetPath: string) {
+  return targetPath.replace(/\\/g, '/')
+}
+
 function normalizeRuntimeConfig(saved?: Partial<Sub2ApiDesktopRuntimeConfig> | null): Sub2ApiDesktopRuntimeConfig {
   return {
     autoStart: Boolean(saved?.autoStart),
     host: normalizeHost(saved?.host),
     port: normalizePort(saved?.port),
     runMode: saved?.runMode === 'standard' ? 'standard' : 'simple',
+    dependencyMode: saved?.dependencyMode === 'external' ? 'external' : 'docker',
+    dockerProjectName: typeof saved?.dockerProjectName === 'string' && saved.dockerProjectName.trim() ? saved.dockerProjectName.trim() : 'openagent-sub2api',
+    dockerComposeDir: normalizePath(saved?.dockerComposeDir),
     binaryPath: normalizePath(saved?.binaryPath),
     sourceDir: normalizePath(saved?.sourceDir),
     sourceRepoUrl: typeof saved?.sourceRepoUrl === 'string' && saved.sourceRepoUrl.trim() ? saved.sourceRepoUrl.trim() : SUB2API_SOURCE_REPO_URL,
@@ -489,6 +528,118 @@ async function runCommand(command: string, args: string[], cwd: string, timeout 
   })
 }
 
+function buildDockerComposeFile(runtimeConfig: Sub2ApiDesktopRuntimeConfig, setupProfile: Sub2ApiDesktopSetupProfile, composeDir: string) {
+  const postgresDataDir = normalizeComposePath(join(composeDir, 'postgres-data'))
+  const redisDataDir = normalizeComposePath(join(composeDir, 'redis-data'))
+
+  return [
+    'services:',
+    '  postgres:',
+    '    image: postgres:16-alpine',
+    '    restart: unless-stopped',
+    '    environment:',
+    `      POSTGRES_DB: "${setupProfile.database.dbname}"`,
+    `      POSTGRES_USER: "${setupProfile.database.user}"`,
+    `      POSTGRES_PASSWORD: "${setupProfile.database.password}"`,
+    '    ports:',
+    `      - "127.0.0.1:${setupProfile.database.port}:5432"`,
+    '    volumes:',
+    `      - "${postgresDataDir}:/var/lib/postgresql/data"`,
+    '    healthcheck:',
+    `      test: ["CMD-SHELL", "pg_isready -U ${setupProfile.database.user} -d ${setupProfile.database.dbname}"]`,
+    '      interval: 5s',
+    '      timeout: 3s',
+    '      retries: 30',
+    '',
+    '  redis:',
+    '    image: redis:7-alpine',
+    '    restart: unless-stopped',
+    '    command:',
+    `      - redis-server`,
+    '      - --appendonly',
+    '      - yes',
+    '      - --requirepass',
+    `      - "${setupProfile.redis.password}"`,
+    '    ports:',
+    `      - "127.0.0.1:${setupProfile.redis.port}:6379"`,
+    '    volumes:',
+    `      - "${redisDataDir}:/data"`,
+    '    healthcheck:',
+    `      test: ["CMD-SHELL", "redis-cli -a ${setupProfile.redis.password} ping | grep PONG"]`,
+    '      interval: 5s',
+    '      timeout: 3s',
+    '      retries: 30',
+    ''
+  ].join('\n')
+}
+
+async function inspectDockerDependencies(context: ResolvedRuntimeContext): Promise<{
+  status: Sub2ApiRuntimeState['dependencyStatus']
+  message: string
+  postgresReady: boolean
+  redisReady: boolean
+}> {
+  if (context.dependencyMode !== 'docker') {
+    return {
+      status: 'unknown' as const,
+      message: '当前使用外部 PostgreSQL / Redis',
+      postgresReady: false,
+      redisReady: false
+    }
+  }
+
+  if (!context.dockerAvailable || !context.dockerComposeAvailable) {
+    return {
+      status: 'unavailable' as const,
+      message: '当前系统未检测到 Docker / Docker Compose，无法启动容器化 PostgreSQL / Redis',
+      postgresReady: false,
+      redisReady: false
+    }
+  }
+
+  const composePath = context.dependencyComposePath
+  if (!existsSync(composePath)) {
+    return {
+      status: 'stopped' as const,
+      message: '尚未生成容器依赖编排文件',
+      postgresReady: false,
+      redisReady: false
+    }
+  }
+
+  const result = await runCommand(
+    'docker',
+    ['compose', '-p', context.dependencyProjectName, '-f', composePath, 'ps', '--services', '--status', 'running'],
+    dirname(composePath),
+    60_000
+  )
+
+  if (!result.success) {
+    return {
+      status: 'stopped' as const,
+      message: result.output || '当前容器依赖尚未启动',
+      postgresReady: false,
+      redisReady: false
+    }
+  }
+
+  const lines = result.output.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const postgresReady = lines.includes('postgres')
+  const redisReady = lines.includes('redis')
+  const status: Sub2ApiRuntimeState['dependencyStatus'] = postgresReady && redisReady ? 'ready' : (postgresReady || redisReady ? 'partial' : 'stopped')
+
+  return {
+    status,
+    message: postgresReady && redisReady
+      ? '容器化 PostgreSQL / Redis 已就绪'
+      : postgresReady || redisReady
+        ? '容器依赖部分启动，仍有服务未就绪'
+        : '容器依赖尚未启动',
+    postgresReady,
+    redisReady
+  }
+}
+
 export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOptions) {
   let desiredConfig = normalizeRuntimeConfig()
   let runtimeProcess: ReturnType<typeof spawn> | null = null
@@ -515,6 +666,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     const sourceBinaryPath = resolveSourceBinaryPath(sourceDir)
     const sourceBinaryExists = existsSync(sourceBinaryPath)
     const toolchain = detectToolchain()
+    const dockerToolchain = detectDockerToolchain()
     const bundledBinaryPath = join(dependencyRoot, 'bin', SUB2API_BINARY_NAME)
     const resolvedBinaryPath = desiredConfig.binaryPath
       || (desiredConfig.preferSourceBuild && sourceDetected ? sourceBinaryPath : '')
@@ -549,6 +701,15 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       gitAvailable: toolchain.gitAvailable,
       goAvailable: toolchain.goAvailable,
       pnpmAvailable: toolchain.pnpmAvailable,
+      dockerAvailable: dockerToolchain.dockerAvailable,
+      dockerComposeAvailable: dockerToolchain.dockerComposeAvailable,
+      dependencyMode: desiredConfig.dependencyMode,
+      dependencyStatus: 'unknown' as const,
+      dependencyMessage: desiredConfig.dependencyMode === 'docker' ? '尚未检查容器化依赖' : '当前使用外部 PostgreSQL / Redis',
+      dependencyComposePath: join(resolveDockerComposeDir(desiredConfig, resolvedDataDir), 'docker-compose.yml'),
+      dependencyProjectName: resolveDockerProjectName(desiredConfig),
+      dependencyPostgresReady: false,
+      dependencyRedisReady: false,
       bundledBinaryPath,
       resolvedBinaryPath,
       usingBundledBinary,
@@ -591,6 +752,15 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       gitAvailable: context.gitAvailable,
       goAvailable: context.goAvailable,
       pnpmAvailable: context.pnpmAvailable,
+      dockerAvailable: context.dockerAvailable,
+      dockerComposeAvailable: context.dockerComposeAvailable,
+      dependencyMode: context.dependencyMode,
+      dependencyStatus: context.dependencyStatus,
+      dependencyMessage: context.dependencyMessage,
+      dependencyComposePath: context.dependencyComposePath,
+      dependencyProjectName: context.dependencyProjectName,
+      dependencyPostgresReady: context.dependencyPostgresReady,
+      dependencyRedisReady: context.dependencyRedisReady,
       resolvedDataDir: context.resolvedDataDir,
       resolvedConfigPath: context.resolvedConfigPath,
       configExists: context.configExists,
@@ -628,6 +798,15 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
       gitAvailable: context.gitAvailable,
       goAvailable: context.goAvailable,
       pnpmAvailable: context.pnpmAvailable,
+      dockerAvailable: context.dockerAvailable,
+      dockerComposeAvailable: context.dockerComposeAvailable,
+      dependencyMode: context.dependencyMode,
+      dependencyStatus: context.dependencyStatus,
+      dependencyMessage: context.dependencyMessage,
+      dependencyComposePath: context.dependencyComposePath,
+      dependencyProjectName: context.dependencyProjectName,
+      dependencyPostgresReady: context.dependencyPostgresReady,
+      dependencyRedisReady: context.dependencyRedisReady,
       resolvedDataDir: context.resolvedDataDir,
       resolvedConfigPath: context.resolvedConfigPath,
       configExists: context.configExists,
@@ -885,6 +1064,116 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     }
   }
 
+  async function startDependencies(
+    profilePayload?: Partial<Sub2ApiDesktopSetupProfile> | null | undefined,
+    partial?: Partial<Sub2ApiDesktopRuntimeConfig>
+  ): Promise<Sub2ApiSetupActionResult> {
+    const context = resolveRuntimeContext(partial)
+    if (context.dependencyMode !== 'docker') {
+      return {
+        success: true,
+        code: 0,
+        message: '当前依赖模式不是 Docker，跳过容器依赖启动',
+        details: '当前使用外部 PostgreSQL / Redis'
+      }
+    }
+
+    if (!context.dockerAvailable || !context.dockerComposeAvailable) {
+      return {
+        success: false,
+        code: 1,
+        message: '当前系统未检测到 Docker / Docker Compose',
+        details: '请先安装并启动 Docker Desktop，再使用容器化 PostgreSQL / Redis。'
+      }
+    }
+
+    const profile = normalizeSetupProfile(profilePayload)
+    const composePath = context.dependencyComposePath
+    const composeDir = dirname(composePath)
+    ensureDirectoryExists(composeDir)
+    ensureDirectoryExists(join(composeDir, 'postgres-data'))
+    ensureDirectoryExists(join(composeDir, 'redis-data'))
+    writeFileSync(composePath, buildDockerComposeFile(context.config, profile, composeDir), 'utf-8')
+
+    const upResult = await runCommand(
+      'docker',
+      ['compose', '-p', context.dependencyProjectName, '-f', composePath, 'up', '-d'],
+      composeDir,
+      10 * 60 * 1000
+    )
+
+    if (!upResult.success) {
+      return {
+        success: false,
+        code: upResult.code,
+        message: '容器化 PostgreSQL / Redis 启动失败',
+        details: upResult.output || `docker compose -p ${context.dependencyProjectName} up -d`
+      }
+    }
+
+    const dependencyState = await inspectDockerDependencies(resolveRuntimeContext(partial, false))
+    return {
+      success: dependencyState.status === 'ready',
+      code: dependencyState.status === 'ready' ? 0 : 1,
+      message: dependencyState.status === 'ready' ? '容器化 PostgreSQL / Redis 已启动' : '容器依赖已启动，但仍在等待健康检查',
+      details: dependencyState.message
+    }
+  }
+
+  async function stopDependencies(partial?: Partial<Sub2ApiDesktopRuntimeConfig>): Promise<Sub2ApiSetupActionResult> {
+    const context = resolveRuntimeContext(partial)
+    if (context.dependencyMode !== 'docker') {
+      return {
+        success: true,
+        code: 0,
+        message: '当前依赖模式不是 Docker，跳过容器依赖停止',
+        details: '当前使用外部 PostgreSQL / Redis'
+      }
+    }
+
+    if (!context.dockerAvailable || !context.dockerComposeAvailable) {
+      return {
+        success: false,
+        code: 1,
+        message: '当前系统未检测到 Docker / Docker Compose',
+        details: '请先安装并启动 Docker Desktop。'
+      }
+    }
+
+    const composePath = context.dependencyComposePath
+    if (!existsSync(composePath)) {
+      return {
+        success: true,
+        code: 0,
+        message: '当前没有需要停止的容器依赖',
+        details: '尚未生成 docker-compose.yml'
+      }
+    }
+
+    const downResult = await runCommand(
+      'docker',
+      ['compose', '-p', context.dependencyProjectName, '-f', composePath, 'down'],
+      dirname(composePath),
+      10 * 60 * 1000
+    )
+
+    if (!downResult.success) {
+      return {
+        success: false,
+        code: downResult.code,
+        message: '停止容器依赖失败',
+        details: downResult.output || `docker compose -p ${context.dependencyProjectName} down`
+      }
+    }
+
+    return {
+      success: true,
+      code: 0,
+      message: '容器化 PostgreSQL / Redis 已停止',
+      details: downResult.output || 'docker compose down 已执行'
+    }
+  }
+
   function startHealthPolling() {
     stopHealthPolling()
     healthTimer = setInterval(() => {
@@ -988,6 +1277,7 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
 
   async function getRuntimeState(partial?: Partial<Sub2ApiDesktopRuntimeConfig>) {
     const context = resolveRuntimeContext(partial, !runtimeProcess)
+    const dependencyState = await inspectDockerDependencies(context)
     if (!runtimeProcess) {
       const nextStatus = context.binaryExists
         ? state.status === 'error' && state.lastError
@@ -1005,11 +1295,20 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
         pid: null,
         healthy: false,
         healthMessage: nextErrorMessage || '本地网关尚未启动',
-        lastError: nextErrorMessage
+        lastError: nextErrorMessage,
+        dependencyStatus: dependencyState.status,
+        dependencyMessage: dependencyState.message,
+        dependencyPostgresReady: dependencyState.postgresReady,
+        dependencyRedisReady: dependencyState.redisReady
       }, context)
     }
 
-    return emitState({}, context)
+    return emitState({
+      dependencyStatus: dependencyState.status,
+      dependencyMessage: dependencyState.message,
+      dependencyPostgresReady: dependencyState.postgresReady,
+      dependencyRedisReady: dependencyState.redisReady
+    }, context)
   }
 
   async function startRuntime(partial?: Partial<Sub2ApiDesktopRuntimeConfig>) {
@@ -1272,6 +1571,8 @@ export function createSub2ApiRuntimeManager(options: Sub2ApiRuntimeManagerOption
     testSetupDatabase,
     testSetupRedis,
     installSetup,
+    startDependencies,
+    stopDependencies,
     syncSource,
     buildSource,
     shutdown
