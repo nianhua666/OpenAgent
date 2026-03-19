@@ -441,10 +441,10 @@ type IdeWorkbenchLayoutState = {
 }
 
 const DEFAULT_IDE_WORKBENCH_LAYOUT: IdeWorkbenchLayoutState = {
-  leftWidth: 236,
-  rightWidth: 392,
-  bottomHeight: 198,
-  mcpHeight: 148,
+  leftWidth: 228,
+  rightWidth: 360,
+  bottomHeight: 188,
+  mcpHeight: 140,
   leftCollapsed: false,
   rightCollapsed: false,
   bottomCollapsed: false,

@@ -180,7 +180,7 @@ export function createDefaultSub2ApiDesktopRuntimeConfig(): Sub2ApiDesktopRuntim
     host: SUB2API_DESKTOP_DEFAULT_HOST,
     port: SUB2API_DESKTOP_DEFAULT_PORT,
     runMode: 'standard',
-    dependencyMode: 'docker',
+    dependencyMode: 'external',
     dockerProjectName: SUB2API_DESKTOP_DEFAULT_DOCKER_PROJECT,
     dockerComposeDir: '',
     binaryPath: '',

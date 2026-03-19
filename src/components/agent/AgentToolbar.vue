@@ -1,9 +1,9 @@
 <template>
   <section class="agent-toolbar glass-panel">
     <div class="toolbar-main">
-      <div>
+      <div class="toolbar-summary">
         <p class="eyebrow">Runtime</p>
-        <h3>运行偏好</h3>
+        <strong>思考 {{ preferences.thinkingEnabled ? preferences.thinkingLevel : '关闭' }} · 规划 {{ preferences.planningMode ? '开' : '关' }} · 记忆 {{ preferences.autoMemory ? '开' : '关' }}</strong>
       </div>
 
       <div class="toolbar-actions">
@@ -43,8 +43,8 @@ defineEmits<{
 <style scoped>
 .agent-toolbar {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
 }
 
 .toolbar-main {
@@ -67,6 +67,17 @@ h3 {
   font-size: 15px;
 }
 
+.toolbar-summary {
+  display: grid;
+  gap: 3px;
+}
+
+.toolbar-summary strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .toolbar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -80,12 +91,12 @@ h3 {
 }
 
 .chip {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(226, 232, 240, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   color: var(--text-secondary);
   cursor: pointer;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
 }
 
 .chip.active {
@@ -112,11 +123,11 @@ h3 {
 
 .settings-link {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   color: var(--text-secondary);
   cursor: pointer;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
 }
 
 @media (max-width: 960px) {

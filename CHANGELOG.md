@@ -1,5 +1,12 @@
 # 更新日志
 
+## Unreleased
+
+- Sub2API 文档粒度回收：主 README 与 `build/sub2api-runtime/README.md` 已移除不适合公开文档的内部路径、工具链与运行策略细节，只保留高层产品说明和目录职责，避免把实现细节误写进用户文档。
+- Sub2API 默认依赖策略纠偏：桌面运行时默认依赖模式已改回 `external`，`docker` 仅保留为可选隔离能力，不再作为本地网关主路径强推给用户。
+- Agent / IDE 工作台继续减法：`AgentView.vue` 去掉顶部工作台条里与左侧 rail 重复的面板切换项，改为仅保留全局动作与当前侧栏提示；`AgentToolbar.vue` 也从大卡片压成更紧凑的运行状态条。
+- IDE 默认布局继续向编辑区让位：`IDEView.vue` 进一步收紧默认左栏、右栏与终端高度，继续把可用空间还给中央编辑区。
+
 ## 3.0.11 - 2026-03-19
 
 - Sub2API 本地依赖新增容器化模式：桌面运行时现在支持 `Docker` 依赖编排，可为 PostgreSQL / Redis 生成隔离的 `docker-compose.yml`，并将数据卷绑定到应用数据目录下的 `sub2api-runtime/dependencies`，减少与系统现有数据库实例混用的风险。

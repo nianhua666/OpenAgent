@@ -77,41 +77,13 @@ OpenAgent 是一个面向 Windows 桌面场景的 AI 助手工具，集成了多
 
 ### Sub2API 本地网关模式
 
-如果你要让 OpenAgent 本机直接作为 Sub2API 网关，当前更推荐走**源码工作树模式**，而不是只往项目里塞一个 `sub2api.exe`。
+OpenAgent 支持把 Sub2API 作为可选本地网关接入，并在应用内完成运行、初始化、模型读取和 Agent 绑定。
 
-推荐结构分成两层：
+README 只保留高层说明：
 
-- 应用数据目录 `sub2api-runtime/`：运行时生成的 `DATA_DIR`、`.installed`、`launcher` 日志与本地 `config.yaml`
-- 源码工作树：默认建议放到 `应用数据目录/sub2api-runtime/source/sub2api`，也可以在 Sub2API 页面里改成你自己的目录
-
-当前 OpenAgent 已支持三条本地网关路径：
-
-1. **源码优先模式**
-   - 拉取官方源码仓库 `https://github.com/Wei-Shaw/sub2api.git`
-   - 检测 `frontend` / `backend` 结构
-   - 构建后优先启动源码产物
-2. **手动二进制模式**
-   - 直接指定自备的 `sub2api.exe`
-3. **内嵌兜底模式**
-   - 开发态回退到 `build/sub2api-runtime/bin/sub2api.exe`
-   - 打包后回退到 `resources/sub2api-runtime/bin/sub2api.exe`
-
-如果你希望本地依赖也完全隔离，桌面模式现在还支持：
-
-4. **容器化依赖模式**
-   - 使用 Docker Compose 拉起 PostgreSQL / Redis
-   - Compose 文件与数据卷都落在 `应用数据目录/sub2api-runtime/dependencies`
-   - 避免和系统已有 PostgreSQL / Redis 实例混库混端口
-
-源码模式的实际前置条件：
-
-- `git`
-- `corepack pnpm`
-- `go`
-
-其中前端资源构建走 `corepack pnpm`，后端二进制构建走 `go build -tags embed -o backend/sub2api.exe ./cmd/server`。如果工具链不完整，Sub2API 页面会明确告诉你当前缺的是源码、构建产物，还是 `Go / pnpm`。
-
-如果当前数据目录还没有 `config.yaml`，首次启动本地网关时会优先进入 Sub2API setup 向导。你可以在应用里的 Sub2API 页面点击“打开后台”完成初始化，后续管理员登录和 OpenAgent 专属 API Key 会继续由桌面端自动接入。
+- 本地网关是可选能力，不影响普通外部 API 接入
+- OpenAgent 会在应用内提供运行状态、初始化入口、模型同步和 AI 绑定
+- 具体运行时实现、构建方式和本地依赖策略属于内部集成细节，不在主 README 展开
 
 ### 环境要求
 

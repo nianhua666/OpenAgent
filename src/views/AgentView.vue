@@ -34,11 +34,7 @@
         <button class="workbench-toggle" :class="{ active: selectedScope === 'main' }" @click="switchAgentScope('main')">主窗口</button>
         <button class="workbench-toggle" :class="{ active: selectedScope === 'live2d' }" @click="switchAgentScope('live2d')">Live2D</button>
         <button class="workbench-toggle" :disabled="aiStore.streaming || !aiStore.isConfigured" @click="startNewSession">新会话</button>
-        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'sessions' }" @click="selectAgentSidebarTab('sessions')">会话</button>
-        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'roles' }" @click="selectAgentSidebarTab('roles')">角色</button>
-        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'memory' }" @click="selectAgentSidebarTab('memory')">记忆</button>
-        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'resources' }" @click="selectAgentSidebarTab('resources')">资源</button>
-        <button class="workbench-toggle" :class="{ active: agentSidebarTab === 'tasks' }" @click="selectAgentSidebarTab('tasks')">任务</button>
+        <span class="workbench-tab-hint">当前侧栏：{{ currentSidebarTitle }}</span>
         <button class="workbench-toggle" @click="resetAgentSidebarLayout">重置栏宽</button>
       </div>
     </section>
@@ -1298,6 +1294,19 @@ h1 {
   justify-content: flex-end;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+.workbench-tab-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: rgba(226, 232, 240, 0.56);
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .workbench-pill {

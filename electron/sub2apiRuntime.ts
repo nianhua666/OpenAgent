@@ -195,7 +195,7 @@ function normalizeRuntimeConfig(saved?: Partial<Sub2ApiDesktopRuntimeConfig> | n
     host: normalizeHost(saved?.host),
     port: normalizePort(saved?.port),
     runMode: saved?.runMode === 'standard' ? 'standard' : 'simple',
-    dependencyMode: saved?.dependencyMode === 'external' ? 'external' : 'docker',
+    dependencyMode: saved?.dependencyMode === 'docker' ? 'docker' : 'external',
     dockerProjectName: typeof saved?.dockerProjectName === 'string' && saved.dockerProjectName.trim() ? saved.dockerProjectName.trim() : 'openagent-sub2api',
     dockerComposeDir: normalizePath(saved?.dockerComposeDir),
     binaryPath: normalizePath(saved?.binaryPath),

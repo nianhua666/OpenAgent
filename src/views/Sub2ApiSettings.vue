@@ -297,10 +297,10 @@
             <label class="config-field">
               <span>依赖模式</span>
               <select class="setting-input" :value="desktopDependencyMode" @change="desktopDependencyMode = ($event.target as HTMLSelectElement).value as 'external' | 'docker'">
-                <option value="docker">Docker 容器依赖</option>
                 <option value="external">外部 PostgreSQL / Redis</option>
+                <option value="docker">Docker 容器依赖（可选）</option>
               </select>
-              <small>推荐使用 Docker 容器隔离 PostgreSQL / Redis；这样 setup、日志和数据都能跟本地网关一起隔离。</small>
+              <small>默认仍按 OpenAgent 主链使用外部 PostgreSQL / Redis；只有你需要额外隔离时，再切到 Docker 容器依赖。</small>
             </label>
 
             <label class="config-field">
