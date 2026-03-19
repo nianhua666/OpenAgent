@@ -111,6 +111,7 @@
 | 9.21 | 修复 release 元数据同步缺口，并补历史版本日志：让发布脚本支持带日期的 changelog 标题，回补 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文 | 已完成 | `scripts/publish-release.cjs`, `CHANGELOG.md` |
 | 9.22 | 为 Sub2API 本地依赖补齐容器化模式：引入 Docker Compose 级的 PostgreSQL / Redis 编排、隔离数据目录、依赖状态探测与桌面模式自动拉起链路 | 已完成 | `electron/sub2apiRuntime.ts`, `electron/sub2apiDesktop.ts`, `electron/main.ts`, `electron/preload.ts`, `src/env.d.ts`, `src/types/index.ts`, `src/utils/sub2api.ts`, `src/stores/sub2api.ts`, `src/views/Sub2ApiSettings.vue`, `README.md`, `docs/tasks/TASKS.md`, `CHANGELOG.md` |
 | 9.23 | 收口 Sub2API 文档粒度与 Agent / IDE 顶层结构：移除 README 内部实现细节，恢复 Sub2API 默认外部依赖模式，并继续压缩 Agent 顶部动作和 IDE 默认栏宽 | 已完成 | `README.md`, `build/sub2api-runtime/README.md`, `src/utils/sub2api.ts`, `electron/sub2apiRuntime.ts`, `src/components/agent/AgentToolbar.vue`, `src/views/AgentView.vue`, `src/views/IDEView.vue`, `CHANGELOG.md` |
+| 9.24 | 继续压缩 IDE 右栏与 Agent 顶栏重复信息：将 IDE Assistant 的会话 chrome 收口到面板头部，保留更紧凑的 Inspector 会话流，并继续验证 Agent / IDE 真实 Electron 画面 | 已完成 | `src/components/agent/AgentMessageList.vue`, `src/components/ide/IDEAssistantPanel.vue`, `src/components/agent/AgentToolbar.vue`, `src/views/AgentView.vue`, `src/views/IDEView.vue`, `CHANGELOG.md` |
 
 ---
 
@@ -215,6 +216,7 @@
 | 2026-03-19 | release | Phase 9 / Release 元数据回补：修复 `publish-release.cjs` 对带日期 changelog 标题的解析后，已通过 `--metadata-only` 回补 `v3.0.7`、`v3.0.8`、`v3.0.9` 的 GitHub Release 正文，避免历史版本继续显示空白版本标题。 |
 | 2026-03-19 | ui | Phase 9 / Agent-IDE 继续收口：`AgentToolbar.vue` 改为更紧凑的运行摘要条，`AgentView.vue` 从顶部工作台条移除了与左侧 rail 重复的面板切换项，`IDEView.vue` 也进一步压缩默认左右栏和终端高度，让中央工作区继续向代码编辑让位。 |
 | 2026-03-19 | docs | Phase 9 / README 粒度回收：主 `README.md` 与 `build/sub2api-runtime/README.md` 已移除不适合公开文档的运行路径、源码策略和工具链细节，避免把内部集成实现写成用户向文档。 |
+| 2026-03-19 | ui | Phase 9 / Inspector 继续减法：`AgentMessageList.vue` 在 `IDE + compact` 模式下进一步收紧了空会话信息层，`IDEAssistantPanel.vue` 维持“会话选择在头部、消息体尽量轻”的 Inspector 结构；同时再次执行 Electron 截图验证，确认 `/ai`、`/ide` 顶栏减法后工作台仍稳定。 |
 | 2026-03-19 | code | Phase 9 / Sub2API 容器化依赖：桌面运行时新增 `dependencyMode=docker`、Compose 项目名、Compose 目录、Docker / Compose 可用性、容器依赖状态与隔离卷路径；`Sub2ApiSettings.vue` 新增容器依赖模式切换、Compose 目录与项目名编辑，以及“启动容器依赖 / 停止容器依赖”入口。 |
 | 2026-03-19 | test | Phase 9 / Sub2API 容器化回归：再次执行 `npm.cmd run build` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui --route=/sub2api --delay-ms=9000`，确认 Docker 依赖字段接入后页面仍可渲染；当前机器尚未安装 Docker，因此容器依赖启动链会明确回报缺少 Docker / Compose，而不会再沉默失败。 |
 | 2026-03-14 | code | Phase 9 真实 Electron 回归补强：`electron/main.ts` 新增 `--main-route`、`--capture-main-window`、`--capture-delay-ms`、`--capture-quit` 启动参数，`scripts/check-electron-ui.cjs` 可直接导出 `/ai` 与 `/ide` 的真实 Electron PNG 截图，用于在 Chrome 阻塞时继续做人眼回归。 |

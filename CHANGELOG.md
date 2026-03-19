@@ -6,6 +6,7 @@
 - Sub2API 默认依赖策略纠偏：桌面运行时默认依赖模式已改回 `external`，`docker` 仅保留为可选隔离能力，不再作为本地网关主路径强推给用户。
 - Agent / IDE 工作台继续减法：`AgentView.vue` 去掉顶部工作台条里与左侧 rail 重复的面板切换项，改为仅保留全局动作与当前侧栏提示；`AgentToolbar.vue` 也从大卡片压成更紧凑的运行状态条。
 - IDE 默认布局继续向编辑区让位：`IDEView.vue` 进一步收紧默认左栏、右栏与终端高度，继续把可用空间还给中央编辑区。
+- 本轮再次通过 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui-agent-ide-tighten --route=/ai --route=/ide --delay-ms=9000`，确认 Agent / IDE 顶层减法后真实 Electron 渲染仍稳定。
 
 ## 3.0.11 - 2026-03-19
 

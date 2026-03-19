@@ -17,7 +17,7 @@
     </div>
 
     <template v-else>
-      <div class="message-head">
+      <div v-if="!compactIdeMode" class="message-head">
         <div>
           <p class="message-eyebrow">Session</p>
           <h3>{{ displaySessionTitle(session) }}</h3>
@@ -28,7 +28,7 @@
         </div>
       </div>
 
-      <div v-if="session.summary" class="session-summary">
+      <div v-if="session.summary && !compactIdeMode" class="session-summary">
         <strong>会话摘要</strong>
         <p>{{ session.summary }}</p>
       </div>
@@ -39,7 +39,7 @@
           <h3>当前会话已就绪</h3>
           <p class="empty-copy">当前会话还没有消息。你可以直接给出需求、补充约束、让 Agent 先拆解任务，或者让它先梳理当前角色的记忆与能力边界。</p>
         </div>
-        <div class="session-empty-meta">
+        <div v-if="!compactIdeMode" class="session-empty-meta">
           <span class="empty-fact">{{ displaySessionTitle(session) }}</span>
           <span class="empty-fact">{{ scopeLabel(session.scope) }}</span>
           <span class="empty-fact">0 条消息</span>
@@ -176,6 +176,7 @@ defineEmits<{
 const scrollRef = ref<HTMLElement | null>(null)
 const aiStore = useAIStore()
 const resolvedScopeHint = computed(() => props.session?.scope || props.scopeHint || 'main')
+const compactIdeMode = computed(() => resolvedScopeHint.value === 'ide' && props.density === 'compact')
 const emptyStateTitle = computed(() => resolvedScopeHint.value === 'ide' ? 'IDE 主Agent 等待任务' : '当前角色等待任务')
 const emptyStateDescription = computed(() => {
   if (resolvedScopeHint.value === 'ide') {
