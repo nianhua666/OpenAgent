@@ -1,5 +1,12 @@
 # 更新日志
 
+## v3.0.15 (2026-03-23)
+
+### Bug Fixes (Critical)
+- **`generate_image` Tool - sub2api compatibility**: Fixed the root cause of image generation failures through sub2api/OpenAI-compatible gateways: sub2api converts Gemini `inlineData` to markdown `![image](data:image/jpeg;base64,...)` in the `content` field — NOT in `attachments`. Added `extractImagesFromContent()` to parse both markdown image references and raw data URLs from content text
+- **Dual-path image extraction**: `generateImageTool` now supports both native Gemini (attachments) and sub2api/OpenAI-compatible (content parsing) paths, ensuring images are correctly extracted regardless of the API gateway used
+
+
 ## v3.0.14 (2026-03-23)
 
 ### Bug Fixes

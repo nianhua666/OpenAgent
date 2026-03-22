@@ -492,10 +492,75 @@ async function webSearchTool(args: Record<string, unknown>): Promise<ToolExecuti
 
 // ==================== 图片生成工具 ====================
 
+// 用于从 sub2api / OpenAI 兼容接口返回的 content 中提取 base64 图片
+const IMAGE_MARKDOWN_RE = /!\[([^\]]*)\]\s*\(\s*(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\s*\)/gi
+const IMAGE_RAW_DATAURL_RE = /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi
+
+/**
+ * 从文本 content 中提取所有 base64 图片并转换为 AIChatAttachment[]。
+ * 覆盖两种格式：
+ *   1. markdown 图片引用：![label](data:image/...;base64,...)
+ *   2. 裸 data URL：data:image/...;base64,...
+ * sub2api 等 OpenAI 兼容网关会把 Gemini inlineData 转写为上述格式。
+ */
+function extractImagesFromContent(content: string): AIChatAttachment[] {
+  if (!content) return []
+  const attachments: AIChatAttachment[] = []
+  const seen = new Set<string>()
+
+  // 先匹配 markdown 格式
+  IMAGE_MARKDOWN_RE.lastIndex = 0
+  let m = IMAGE_MARKDOWN_RE.exec(content)
+  while (m) {
+    const dataUrl = m[2].replace(/\s+/g, '')
+    const fingerprint = dataUrl.slice(0, 120)
+    if (!seen.has(fingerprint)) {
+      seen.add(fingerprint)
+      const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'image/png'
+      const ext = mimeType.split('/')[1]?.split(';')[0] || 'png'
+      attachments.push({
+        id: `img_extract_${attachments.length}`,
+        type: 'image',
+        name: `generated_${attachments.length}.${ext}`,
+        mimeType,
+        dataUrl,
+        source: 'assistant'
+      })
+    }
+    m = IMAGE_MARKDOWN_RE.exec(content)
+  }
+
+  // 再匹配裸 data URL（去除已被 markdown 匹配过的）
+  IMAGE_RAW_DATAURL_RE.lastIndex = 0
+  let rm = IMAGE_RAW_DATAURL_RE.exec(content)
+  while (rm) {
+    const dataUrl = rm[0].replace(/\s+/g, '')
+    const fingerprint = dataUrl.slice(0, 120)
+    if (!seen.has(fingerprint)) {
+      seen.add(fingerprint)
+      const mimeType = dataUrl.match(/^data:([^;]+);/)?.[1] || 'image/png'
+      const ext = mimeType.split('/')[1]?.split(';')[0] || 'png'
+      attachments.push({
+        id: `img_extract_${attachments.length}`,
+        type: 'image',
+        name: `generated_${attachments.length}.${ext}`,
+        mimeType,
+        dataUrl,
+        source: 'assistant'
+      })
+    }
+    rm = IMAGE_RAW_DATAURL_RE.exec(content)
+  }
+
+  return attachments
+}
+
 /**
  * 图片生成工具
- * 直接调用当前 Gemini 原生图像模型生成图片并以附件返回。
- * 依赖 chatCompletion 的 attachments 字段携带 inlineData 图像数据。
+ * 直接调用当前模型生成图片。支持三条返回路径：
+ *   A. 原生 Gemini 协议 → chatCompletion.attachments（inlineData）
+ *   B. sub2api / OpenAI 兼容网关 → content 中嵌入 markdown 图片 ![](data:...)
+ *   C. 两者都为空 → 报错并附上模型原始回复片段
  */
 async function generateImageTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
   const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
@@ -526,7 +591,6 @@ async function generateImageTool(args: Record<string, unknown>): Promise<ToolExe
     }
   }
 
-  // 构造精准的图像生成提示词
   const fullPrompt = [
     prompt,
     style ? `Style: ${style}` : '',
@@ -548,19 +612,24 @@ async function generateImageTool(args: Record<string, unknown>): Promise<ToolExe
       { includeTools: false }
     )
 
-    const imageAttachments = (result.attachments || []).filter(
+    // 路径 A：原生 Gemini 协议 → attachments 直接携带 inlineData 图片
+    let imageAttachments = (result.attachments || []).filter(
       (a): a is AIChatAttachment => a.type === 'image' && Boolean(a.dataUrl)
     )
 
+    // 路径 B：sub2api / OpenAI 兼容网关 → 从 content 文本中提取 base64 图片
+    if (imageAttachments.length === 0 && result.content) {
+      imageAttachments = extractImagesFromContent(result.content)
+    }
+
     if (imageAttachments.length === 0) {
-      // Gemini 返回了文字描述而非图片 — 可能是 responseModalities 未触发
       return {
         output: JSON.stringify({
           success: false,
           status: 'no_image_returned',
-          message: '模型未返回图片附件。这通常是因为当前模型不支持 responseModalities=IMAGE，或提示词未触发图像生成模式。',
-          modelResponse: result.content?.slice(0, 300) || '',
-          suggestion: '请确认模型为 gemini-2.0-flash-preview-image-generation 或 gemini-3.1-flash-image-preview，并在 AI 设置中确认 API 密钥正确。'
+          message: '模型未返回可识别的图片数据。请确认当前模型支持图片生成，且 API 密钥与接口地址正确。',
+          modelResponse: (result.content || '').replace(/data:image\/[^;]+;base64,[a-zA-Z0-9+/=]{20,}/g, '[base64_data]').slice(0, 200),
+          suggestion: '如果使用 sub2api 等第三方网关，请确认其支持 Gemini 图片生成模型的转发。'
         })
       }
     }
