@@ -1,5 +1,13 @@
 # 更新日志
 
+## v3.0.14 (2026-03-23)
+
+### Bug Fixes
+- **`generate_image` Tool**: Completely rewrote tool to actually call the Gemini API via `chatCompletion` with `responseModalities=IMAGE` and return real image attachments — previously it only returned "ready" status and told the agent to send another message, which never happened
+- **`onAttachment` in `runAIResponseLoop`**: Wired the `onAttachment` callback in the streaming loop to collect images from native Gemini image model responses without needing the tool
+- **Merged attachments**: `normalizeAssistantMessageOutput` output now merged with `streamedAttachments` from `onAttachment`, ensuring images from both paths (providerMetadata.geminiParts and streaming onAttachment) appear in the message
+
+
 ## v3.0.13 (2026-03-23)
 
 ### Features

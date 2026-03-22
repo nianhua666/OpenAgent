@@ -1199,10 +1199,11 @@ export async function runAIResponseLoop(
       aiStore.setRuntimePhase(sessionId, 'streaming')
       aiStore.updateRuntimeContext(sessionId, aiStore.getContextMetrics(sessionId))
 
-      const turnResult = await new Promise<{ content: string; reasoningContent: string; toolCalls: AIToolCall[]; providerMetadata?: Record<string, unknown>; error?: string }>((resolve) => {
+      const turnResult = await new Promise<{ content: string; reasoningContent: string; toolCalls: AIToolCall[]; providerMetadata?: Record<string, unknown>; streamedAttachments: AIChatAttachment[]; error?: string }>((resolve) => {
         let streamedContent = ''
         let streamedReasoning = ''
         const collectedToolCalls: AIToolCall[] = []
+        const collectedAttachments: AIChatAttachment[] = []
         let providerMetadata: Record<string, unknown> | undefined
 
         void streamChat(
@@ -1224,11 +1225,15 @@ export async function runAIResponseLoop(
             onProviderMetadata(metadata) {
               providerMetadata = metadata
             },
+            onAttachment(attachment) {
+              // 收集 Gemini 原生图片输出（直接对话时无需工具，图片从流式响应 inlineData 直接到达）
+              collectedAttachments.push(attachment)
+            },
             async onDone() {
-              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata })
+              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata, streamedAttachments: collectedAttachments })
             },
             onError(error) {
-              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata, error })
+              resolve({ content: streamedContent, reasoningContent: streamedReasoning, toolCalls: collectedToolCalls, providerMetadata, streamedAttachments: collectedAttachments, error })
             }
           },
           aiStore.preferences,
@@ -1249,13 +1254,20 @@ export async function runAIResponseLoop(
         .trim()
       const normalizedAssistantOutput = await normalizeAssistantMessageOutput(nextAssistantContent, turnResult.providerMetadata)
 
-      if (normalizedAssistantOutput.content || mergedReasoningContent || turnResult.toolCalls.length > 0 || normalizedAssistantOutput.attachments.length > 0) {
+      // 合并：从 providerMetadata.geminiParts 提取的附件 + 从 onAttachment 流式收集的附件（去重）
+      const seenAttachmentIds = new Set(normalizedAssistantOutput.attachments.map(a => a.id))
+      const mergedAttachments = [
+        ...normalizedAssistantOutput.attachments,
+        ...(turnResult.streamedAttachments || []).filter(a => !seenAttachmentIds.has(a.id))
+      ]
+
+      if (normalizedAssistantOutput.content || mergedReasoningContent || turnResult.toolCalls.length > 0 || mergedAttachments.length > 0) {
         aiStore.addMessage(sessionId, {
           role: 'assistant',
           content: normalizedAssistantOutput.content,
           reasoningContent: mergedReasoningContent || undefined,
           toolCalls: turnResult.toolCalls.length > 0 ? turnResult.toolCalls : undefined,
-          attachments: normalizedAssistantOutput.attachments.length > 0 ? normalizedAssistantOutput.attachments : undefined,
+          attachments: mergedAttachments.length > 0 ? mergedAttachments : undefined,
           providerMetadata: normalizedAssistantOutput.providerMetadata
         })
       }

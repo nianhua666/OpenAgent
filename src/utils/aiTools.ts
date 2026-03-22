@@ -493,11 +493,9 @@ async function webSearchTool(args: Record<string, unknown>): Promise<ToolExecuti
 // ==================== 图片生成工具 ====================
 
 /**
- * 图片生成辅助工具
- * generate_image 工具本身不直接生成图片；
- * 真正的图片生成是由 Gemini 原生图像模型通过 responseModalities=IMAGE 返回 inlineData 实现的。
- * 该工具只负责返回给 Agent 一段提示，引导它把 prompt 嵌入下一条消息
- * 让 Gemini 以 inlineData 图片附件的方式返回结果。
+ * 图片生成工具
+ * 直接调用当前 Gemini 原生图像模型生成图片并以附件返回。
+ * 依赖 chatCompletion 的 attachments 字段携带 inlineData 图像数据。
  */
 async function generateImageTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
   const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
@@ -508,41 +506,82 @@ async function generateImageTool(args: Record<string, unknown>): Promise<ToolExe
   const aspectRatio = typeof args.aspectRatio === 'string' ? args.aspectRatio : '1:1'
   const style = typeof args.style === 'string' ? args.style.trim() : ''
 
-  // 检查当前模型是否支持原生图片输出
-  const { useAIStore } = await import('@/stores/ai')
   const aiStore = useAIStore()
   const config = aiStore.config
-  const modelName = (config?.model || '').toLowerCase()
+  if (!config) {
+    return errorResult('AI 配置未初始化，无法生成图片')
+  }
+
+  const modelName = (config.model || '').toLowerCase()
   const isImageModel = /image[- ]gen|imagen|flash.*image|image.*flash|imagegeneration|gemini.*image/i.test(modelName)
 
   if (!isImageModel) {
     return {
       output: JSON.stringify({
+        success: false,
         status: 'model_not_supported',
-        message: `当前模型「${config?.model || '未知'}」不支持原生图片生成。请切换到支持图片生成的模型，例如：gemini-2.0-flash-preview-image-generation 或 imagen-3。`,
-        prompt,
-        suggestion: '在 AI 设置中选择支持图片生成的 Gemini 模型后，直接告知用户描述需求即可触发图片生成。'
+        message: `当前模型「${config.model}」不支持原生图片生成。请在底部模型选择栏切换到 gemini-2.0-flash-preview-image-generation / gemini-3.1-flash-image-preview / imagen-3 等图像生成模型后再重试。`,
+        suggestion: '切换模型后，用户再次发送图片请求时直接调用 generate_image 工具即可。'
       })
     }
   }
 
-  // 模型支持图片输出 — 返回优化后的提示词给 Agent，
-  // Agent 会将其嵌入下一条消息，Gemini 将以 inlineData 图片部分返回图片
+  // 构造精准的图像生成提示词
   const fullPrompt = [
     prompt,
     style ? `Style: ${style}` : '',
-    `Aspect ratio: ${aspectRatio}`,
-    'Generate a high quality image based on the description above.'
+    `Aspect ratio hint: ${aspectRatio}. Please generate the image directly.`
   ].filter(Boolean).join('\n')
 
-  return successResult('图片生成请求已准备好，模型将通过 responseModalities=IMAGE 直接返回图片附件', {
-    status: 'ready',
-    optimizedPrompt: fullPrompt,
-    aspectRatio,
-    model: config?.model,
-    instruction: '请将 optimizedPrompt 作为新用户消息发送，Gemini 图像模型将以内联图片附件的形式返回生成结果。'
-  })
+  try {
+    const result = await chatCompletion(
+      config,
+      [
+        {
+          id: `img-gen-user-${Date.now()}`,
+          role: 'user',
+          content: fullPrompt,
+          timestamp: Date.now()
+        }
+      ],
+      { ...aiStore.preferences, thinkingEnabled: false },
+      { includeTools: false }
+    )
+
+    const imageAttachments = (result.attachments || []).filter(
+      (a): a is AIChatAttachment => a.type === 'image' && Boolean(a.dataUrl)
+    )
+
+    if (imageAttachments.length === 0) {
+      // Gemini 返回了文字描述而非图片 — 可能是 responseModalities 未触发
+      return {
+        output: JSON.stringify({
+          success: false,
+          status: 'no_image_returned',
+          message: '模型未返回图片附件。这通常是因为当前模型不支持 responseModalities=IMAGE，或提示词未触发图像生成模式。',
+          modelResponse: result.content?.slice(0, 300) || '',
+          suggestion: '请确认模型为 gemini-2.0-flash-preview-image-generation 或 gemini-3.1-flash-image-preview，并在 AI 设置中确认 API 密钥正确。'
+        })
+      }
+    }
+
+    return {
+      output: JSON.stringify({
+        success: true,
+        status: 'generated',
+        count: imageAttachments.length,
+        message: `✅ 已成功生成 ${imageAttachments.length} 张图片`,
+        aspectRatio,
+        model: config.model
+      }),
+      attachments: imageAttachments
+    }
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : '未知错误'
+    return errorResult(`图片生成失败: ${errMsg}`)
+  }
 }
+
 
 
 function ensureWindowsMcpEnabled() {

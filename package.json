@@ -1,6 +1,6 @@
 {
   "name": "openagent",
-  "version": "3.0.13",
+  "version": "3.0.14",
   "description": "OpenAgent - 支持 AI 对话、账号管理、托管 MCP / Skills 与 Live2D 桌面协作的桌面应用",
   "author": "年华",
   "license": "MIT",
