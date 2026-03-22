@@ -1,5 +1,11 @@
 # 更新日志
 
+## v3.0.16 (2026-03-23)
+
+### UX Fix
+- **Remove duplicate system user message after image generation**: When `generate_image` tool returns images, the system no longer injects a "以下是工具 generate_image 生成的最新图像结果..." follow-up user message. This message was designed for screenshot/vision analysis tools (read_screen, capture_screen etc.) and is unnecessary for image generation — the image already appears in the tool result bubble. Only tools in the `VISION_FOLLOWUP_TOOLS` allowlist now trigger this behavior.
+
+
 ## v3.0.15 (2026-03-23)
 
 ### Bug Fixes (Critical)

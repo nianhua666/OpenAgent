@@ -1000,7 +1000,11 @@ async function executeToolLoop(
         }
       })
 
-      if (result.attachments?.length) {
+      // 仅对真正需要视觉分析的工具（截图、屏幕捕获等）注入视觉跟进消息。
+      // 纯生成类工具（如 generate_image）的图片已在工具结果气泡中展示，无需重复注入一条「用户消息」再次触发 AI 分析，
+      // 否则图片会重复显示，且产生一条看起来像用户发送的无关系统消息。
+      const VISION_FOLLOWUP_TOOLS = new Set(['read_screen', 'screen_capture', 'screenshot', 'take_screenshot', 'capture_screen'])
+      if (result.attachments?.length && VISION_FOLLOWUP_TOOLS.has(toolCall.name)) {
         aiStore.addMessage(sessionId, {
           role: 'user',
           content: buildVisionFollowUpPrompt(toolCall),
