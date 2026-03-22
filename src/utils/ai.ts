@@ -31,6 +31,7 @@ interface StreamCallbacks {
   onReasoning?: (token: string) => void
   onToolCall: (toolCall: AIToolCall) => void
   onProviderMetadata?: (metadata: Record<string, unknown>) => void
+  onAttachment?: (attachment: AIChatAttachment) => void
   onDone: () => void | Promise<void>
   onError: (error: string) => void
 }
@@ -1495,6 +1496,7 @@ function parseGeminiCandidate(candidate: GeminiCandidate | undefined) {
   let content = ''
   let reasoningContent = ''
   const toolCalls: AIToolCall[] = []
+  const attachments: AIChatAttachment[] = []
   const parts = cloneGeminiParts(candidate?.content?.parts)
 
   for (const [index, part] of parts.entries()) {
@@ -1504,6 +1506,20 @@ function parseGeminiCandidate(candidate: GeminiCandidate | undefined) {
       } else {
         content += part.text
       }
+    }
+
+    // 解析 Gemini 原生图片输出（responseModalities=IMAGE 时返回的 inlineData）
+    if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('image/')) {
+      const mimeType = part.inlineData.mimeType
+      const ext = mimeType.split('/')[1]?.split(';')[0] || 'png'
+      attachments.push({
+        id: `gemini_img_${index}`,
+        type: 'image',
+        name: `generated_${index}.${ext}`,
+        mimeType,
+        dataUrl: `data:${mimeType};base64,${part.inlineData.data}`,
+        source: 'assistant'
+      })
     }
 
     if (part.functionCall?.name) {
@@ -1517,7 +1533,7 @@ function parseGeminiCandidate(candidate: GeminiCandidate | undefined) {
     }
   }
 
-  return { content, reasoningContent, toolCalls, parts }
+  return { content, reasoningContent, toolCalls, attachments, parts }
 }
 
 function normalizeGeminiResponseChunks(payload: unknown) {
@@ -2248,6 +2264,11 @@ async function streamGeminiChat(
               previousTextByCandidate.set(candidateIndex, nextText)
               previousReasoningByCandidate.set(candidateIndex, nextReasoning)
               mergeGeminiToolCalls(toolCallsMap, candidate, candidateIndex)
+
+              // 发射 Gemini 原生图片输出（inlineData base64 图片）
+              for (const attachment of parsed.attachments) {
+                callbacks.onAttachment?.(attachment)
+              }
             }
           }
         } catch {
@@ -2932,6 +2953,32 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
             searchType: { type: 'string', enum: ['general', 'news', 'academic'], description: '搜索类型：general 通用、news 新闻、academic 学术' }
           },
           required: ['query']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'generate_image',
+        description: '使用当前 AI 模型的原生图片生成能力生成图片。仅当当前模型为原生图像生成模型（如 gemini-2.0-flash-preview-image-generation、imagen-3 等）时调用；否则应告知用户切换到支持图片生成的模型。生成成功后图片会作为附件直接返回消息，无需额外操作。',
+        parameters: {
+          type: 'object',
+          properties: {
+            prompt: {
+              type: 'string',
+              description: '图片生成描述提示词（英文效果最佳）：详细描述主体、风格、色调、构图、光影等'
+            },
+            aspectRatio: {
+              type: 'string',
+              enum: ['1:1', '16:9', '9:16', '4:3', '3:4'],
+              description: '图片宽高比，默认 1:1'
+            },
+            style: {
+              type: 'string',
+              description: '可选：图片风格说明，如 photorealistic、anime、oil painting 等'
+            }
+          },
+          required: ['prompt']
         }
       }
     },
@@ -3981,7 +4028,7 @@ export async function chatCompletion(
   preferences?: Partial<AIChatPreferences>,
   options?: { includeTools?: boolean },
   signal?: AbortSignal
-): Promise<{ content: string; toolCalls: AIToolCall[]; reasoningContent?: string }> {
+): Promise<{ content: string; toolCalls: AIToolCall[]; reasoningContent?: string; attachments?: AIChatAttachment[] }> {
   const protocol = resolveConfigProtocol(config)
 
   if (protocol === 'anthropic') {

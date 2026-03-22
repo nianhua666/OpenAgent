@@ -1,5 +1,19 @@
 # 更新日志
 
+## v3.0.13 (2026-03-23)
+
+### Features
+- **Gemini Native Image Generation**: Fixed critical bugs where `supportsGeminiNativeImageOutput` and `shouldRequestGeminiImageResponse` were called but never defined, causing Gemini image models to fail silently
+- **Image Output Pipeline**: `parseGeminiCandidate` now extracts `inlineData` image parts as `AIChatAttachment[]`, enabling Gemini native image output to flow through both streaming and non-streaming paths
+- **`generate_image` Tool**: New tool in `getAvailableTools` allows agents to explicitly request image generation from Gemini native image models (gemini-2.0-flash-preview-image-generation, imagen-3, etc.)
+- **`onAttachment` Callback**: Added `onAttachment` to `StreamCallbacks` interface for streaming image attachment emission
+- **AGENT_MASTER_PROMPT**: Updated with clear image generation routing rules — agents now know to check model capability, call `generate_image`, and guide users to switch models when needed
+
+### Bug Fixes
+- Removed duplicate function definitions that caused TypeScript compilation errors
+- Fixed `chatCompletion` return type to include optional `attachments` array for Gemini image output
+
+
 ## 3.0.12 - 2026-03-23
 
 ### 新功能

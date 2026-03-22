@@ -358,6 +358,9 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
       return ideLogTool(args)
     case 'web_search':
       return webSearchTool(args)
+    case 'generate_image':
+      return generateImageTool(args)
+
     default:
       if (isManagedMcpToolInvocationName(toolCall.name)) {
         return callManagedMcpTool(toolCall.name, args)
@@ -486,6 +489,61 @@ async function webSearchTool(args: Record<string, unknown>): Promise<ToolExecuti
     })
   }
 }
+
+// ==================== 图片生成工具 ====================
+
+/**
+ * 图片生成辅助工具
+ * generate_image 工具本身不直接生成图片；
+ * 真正的图片生成是由 Gemini 原生图像模型通过 responseModalities=IMAGE 返回 inlineData 实现的。
+ * 该工具只负责返回给 Agent 一段提示，引导它把 prompt 嵌入下一条消息
+ * 让 Gemini 以 inlineData 图片附件的方式返回结果。
+ */
+async function generateImageTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+  if (!prompt) {
+    return errorResult('图片生成提示词不能为空')
+  }
+
+  const aspectRatio = typeof args.aspectRatio === 'string' ? args.aspectRatio : '1:1'
+  const style = typeof args.style === 'string' ? args.style.trim() : ''
+
+  // 检查当前模型是否支持原生图片输出
+  const { useAIStore } = await import('@/stores/ai')
+  const aiStore = useAIStore()
+  const config = aiStore.config
+  const modelName = (config?.model || '').toLowerCase()
+  const isImageModel = /image[- ]gen|imagen|flash.*image|image.*flash|imagegeneration|gemini.*image/i.test(modelName)
+
+  if (!isImageModel) {
+    return {
+      output: JSON.stringify({
+        status: 'model_not_supported',
+        message: `当前模型「${config?.model || '未知'}」不支持原生图片生成。请切换到支持图片生成的模型，例如：gemini-2.0-flash-preview-image-generation 或 imagen-3。`,
+        prompt,
+        suggestion: '在 AI 设置中选择支持图片生成的 Gemini 模型后，直接告知用户描述需求即可触发图片生成。'
+      })
+    }
+  }
+
+  // 模型支持图片输出 — 返回优化后的提示词给 Agent，
+  // Agent 会将其嵌入下一条消息，Gemini 将以 inlineData 图片部分返回图片
+  const fullPrompt = [
+    prompt,
+    style ? `Style: ${style}` : '',
+    `Aspect ratio: ${aspectRatio}`,
+    'Generate a high quality image based on the description above.'
+  ].filter(Boolean).join('\n')
+
+  return successResult('图片生成请求已准备好，模型将通过 responseModalities=IMAGE 直接返回图片附件', {
+    status: 'ready',
+    optimizedPrompt: fullPrompt,
+    aspectRatio,
+    model: config?.model,
+    instruction: '请将 optimizedPrompt 作为新用户消息发送，Gemini 图像模型将以内联图片附件的形式返回生成结果。'
+  })
+}
+
 
 function ensureWindowsMcpEnabled() {
   const settingsStore = useSettingsStore()
