@@ -119,6 +119,13 @@
           <label class="field">
             <span>系统提示词</span>
             <textarea v-model.trim="draft.systemPrompt" rows="8" placeholder="写清角色人设、语气、执行方式、能力边界和禁用事项" />
+            <button
+              v-if="draft.isBuiltin && builtinDefaultPrompt"
+              type="button"
+              class="panel-btn secondary restore-btn"
+              title="还原为该角色的内置默认提示词"
+              @click="restoreSystemPrompt"
+            >↩ 还原默认提示词</button>
           </label>
 
           <div class="runtime-grid">
@@ -196,6 +203,11 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { AIAgentCapabilitySettings, AIAgentPersonaType, AIAgentProfile, AIConversationScope, AIProviderModel } from '@/types'
 import { resolveAgentMoodSnapshot } from '@/utils/agentMood'
 import { genId } from '@/utils/helpers'
+
+// Map of builtin agent IDs to their original default system prompts (populated when first editing a builtin)
+const builtinPromptCache = new Map<string, string>()
+
+const builtinDefaultPrompt = computed(() => builtinPromptCache.get(draft.id) || '')
 
 type EditableAgentProfile = {
   id: string
@@ -340,6 +352,10 @@ function syncInitialSignature() {
 }
 
 function applyAgentToDraft(agent: AIAgentProfile) {
+  // Cache the original systemPrompt for builtin agents so restore works
+  if (agent.isBuiltin && !builtinPromptCache.has(agent.id)) {
+    builtinPromptCache.set(agent.id, agent.systemPrompt || '')
+  }
   Object.assign(draft, createDraft(agent))
   syncInitialSignature()
 }
@@ -347,6 +363,13 @@ function applyAgentToDraft(agent: AIAgentProfile) {
 function startCreate() {
   Object.assign(draft, createDraft())
   syncInitialSignature()
+}
+
+function restoreSystemPrompt() {
+  const defaultPrompt = builtinPromptCache.get(draft.id)
+  if (defaultPrompt) {
+    draft.systemPrompt = defaultPrompt
+  }
 }
 
 function startEdit(agent: AIAgentProfile) {

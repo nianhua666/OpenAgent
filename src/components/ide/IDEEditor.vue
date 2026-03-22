@@ -771,7 +771,7 @@ function fileName(filePath: string) {
   min-height: 34px;
   padding: 0 8px;
   overflow-x: auto;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   background: linear-gradient(180deg, rgba(233, 239, 246, 0.99), rgba(226, 233, 242, 0.99));
 }
 
@@ -832,7 +832,7 @@ function fileName(filePath: string) {
 }
 
 .editor-tab-placeholder {
-  color: var(--text-muted);
+  color: rgba(204, 204, 204, 0.5);
   font-size: $font-sm;
   padding: 0 $spacing-sm;
 }
@@ -843,7 +843,7 @@ function fileName(filePath: string) {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  color: var(--text-muted);
+  color: rgba(204, 204, 204, 0.75);
   font-size: $font-xs;
 }
 

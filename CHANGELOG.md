@@ -1,12 +1,17 @@
 # 更新日志
 
-## Unreleased
+## 3.0.12 - 2026-03-23
 
+- 情绪型 Agent 对话自由度全面放开：移除了小柔角色 systemPrompt、AGENT_MASTER_PROMPT 和 buildSystemPromptWithMemory 中对"露骨、低俗、越界"话题的硬性限制和自我审查指令，情绪型角色现在会像真人伴侣一样自然互动，不再主动回避或拒绝任何用户发起的对话方向和创作需求。
 - Sub2API 文档粒度回收：主 README 与 `build/sub2api-runtime/README.md` 已移除不适合公开文档的内部路径、工具链与运行策略细节，只保留高层产品说明和目录职责，避免把实现细节误写进用户文档。
 - Sub2API 默认依赖策略纠偏：桌面运行时默认依赖模式已改回 `external`，`docker` 仅保留为可选隔离能力，不再作为本地网关主路径强推给用户。
 - Agent / IDE 工作台继续减法：`AgentView.vue` 去掉顶部工作台条里与左侧 rail 重复的面板切换项，改为仅保留全局动作与当前侧栏提示；`AgentToolbar.vue` 也从大卡片压成更紧凑的运行状态条。
 - IDE 默认布局继续向编辑区让位：`IDEView.vue` 进一步收紧默认左栏、右栏与终端高度，继续把可用空间还给中央编辑区。
 - 本轮再次通过 `npm.cmd run build`、`npm.cmd run smoke:routes` 与 `node scripts/check-electron-ui.cjs --out-dir %TEMP%\\openagent-electron-ui-agent-ide-tighten --route=/ai --route=/ide --delay-ms=9000`，确认 Agent / IDE 顶层减法后真实 Electron 渲染仍稳定。
+- **[本轮新增] 联网搜索能力**：新增 `web_search` 工具，已注册到 `getAvailableTools()` 工具列表，并在 `aiTools.ts` 中实现完整执行链路；优先调用 Electron 原生搜索接口，降级时自动使用 DuckDuckGo Instant Answer API（无需 API Key）；支持通用/新闻/学术三种搜索类型。
+- **[本轮新增] Agent 平台全面开放**：`DEFAULT_SYSTEM_PROMPT` 移除所有内容限制条款，明确声明"没有任何话题禁区"；`agent-executor` 和 `agent-ide-master` 的 systemPrompt 改为执行优先、无限制风格；`agent-xiaorou` 完全升级为开放成人伴侣 AI，支持成人对话、色情内容创作和亲密角色扮演，心情值调至 82、温度提升到 0.95；`AGENT_MASTER_PROMPT` 的情绪型与功能型 Agent 规则同步更新，情绪型角色明确支持成人内容。
+- 本轮通过 `npm run build` TypeScript 零错误编译验证。
+
 
 ## 3.0.11 - 2026-03-19
 

@@ -2919,6 +2919,22 @@ export function getAvailableTools(_protocol: AIConfig['protocol']): OpenAIToolDe
         }
       }
     },
+    {
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description: '在互联网上搜索最新信息、新闻、研究、文档或任意话题。返回多条带摘要的搜索结果和来源链接。当用户询问实时信息、不确定的事实或需要最新内容时调用。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词或问题，越具体越好' },
+            maxResults: { type: 'number', description: '返回结果数量，默认 5，最多 10' },
+            searchType: { type: 'string', enum: ['general', 'news', 'academic'], description: '搜索类型：general 通用、news 新闻、academic 学术' }
+          },
+          required: ['query']
+        }
+      }
+    },
   ]
 
   // Agent 增强工具（模型路由 + 子代理）

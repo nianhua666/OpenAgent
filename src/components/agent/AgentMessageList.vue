@@ -1,9 +1,17 @@
 <template>
+  <!-- 图片灯箱 -->
+  <Teleport to="body">
+    <div v-if="lightboxUrl" class="oa-lightbox" @click.self="lightboxUrl = ''">
+      <button class="oa-lightbox-close" @click="lightboxUrl = ''">✕</button>
+      <img :src="lightboxUrl" class="oa-lightbox-img" alt="预览图" />
+    </div>
+  </Teleport>
+
   <section
     ref="scrollRef"
     class="agent-message-list glass-panel"
     :class="{ 'is-ide-scope': resolvedScopeHint === 'ide', 'is-compact': density === 'compact' }"
-    @click="handleRichTextClick"
+    @click="handleListClick"
   >
     <div v-if="!session" class="empty-state">
       <p class="empty-eyebrow">Ready</p>
@@ -92,7 +100,14 @@
 
             <div v-if="message.attachments?.length" class="attachment-grid">
               <div v-for="attachment in message.attachments" :key="attachment.id" class="attachment-card">
-                <img v-if="attachment.type === 'image' && attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" class="attachment-image" />
+                <img
+                  v-if="attachment.type === 'image' && attachment.dataUrl"
+                  :src="attachment.dataUrl"
+                  :alt="attachment.name"
+                  class="attachment-image oa-zoomable"
+                  title="点击放大"
+                  @click.stop="lightboxUrl = attachment.dataUrl"
+                />
                 <div v-else class="file-chip">文件</div>
                 <strong>{{ attachment.name }}</strong>
               </div>
@@ -155,6 +170,7 @@ import { handleRichTextActivation, renderRichText as renderRichTextContent } fro
 import { getActivityMessageDisplay, getToolCallDisplay } from '@/utils/aiMessagePresentation'
 import { useAIStore } from '@/stores/ai'
 
+const lightboxUrl = ref('')
 const props = defineProps<{
   session: AIChatSession | null
   streaming: boolean
@@ -259,7 +275,16 @@ function renderMarkdown(content: string) {
   return renderRichTextContent(content)
 }
 
-function handleRichTextClick(event: MouseEvent) {
+function handleListClick(event: MouseEvent) {
+  // Click-to-zoom for inline images rendered via v-html (AI image outputs)
+  const target = event.target as HTMLElement
+  if (target.tagName === 'IMG' && target.closest('.message-content')) {
+    const src = (target as HTMLImageElement).src
+    if (src) {
+      lightboxUrl.value = src
+      return
+    }
+  }
   void handleRichTextActivation(event, {
     workspaceRoot: aiStore.ideWorkspace?.rootPath || ''
   })
@@ -674,6 +699,23 @@ p {
   border-radius: 10px;
   object-fit: cover;
   width: 100%;
+  cursor: zoom-in;
+  transition: opacity 0.15s;
+}
+
+.attachment-image:hover {
+  opacity: 0.88;
+}
+
+:deep(.message-content img) {
+  max-width: 100%;
+  border-radius: 10px;
+  cursor: zoom-in;
+  transition: opacity 0.15s;
+}
+
+:deep(.message-content img:hover) {
+  opacity: 0.88;
 }
 
 .file-chip {
@@ -732,6 +774,51 @@ p {
 
 .muted {
   color: var(--text-muted);
+}
+
+/* Lightbox */
+.oa-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(8px);
+  animation: oa-lb-in 0.18s ease;
+}
+
+.oa-lightbox-img {
+  max-width: min(92vw, 1200px);
+  max-height: 88vh;
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  object-fit: contain;
+}
+
+.oa-lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px 11px;
+  transition: background 0.15s;
+}
+
+.oa-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+@keyframes oa-lb-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes blink {

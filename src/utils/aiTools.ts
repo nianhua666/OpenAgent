@@ -356,12 +356,134 @@ export async function executeToolCall(toolCall: AIToolCall, context: ToolExecuti
       return ideSyncAutonomyRunTool(args)
     case 'ide_log':
       return ideLogTool(args)
+    case 'web_search':
+      return webSearchTool(args)
     default:
       if (isManagedMcpToolInvocationName(toolCall.name)) {
         return callManagedMcpTool(toolCall.name, args)
       }
 
       return { output: '', error: `未知工具: ${toolCall.name}` }
+  }
+}
+
+// ==================== 联网搜索工具 ====================
+
+/**
+ * 联网搜索工具
+ * 支持 DuckDuckGo Instant Answer API（无需密钥）以及 Electron 内置搜索
+ */
+async function webSearchTool(args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  const query = normalizeTextValue(args.query)
+  if (!query) {
+    return errorResult('搜索关键词不能为空')
+  }
+
+  const maxResults = Math.min(Math.max(Number(args.maxResults) || 5, 1), 10)
+  const searchType = typeof args.searchType === 'string' ? args.searchType : 'general'
+
+  // 优先使用 Electron 内置搜索接口
+  if ((window.electronAPI as any)?.webSearch) {
+    try {
+      const result = await (window.electronAPI as any).webSearch({ query, maxResults, searchType })
+      if (result?.results?.length > 0) {
+        return successResult(`搜索完成，返回 ${result.results.length} 条结果`, {
+          query,
+          searchType,
+          results: result.results
+        })
+      }
+    } catch {
+      // fallback to DuckDuckGo
+    }
+  }
+
+  // 降级方案：DuckDuckGo Instant Answer API（无需 API Key）
+  try {
+    const encodedQuery = encodeURIComponent(query)
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1&skip_disambig=1`
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 12000)
+
+    let ddgResponse: Response
+    try {
+      ddgResponse = await fetch(ddgUrl, {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json', 'User-Agent': 'OpenAgent/1.0' }
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    if (!ddgResponse.ok) {
+      throw new Error(`DuckDuckGo API 返回 ${ddgResponse.status}`)
+    }
+
+    const ddgData = await ddgResponse.json() as {
+      Abstract?: string
+      AbstractText?: string
+      AbstractURL?: string
+      AbstractSource?: string
+      RelatedTopics?: Array<{ Text?: string; FirstURL?: string; Name?: string }>
+      Results?: Array<{ Text?: string; FirstURL?: string }>
+      Answer?: string
+      AnswerType?: string
+      Definition?: string
+      DefinitionURL?: string
+      Heading?: string
+    }
+
+    const results: Array<{ title: string; snippet: string; url: string }> = []
+
+    if (ddgData.Answer) {
+      results.push({ title: `直接答案 (${ddgData.AnswerType || 'answer'})`, snippet: ddgData.Answer, url: '' })
+    }
+
+    if (ddgData.AbstractText || ddgData.Abstract) {
+      results.push({
+        title: ddgData.Heading || ddgData.AbstractSource || '摘要',
+        snippet: ddgData.AbstractText || ddgData.Abstract || '',
+        url: ddgData.AbstractURL || ''
+      })
+    }
+
+    if (ddgData.Definition) {
+      results.push({ title: '定义', snippet: ddgData.Definition, url: ddgData.DefinitionURL || '' })
+    }
+
+    const related = ddgData.RelatedTopics || []
+    for (const topic of related) {
+      if (results.length >= maxResults) break
+      if (topic.Text && topic.FirstURL) {
+        results.push({ title: topic.Name || topic.Text.slice(0, 60), snippet: topic.Text, url: topic.FirstURL })
+      }
+    }
+
+    const directResults = ddgData.Results || []
+    for (const r of directResults) {
+      if (results.length >= maxResults) break
+      if (r.Text && r.FirstURL) {
+        results.push({ title: r.Text.slice(0, 60), snippet: r.Text, url: r.FirstURL })
+      }
+    }
+
+    if (results.length === 0) {
+      return successResult(`搜索"${query}"完成，但未返回即时答案；建议尝试更具体的关键词或安装搜索类 MCP 服务器。`, {
+        query, searchType, results: [],
+        tip: '可在「AI 设置 > 托管资源 > MCP 服务器」中安装 brave-search 或 tavily 以获得更强的联网搜索能力。'
+      })
+    }
+
+    return successResult(`搜索"${query}"完成，返回 ${results.length} 条结果`, {
+      query, searchType, source: 'duckduckgo', results
+    })
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : '搜索请求失败'
+    return errorResult(`联网搜索失败: ${errMsg}。建议安装 brave-search 或 tavily MCP 服务器以获得完整搜索能力。`, {
+      query,
+      tip: '可在「AI 设置 > 托管资源 > MCP 服务器」中安装搜索类 MCP 以启用完整联网搜索。'
+    })
   }
 }
 

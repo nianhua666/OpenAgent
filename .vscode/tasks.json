@@ -11,6 +11,17 @@
 			],
 			"isBackground": false,
 			"group": "build"
+		},
+		{
+			"label": "package-openagent-2.5.1",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"electron:build:clean"
+			],
+			"isBackground": false,
+			"group": "build"
 		}
 	]
 }
